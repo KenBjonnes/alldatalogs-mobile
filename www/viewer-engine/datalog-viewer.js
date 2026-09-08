@@ -3874,11 +3874,15 @@ function dashMigrateScorecards(gauges){
   if(typeof Scorecard === 'undefined' || !Scorecard.migrateDef) return;
   (gauges || []).forEach(function(g){ if(g && g.type === 'scorecard') Scorecard.migrateDef(g); });
 }
+// Custom-dash text: names and tick numerals at roughly three-quarters of the fascia size, readouts
+// nearly untouched. The whole dash is zoomed as one block by the splitter, so text drawn at the
+// fascia's sizes grew with the bars until it dominated them (Ken, 2026-09-08).
+var DASH_TEXT_SCALE = { label: 0.72, tick: 0.75, value: 0.9 };
 function dashPlaceGauge(canvas, g){
   // Internal-only: a scorecard is simply not placed for users without permission -- the rest of the
   // dash renders normally, and the scorecard's config stays in VIEWER_DASH.gauges (preserved on save).
   if(g.type === 'scorecard' && !scorecardEnabled()) return;
-  var el = createGaugeElement(g);
+  var el = createGaugeElement(g, { text: DASH_TEXT_SCALE });
   el.classList.add('dlv-dash-gauge');
   var free = dashIsFreeSize(g.type);
   el.classList.toggle('dash-free', free);

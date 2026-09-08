@@ -55,6 +55,14 @@ function fmtGaugeValue(v, decimals){
   return v.toFixed(decimals == null ? 1 : decimals);
 }
 function gaugeFontScale(def){ return def.fontScale || 1; }
+// Text classes scale independently of the gauge (name / tick numerals / readout). The fascia
+// presets run at 1 (their sizes were tuned by hand); a custom dash asks for smaller names and ticks
+// because its gauges are zoomed as one block and the text grew with them until it dominated the
+// gauge (Ken, 2026-09-08: "the font seems a bit excessive"). Set per build by createGaugeElement.
+var GAUGE_TEXT = { label: 1, tick: 1, value: 1 };
+function gaugeLabelPx(def, base){ return (base * gaugeFontScale(def) * GAUGE_TEXT.label) + 'px'; }
+function gaugeTickPx(def, base){ return (base * gaugeFontScale(def) * GAUGE_TEXT.tick) + 'px'; }
+function gaugeValuePx(def, base){ return (base * gaugeFontScale(def) * GAUGE_TEXT.value) + 'px'; }
 
 // Tick label: divided by def.tickDivisor when set, so a tach can read 0..10 with a "x 1000" note
 // instead of 0..10000 crowding the dial.
@@ -202,7 +210,7 @@ function buildRoundDial(def){
 
   var label = document.createElement('div');
   label.className = 'pbd-dial-label';
-  label.style.fontSize = (11 * fs) + 'px';
+  label.style.fontSize = gaugeLabelPx(def, 11);
   label.textContent = def.label;
   label.title = def.label;   // full name on hover when the label is clipped to fit
   box.appendChild(label);
@@ -237,7 +245,7 @@ function buildRoundDial(def){
   var endNums = [];
   var majors = def.majors || (isRound ? 10 : 4);
   var minorsPer = def.minorsPer || 0;
-  var labelSize = (isRound ? 11 : 11.5) * fs;   // compact labels sit closer in, so nudge them up
+  var labelSize = (isRound ? 11 : 11.5) * fs * GAUGE_TEXT.tick;   // compact labels sit closer in, so nudge them up
   for(var i = 0; i <= majors; i++){
     var a = GAUGE_A0 + GAUGE_SWEEP * (i / majors);
     var o = gaugePolar(cx, cy, rTick, a), ii = gaugePolar(cx, cy, rTickIn, a);
@@ -260,7 +268,7 @@ function buildRoundDial(def){
   // scale note ("x 1000 rpm") -- baseline-positioned (unlike the radial tick labels, which are
   // dominant-baseline:middle); that difference is what used to make it collide with the readout.
   if(def.scaleNote && isRound){
-    var sn = svgEl('text', { x: cx, y: 118, class: 'pbd-dial-scalenote', 'font-size': (10 * fs) });
+    var sn = svgEl('text', { x: cx, y: 118, class: 'pbd-dial-scalenote', 'font-size': (10 * fs * GAUGE_TEXT.tick) });
     sn.textContent = def.scaleNote;
     svg.appendChild(sn);
   }
@@ -291,8 +299,8 @@ function buildRoundDial(def){
 
   var vy = isRound ? 151 : 132;
   var rs = def.readoutScale || 1;
-  var valueEl = svgEl('text', { x: cx, y: vy, class: 'pbd-dial-value', fill: def.color, 'font-size': ((isRound ? 25 : 19) * fs * rs) });
-  var unitEl = svgEl('text', { x: cx, y: vy + (isRound ? 17 : 15) * Math.max(1, rs * 0.8), class: 'pbd-dial-unit', 'font-size': ((isRound ? 11 : 10) * fs * Math.min(rs, 1.3)) });
+  var valueEl = svgEl('text', { x: cx, y: vy, class: 'pbd-dial-value', fill: def.color, 'font-size': ((isRound ? 25 : 19) * fs * rs * GAUGE_TEXT.value) });
+  var unitEl = svgEl('text', { x: cx, y: vy + (isRound ? 17 : 15) * Math.max(1, rs * 0.8), class: 'pbd-dial-unit', 'font-size': ((isRound ? 11 : 10) * fs * Math.min(rs, 1.3) * GAUGE_TEXT.label) });
   unitEl.textContent = def.unit || '';
   svg.appendChild(valueEl); svg.appendChild(unitEl);
 
@@ -313,7 +321,7 @@ function buildVerticalBar(def){
 
   var label = document.createElement('div');
   label.className = 'pbd-bar-label';
-  label.style.fontSize = (10 * fs) + 'px';
+  label.style.fontSize = gaugeLabelPx(def, 10);
   label.textContent = def.label;
   label.title = def.label;   // full name on hover when the label is clipped to fit
   box.appendChild(label);
@@ -364,7 +372,7 @@ function buildVerticalBar(def){
     var row = document.createElement('div');
     row.className = 'pbd-bar-tick';
     row.style.top = ((i / divs) * 100) + '%';
-    row.style.fontSize = (9.5 * fs) + 'px';
+    row.style.fontSize = gaugeTickPx(def, 9.5);
     row.textContent = (Math.abs(def.max) < 10 ? tv.toFixed(1) : tv.toFixed(0));
     ticks.appendChild(row);
     if(i === 0 || i === divs) endNums.push(row);
@@ -376,7 +384,7 @@ function buildVerticalBar(def){
   var valueEl = document.createElement('div');
   valueEl.className = 'pbd-bar-value';
   valueEl.style.color = def.color;
-  valueEl.style.fontSize = (15 * fs) + 'px';
+  valueEl.style.fontSize = gaugeValuePx(def, 15);
   box.appendChild(valueEl);
 
   return { box: box, refs: { kind: 'bar', fill: fill, valueEl: valueEl, endNums: endNums } };
@@ -395,7 +403,7 @@ function buildNumberCard(def){
   // units. Setting a fixed px font here meant the box grew and shrank with the fascia while the
   // digits stayed put -- overflowing the box at small scales and rattling around inside it at
   // large ones. Anything sized in gauge units must have its text sized the same way.
-  if(!isDigital) label.style.fontSize = (10 * fs) + 'px';
+  if(!isDigital) label.style.fontSize = gaugeLabelPx(def, 10);
   label.textContent = def.label;
   label.title = def.label;   // full name on hover when the label is clipped to fit
   var valueEl = document.createElement('div');
@@ -404,7 +412,7 @@ function buildNumberCard(def){
   // 'digital' is the square big-number treatment used where a needle earns nothing -- a coolant
   // temperature moves slowly and you read the number, not the sweep (Ken, 2026-07-21). Cams
   // deliberately stayed round: their value swings fast and the sweep IS the information.
-  if(!isDigital) valueEl.style.fontSize = (18 * fs) + 'px';
+  if(!isDigital) valueEl.style.fontSize = gaugeValuePx(def, 18);
   box.appendChild(label); box.appendChild(valueEl);
   if(def.type === 'digital' && def.unit){
     var unitEl = document.createElement('div');
@@ -426,13 +434,13 @@ function buildHBar(def){
   head.className = 'pbd-hbar-head';
   var label = document.createElement('div');
   label.className = 'pbd-hbar-label';
-  label.style.fontSize = (10 * fs) + 'px';
+  label.style.fontSize = gaugeLabelPx(def, 10);
   label.textContent = def.label;
   label.title = def.label;   // full name on hover when the label is clipped to fit
   var valueEl = document.createElement('div');
   valueEl.className = 'pbd-hbar-value';
   valueEl.style.color = def.color;
-  valueEl.style.fontSize = (13 * fs) + 'px';
+  valueEl.style.fontSize = gaugeValuePx(def, 13);
   head.appendChild(label); head.appendChild(valueEl);
   box.appendChild(head);
 
@@ -472,7 +480,7 @@ function buildHBar(def){
     var t = document.createElement('div');
     t.className = 'pbd-hbar-tick';
     t.style.left = ((i / divs) * 100) + '%';
-    t.style.fontSize = (8.5 * fs) + 'px';
+    t.style.fontSize = gaugeTickPx(def, 8.5);
     if(i === 0) t.style.transform = 'translateX(0)';
     else if(i === divs) t.style.transform = 'translateX(-100%)';
     t.textContent = (Math.abs(def.max) < 10 ? tv.toFixed(1) : String(Math.round(tv)));
@@ -491,14 +499,14 @@ function buildWarnLight(def){
   box.className = 'pbd-light-box';
   var label = document.createElement('div');
   label.className = 'pbd-light-label';
-  label.style.fontSize = (10 * fs) + 'px';
+  label.style.fontSize = gaugeLabelPx(def, 10);
   label.textContent = def.label;
   label.title = def.label;   // full name on hover when the label is clipped to fit
   var lamp = document.createElement('div');
   lamp.className = 'pbd-light-lamp';
   var valueEl = document.createElement('div');
   valueEl.className = 'pbd-light-value';
-  valueEl.style.fontSize = (12 * fs) + 'px';
+  valueEl.style.fontSize = gaugeValuePx(def, 12);
   box.appendChild(label); box.appendChild(lamp); box.appendChild(valueEl);
   return { box: box, refs: { kind: 'light', lamp: lamp, valueEl: valueEl } };
 }
@@ -553,20 +561,27 @@ function buildCombo(def){
 // ---- Public: build one gauge ------------------------------------------------------------------
 // Returns the wrapper element. Refs are stashed on the RETURNED element (see BUGFIX note up top) so
 // updateGaugeElement can find them.
-function createGaugeElement(def){
+// opts.text = { label, tick, value } multipliers for this build (see GAUGE_TEXT); omitted = 1.
+function createGaugeElement(def, opts){
   // Scorecard is a table component, not an SVG gauge -- delegate to its module (datalog-scorecard.js).
   if(def.type === 'scorecard' && typeof Scorecard !== 'undefined' && Scorecard.buildElement){ return Scorecard.buildElement(def); }
   var wrap = document.createElement('div');
   wrap.className = 'pbd-gauge pbd-gauge-' + def.type;
   wrap.dataset.gaugeId = def.id;
 
+  var t = (opts && opts.text) || {};
+  GAUGE_TEXT = { label: t.label || 1, tick: t.tick || 1, value: t.value || 1 };
   var built;
-  if(def.type === 'round' || def.type === 'compact-round') built = buildRoundDial(def);
-  else if(def.type === 'combo') built = buildCombo(def);
-  else if(def.type === 'vertical-bar') built = buildVerticalBar(def);
-  else if(def.type === 'horizontal-bar') built = buildHBar(def);
-  else if(def.type === 'light') built = buildWarnLight(def);
-  else built = buildNumberCard(def);
+  try {
+    if(def.type === 'round' || def.type === 'compact-round') built = buildRoundDial(def);
+    else if(def.type === 'combo') built = buildCombo(def);
+    else if(def.type === 'vertical-bar') built = buildVerticalBar(def);
+    else if(def.type === 'horizontal-bar') built = buildHBar(def);
+    else if(def.type === 'light') built = buildWarnLight(def);
+    else built = buildNumberCard(def);
+  } finally {
+    GAUGE_TEXT = { label: 1, tick: 1, value: 1 };
+  }
 
   wrap.appendChild(built.box);
   wrap._pbdRefs = built.refs;
