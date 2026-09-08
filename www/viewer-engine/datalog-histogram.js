@@ -47,6 +47,10 @@
 
   var STATISTICS = [
     { id: 'average', label: 'Average' },
+    // Σ(weight × value) / Σweight over the cell, with def.weightParameter as the weight (Ford blends
+    // between mapped points, so a sample that is 70% MP15 counts 0.7 in MP15's table -- Ken,
+    // 2026-09-08). Without a weight parameter it is the plain average.
+    { id: 'weighted', label: 'Weighted Avg' },
     { id: 'minimum', label: 'Minimum' },
     { id: 'maximum', label: 'Maximum' },
     { id: 'last', label: 'Last' },
@@ -54,7 +58,7 @@
     { id: 'count', label: 'Count' }
   ];
   var STAT_IDS = STATISTICS.map(function (s) { return s.id; });
-  var STAT_ALIASES = { avg: 'average', mean: 'average', min: 'minimum', max: 'maximum', cnt: 'count', hits: 'count' };
+  var STAT_ALIASES = { avg: 'average', mean: 'average', min: 'minimum', max: 'maximum', cnt: 'count', hits: 'count', wavg: 'weighted', 'weighted average': 'weighted', weighted_average: 'weighted', weightedaverage: 'weighted' };
   var OUT_OF_RANGE = ['clamp', 'drop'];
   var DATA_RANGES = ['entire', 'selection'];
   var ORIENTATIONS = ['normal', 'inverted'];
@@ -213,6 +217,7 @@
       var copy = clone(d);
       if (!isObj(copy)) return copy;
       touch(copy.cellParameter);
+      touch(copy.weightParameter);
       if (isObj(copy.columnAxis)) touch(copy.columnAxis.parameter);
       if (isObj(copy.rowAxis)) touch(copy.rowAxis.parameter);
       if (isObj(copy.filter)) walkClauses(copy.filter.clauses);
@@ -255,6 +260,9 @@
       type: type,
       enabled: partial.enabled !== false,
       cellParameter: makeParam(partial.cellParameter),
+      // Optional: each sample's contribution to Average-type statistics ('weighted') is scaled by this
+      // parameter (e.g. "Mapped Point {n} Weight"). An empty/cleared param object means "no weight".
+      weightParameter: isParam(makeParam(partial.weightParameter)) ? makeParam(partial.weightParameter) : null,
       columnAxis: makeAxis(partial.columnAxis),
       rowAxis: makeAxis(partial.rowAxis),
       statistic: stat,
@@ -392,6 +400,7 @@
     if (value == null) return d;
     d.name = substitutePage(d.name, value);
     d.cellParameter = substituteParam(d.cellParameter, value);
+    d.weightParameter = substituteParam(d.weightParameter, value);
     if (isObj(d.columnAxis)) d.columnAxis.parameter = substituteParam(d.columnAxis.parameter, value);
     if (isObj(d.rowAxis)) d.rowAxis.parameter = substituteParam(d.rowAxis.parameter, value);
     if (isObj(d.filter)) {
@@ -418,6 +427,7 @@
     if (!isObj(def)) return out;
     if (hasPageVar(def.name)) out.push('name');
     if (paramUsesPageVar(def.cellParameter)) out.push('cell parameter');
+    if (paramUsesPageVar(def.weightParameter)) out.push('weight');
     if (isObj(def.columnAxis) && paramUsesPageVar(def.columnAxis.parameter)) out.push('column axis');
     if (isObj(def.rowAxis) && paramUsesPageVar(def.rowAxis.parameter)) out.push('row axis');
     if (isObj(def.filter) && (hasPageVar(def.filter.expression) || clausesUsePageVar(def.filter.clauses))) out.push('filter');
@@ -477,6 +487,7 @@
     if (!isObj(def)) return { def: def, count: 0 };
     var d = clone(def);
     d.cellParameter = patternParam(d.cellParameter, concrete, pattern, counter);
+    d.weightParameter = patternParam(d.weightParameter, concrete, pattern, counter);
     if (isObj(d.columnAxis)) d.columnAxis.parameter = patternParam(d.columnAxis.parameter, concrete, pattern, counter);
     if (isObj(d.rowAxis)) d.rowAxis.parameter = patternParam(d.rowAxis.parameter, concrete, pattern, counter);
     if (isObj(d.filter)) {
@@ -512,6 +523,7 @@
     };
     if (!isObj(def)) return out;
     fromParam(def.cellParameter);
+    fromParam(def.weightParameter);
     if (isObj(def.columnAxis)) fromParam(def.columnAxis.parameter);
     if (isObj(def.rowAxis)) fromParam(def.rowAxis.parameter);
     if (isObj(def.filter)) {
@@ -615,6 +627,8 @@
     if (!isObj(def)) return { ok: false, errors: ['definition is not an object'] };
     if (TYPES.indexOf(def.type) === -1) errors.push('type must be "table" or "distribution"');
     if (!isParam(def.cellParameter)) errors.push('cellParameter is required (channel, role or math)');
+    // An all-null weight object (the editor's cleared state) is "no weight" -- makeDef nulls it.
+    if (def.weightParameter != null && !isObj(def.weightParameter)) errors.push('weightParameter must be a parameter (channel, role or math) or null');
     if (normalizeStat(def.statistic) === null) errors.push('statistic "' + def.statistic + '" is not one of ' + STAT_IDS.join('/'));
     if (!(isFin(def.minimumHits) && def.minimumHits >= 0)) errors.push('minimumHits must be a number >= 0');
     if (OUT_OF_RANGE.indexOf(def.outOfRange) === -1) errors.push('outOfRange must be "clamp" or "drop"');
@@ -713,6 +727,7 @@
     (Array.isArray(defs) ? defs : [defs]).forEach(function (d) {
       if (!isObj(d)) return;
       fromParam(d.cellParameter);
+      fromParam(d.weightParameter);
       if (isObj(d.columnAxis)) fromParam(d.columnAxis.parameter);
       if (isObj(d.rowAxis)) fromParam(d.rowAxis.parameter);
       if (isObj(d.filter)) walkClauses(d.filter.clauses);
@@ -866,7 +881,10 @@
     var a = {
       count: new Int32Array(cells), sum: new Float64Array(cells),
       min: new Float64Array(cells), max: new Float64Array(cells), first: new Float64Array(cells), last: new Float64Array(cells),
-      firstIdx: new Int32Array(cells), lastIdx: new Int32Array(cells), minIdx: new Int32Array(cells), maxIdx: new Int32Array(cells)
+      firstIdx: new Int32Array(cells), lastIdx: new Int32Array(cells), minIdx: new Int32Array(cells), maxIdx: new Int32Array(cells),
+      // weighted: Σweight and Σ(weight × value) per cell; `weighted` flips true when a weight parameter
+      // resolved, so statValue('weighted') knows whether these mean anything.
+      wsum: new Float64Array(cells), wvsum: new Float64Array(cells), weighted: false
     };
     for (var k = 0; k < cells; k++) {
       a.min[k] = NaN; a.max[k] = NaN; a.first[k] = NaN; a.last[k] = NaN;
@@ -880,7 +898,10 @@
       type: isObj(def) ? def.type : null, transposed: false,
       columns: null, rows: null, shape: { rows: 0, cols: 0 },
       cellUnit: null, columnUnit: null, rowUnit: null, axisUnitConverted: null, axisUnitUnverified: null,
-      labels: { cell: null, column: null, row: null }, cellLevels: null,
+      labels: { cell: null, column: null, row: null, weight: null }, cellLevels: null,
+      // weightScale: 100 when the weight channel reads as a percent (max > 1.5), else 1 -- effective
+      // hits = Σweight / weightScale, so a 100%-weighted sample counts as one hit either way.
+      weightScale: null, weightUnit: null,
       // cellIndices: absolute sample indices per cell (CSR via cellOffsets). sampleCellIndex: Int32Array(n)
       // indexed by ABSOLUTE sample index -> cell index, -1 when not binned (outside the range included).
       cells: null, cellOffsets: null, cellIndices: null, sampleCellIndex: null,
@@ -1066,6 +1087,7 @@
   function computeTableInto(def, ctx, result) {
     var missing = result.missing, warnings = result.warnings;
     var cellP = resolveParam(ctx, def.cellParameter, 'cell', missing);
+    var wP = def.weightParameter ? resolveParam(ctx, def.weightParameter, 'weight', missing) : null;
     var colP = resolveParam(ctx, def.columnAxis.parameter, 'column', missing);
     var rowP = def.rowAxis ? resolveParam(ctx, def.rowAxis.parameter, 'row', missing) : null;
     if (missing.length) { result.state = 'missing_parameter'; return; }
@@ -1091,6 +1113,8 @@
       row: rowP ? (rowP.label || def.rowAxis.parameter.label || null) : null
     };
     result.cellLevels = cellP.levels && cellP.levels.length ? cellP.levels.slice() : null;
+    result.labels.weight = wP ? (wP.label || def.weightParameter.label || null) : null;
+    result.weightUnit = wP ? (wP.unit || null) : null;
     if (def.cellParameter.unit && cellP.unit && !sameUnit(def.cellParameter.unit, cellP.unit))
       warnings.push('cell parameter unit "' + def.cellParameter.unit + '" differs from the log unit "' + cellP.unit + '"; values are reported in ' + cellP.unit);
 
@@ -1110,6 +1134,7 @@
 
     // ---- hot loop: no allocation, no closures ----------------------------------------------------
     var cellVals = cellP.values, colVals = colP.values, rowVals = rowP ? rowP.values : null;
+    var wVals = wP ? wP.values : null, wsum = acc.wsum, wvsum = acc.wvsum, wv = 0, wMax = 0;
     var colAxis = colR.axis, rowAxis = rowR ? rowR.axis : null;
     var colCat = colR.catMap, rowCat = rowR ? rowR.catMap : null, colCatLen = colR.catLen, rowCatLen = rowR ? rowR.catLen : 0;
     var is2D = rowR !== null, drop = def.outOfRange === 'drop';
@@ -1136,6 +1161,12 @@
         if (r < 0) { dropped++; continue; }
         k = r * C + c;
       } else k = c;
+      if (wVals !== null) {
+        wv = wVals[i];
+        if (typeof wv !== 'number' || wv !== wv || wv === Infinity || wv === -Infinity) { invalid++; continue; }
+        if (wv < 0) wv = 0;
+        if (wv > wMax) wMax = wv;
+      }
       if (count[k] === 0) {
         first[k] = cv; firstIdx[k] = i; mn[k] = cv; minIdx[k] = i; mx[k] = cv; maxIdx[k] = i;
       } else {
@@ -1144,10 +1175,16 @@
       }
       last[k] = cv; lastIdx[k] = i;
       sum[k] += cv; count[k]++;
+      if (wVals !== null) { wsum[k] += wv; wvsum[k] += wv * cv; }
       binned++;
       if (sampleCell !== null) sampleCell[i] = k;
     }
     stats.filteredOut = filteredOut; stats.invalid = invalid; stats.droppedOutOfRange = dropped; stats.binned = binned;
+    if (wVals !== null) {
+      acc.weighted = true;
+      result.weightScale = wMax > 1.5 ? 100 : 1;
+      if (binned > 0 && wMax === 0) warnings.push('weight "' + (result.labels.weight || 'weight') + '" is zero on every binned sample; Weighted Avg has nothing to show');
+    }
     if (sampleCell !== null) buildCSR(result, sampleCell, start, end);
     result.state = binned > 0 ? 'ok' : 'empty';
   }
@@ -1315,6 +1352,7 @@
     switch (stat) {
       case 'count': return n;
       case 'average': return n > 0 ? cells.sum[k] / n : NaN;
+      case 'weighted': return cells.weighted ? (cells.wsum[k] > 0 ? cells.wvsum[k] / cells.wsum[k] : NaN) : (n > 0 ? cells.sum[k] / n : NaN);
       case 'minimum': return n > 0 ? cells.min[k] : NaN;
       case 'maximum': return n > 0 ? cells.max[k] : NaN;
       case 'first': return n > 0 ? cells.first[k] : NaN;
@@ -1336,6 +1374,10 @@
     return {
       row: r, col: c, index: k, count: n,
       average: n > 0 ? a.sum[k] / n : NaN, sum: a.sum[k],
+      weighted: !!a.weighted,
+      weightSum: a.weighted ? a.wsum[k] : NaN,
+      weightedAverage: a.weighted ? (a.wsum[k] > 0 ? a.wvsum[k] / a.wsum[k] : NaN) : (n > 0 ? a.sum[k] / n : NaN),
+      effectiveHits: a.weighted ? a.wsum[k] / (result.weightScale || 1) : n,
       min: n > 0 ? a.min[k] : NaN, max: n > 0 ? a.max[k] : NaN,
       first: n > 0 ? a.first[k] : NaN, last: n > 0 ? a.last[k] : NaN,
       firstIdx: a.firstIdx[k], lastIdx: a.lastIdx[k], minIdx: a.minIdx[k], maxIdx: a.maxIdx[k],
@@ -1351,20 +1393,27 @@
     return out;
   }
   function minHitsOf(result, minHits) { return isFin(minHits) ? minHits : (result.definition && isFin(result.definition.minimumHits) ? result.definition.minimumHits : 0); }
-  /** 1 where count < minHits (empty cells included), else 0. */
-  function lowCountMask(result, minHits) {
+  /** The hits a cell has for min-hits purposes: the sample count, or for the weighted statistic on a
+   *  weighted result, Σweight / weightScale (a 100%-weighted sample = one hit). */
+  function effectiveHits(result, k, stat) {
+    var a = result.cells;
+    if (normalizeStat(stat) === 'weighted' && a.weighted) return a.wsum[k] / (result.weightScale || 1);
+    return a.count[k];
+  }
+  /** 1 where hits < minHits (empty cells included), else 0. `stat` picks weighted hits for 'weighted'. */
+  function lowCountMask(result, minHits, stat) {
     if (!hasCells(result)) return new Uint8Array(0);
-    var mh = minHitsOf(result, minHits), c = result.cells.count, out = new Uint8Array(c.length);
-    for (var k = 0; k < c.length; k++) out[k] = c[k] < mh ? 1 : 0;
+    var mh = minHitsOf(result, minHits), c = result.cells.count, out = new Uint8Array(c.length), s = resultStat(result, stat);
+    for (var k = 0; k < c.length; k++) out[k] = effectiveHits(result, k, s) < mh ? 1 : 0;
     return out;
   }
-  /** {min,max,cells} of a statistic over cells with count >= max(1, minHits) -- the auto colour scale input. */
+  /** {min,max,cells} of a statistic over cells with hits >= max(1, minHits) -- the auto colour scale input. */
   function valueRange(result, stat, minHits) {
     var out = { min: NaN, max: NaN, cells: 0 };
     if (!hasCells(result)) return out;
     var s = resultStat(result, stat), a = result.cells, th = Math.max(1, minHitsOf(result, minHits));
     for (var k = 0; k < a.count.length; k++) {
-      if (a.count[k] < th) continue;
+      if (effectiveHits(result, k, s) < th) continue;
       var v = statValue(a, k, s);
       if (!isFin(v)) continue;
       if (out.cells === 0 || v < out.min) out.min = v;
@@ -1388,8 +1437,9 @@
     out.cellUnit = result.cellUnit; out.columnUnit = result.rowUnit; out.rowUnit = result.columnUnit;
     out.axisUnitConverted = result.axisUnitConverted ? { column: result.axisUnitConverted.row, row: result.axisUnitConverted.column } : null;
     out.axisUnitUnverified = result.axisUnitUnverified ? { column: result.axisUnitUnverified.row, row: result.axisUnitUnverified.column } : null;
-    out.labels = { cell: result.labels.cell, column: result.labels.row, row: result.labels.column };
+    out.labels = { cell: result.labels.cell, column: result.labels.row, row: result.labels.column, weight: result.labels.weight };
     out.cellLevels = result.cellLevels;
+    out.weightScale = result.weightScale; out.weightUnit = result.weightUnit;
     out.sampleStats = clone(result.sampleStats); out.rangeUsed = clone(result.rangeUsed);
     out.warnings = result.warnings.slice(); out.missing = result.missing.slice(); out.errors = result.errors.slice();
     out.elapsedMs = result.elapsedMs;
@@ -1398,7 +1448,9 @@
       var j = perm[k];
       b.count[j] = a.count[k]; b.sum[j] = a.sum[k]; b.min[j] = a.min[k]; b.max[j] = a.max[k]; b.first[j] = a.first[k]; b.last[j] = a.last[k];
       b.firstIdx[j] = a.firstIdx[k]; b.lastIdx[j] = a.lastIdx[k]; b.minIdx[j] = a.minIdx[k]; b.maxIdx[j] = a.maxIdx[k];
+      b.wsum[j] = a.wsum[k]; b.wvsum[j] = a.wvsum[k];
     }
+    b.weighted = !!a.weighted;
     out.cells = b;
     if (result.cellOffsets) {
       var offsets = new Int32Array(cells + 1);
@@ -1415,6 +1467,51 @@
         out.sampleCellIndex = sc;
       }
     }
+    return out;
+  }
+  /**
+   * ownerTable(pages) -> which page "owns" each cell (Ken, 2026-09-08: "a who-owns-this-cell map" --
+   * which mapped point dominates each RPM × MAP cell, so you know which of the 27 tables matters).
+   *   pages = [{ page, label, result }]: the SAME def computed per page (same shape). A page's mass in
+   *   a cell is its Σweight when the def has a weight parameter, else its sample count. Returns
+   *   { shape, pages:[{page,label}], owner: Int32Array (index into pages, -1 = nothing landed),
+   *     share: Float64Array (owner mass / total mass, NaN when empty), mass: Float64Array (total),
+   *     hits: Float64Array (total effective hits, for min-hits dimming), skipped:[page] (shape
+   *     mismatch), breakdown(k) -> [{index, page, label, mass, share}] largest first }.
+   */
+  function ownerTable(pages) {
+    var out = { shape: null, pages: [], owner: null, share: null, mass: null, hits: null, skipped: [], breakdown: function () { return []; } };
+    var list = (Array.isArray(pages) ? pages : []).filter(function (p) { return p && hasCells(p.result); });
+    if (!list.length) return out;
+    var shape = list[0].result.shape, cells = shape.rows * shape.cols, used = [];
+    list.forEach(function (p) {
+      if (p.result.shape.rows !== shape.rows || p.result.shape.cols !== shape.cols) { out.skipped.push(p.page); return; }
+      used.push(p);
+    });
+    var massOf = function (res, k) { return res.cells.weighted ? res.cells.wsum[k] : res.cells.count[k]; };
+    var hitsOf = function (res, k) { return res.cells.weighted ? res.cells.wsum[k] / (res.weightScale || 1) : res.cells.count[k]; };
+    var owner = new Int32Array(cells), share = new Float64Array(cells), mass = new Float64Array(cells), hits = new Float64Array(cells);
+    for (var k = 0; k < cells; k++) {
+      var best = -1, bestM = 0, tot = 0, th = 0;
+      for (var i = 0; i < used.length; i++) {
+        var m = massOf(used[i].result, k);
+        tot += m; th += hitsOf(used[i].result, k);
+        if (m > bestM) { bestM = m; best = i; }
+      }
+      owner[k] = best; mass[k] = tot; hits[k] = th; share[k] = tot > 0 ? bestM / tot : NaN;
+    }
+    out.shape = { rows: shape.rows, cols: shape.cols };
+    out.pages = used.map(function (p) { return { page: p.page, label: p.label }; });
+    out.owner = owner; out.share = share; out.mass = mass; out.hits = hits;
+    out.breakdown = function (k) {
+      var rows = [], tot = mass[k];
+      for (var i = 0; i < used.length; i++) {
+        var m = massOf(used[i].result, k);
+        if (m > 0) rows.push({ index: i, page: used[i].page, label: used[i].label, mass: m, share: tot > 0 ? m / tot : NaN });
+      }
+      rows.sort(function (a, b) { return b.mass - a.mass; });
+      return rows;
+    };
     return out;
   }
   /**
@@ -1500,6 +1597,7 @@
     // compute + result helpers
     compute: compute, cellIndex: cellIndex, cellStat: cellStat, cellInfo: cellInfo, statTable: statTable,
     lowCountMask: lowCountMask, valueRange: valueRange, transposeResult: transposeResult, toRows: toRows, diff: diff,
+    effectiveHits: effectiveHits, ownerTable: ownerTable,
     distributionValues: distributionValues, normalizeStat: normalizeStat, statLabel: statLabel
   };
   global.Histogram = Histogram;

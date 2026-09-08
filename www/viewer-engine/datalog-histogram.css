@@ -180,6 +180,17 @@ table.dlv-hist-table td:hover{filter:brightness(1.3);}
 table.dlv-hist-table td.dlv-hist-cell-empty{color:#3a3a44;background:#0f0f12;}
 /* 0 < hits < min hits: faint value (or "·"), no heat -- must read as clearly weaker than a real cell */
 table.dlv-hist-table td.dlv-hist-cell-low{color:#5a5a64;background:#121215;font-weight:400;}
+/* ---- owner map: each cell names the page (mapped point) that carries the most weight there ------ */
+table.dlv-hist-table td.dlv-hist-cell-owner{font-size:10px;font-weight:800;color:#fff;letter-spacing:.2px;text-shadow:0 1px 2px rgba(0,0,0,.6);}
+table.dlv-hist-table td.dlv-hist-cell-owner.dlv-hist-cell-low{color:#6a6a74;text-shadow:none;}
+.dlv-hist-legend-sw{display:inline-flex;align-items:center;gap:4px;color:var(--text, #f2f2f4);font-weight:700;font-size:10.5px;white-space:nowrap;}
+.dlv-hist-legend-sw i{width:10px;height:10px;border-radius:2px;display:inline-block;flex-shrink:0;}
+.dlv-hist-legend-sw small{color:var(--text-faint, #5c5c66);font-weight:600;font-size:9.5px;}
+.dlv-hist-d-owner{display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums;}
+.dlv-hist-d-owner i{width:10px;height:10px;border-radius:2px;display:inline-block;flex-shrink:0;}
+.dlv-hist-link{background:none;border:none;color:var(--amber, #f5a623);cursor:pointer;font:inherit;font-size:10.5px;font-weight:700;padding:0 2px;text-decoration:underline;}
+.dlv-hist-link:hover{color:var(--text, #f2f2f4);}
+.dlv-hist-page-owner{padding:2px 8px;font-size:10px;margin-left:3px;}
 /* selection: white ring + dark halo so it survives any heat colour */
 table.dlv-hist-table td.dlv-hist-sel{box-shadow:inset 0 0 0 2px #fff, inset 0 0 0 3px #000;}
 /* live cursor: a floating dot at the scrubber/graph cursor's INTERPOLATED position on the table's

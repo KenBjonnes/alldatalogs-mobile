@@ -483,6 +483,10 @@
     if (!trim(def.name)) warnings.push({ path: 'name', message: 'Give the histogram a name' });
     if (def.type !== 'table' && def.type !== 'distribution') errors.push({ path: 'type', message: 'Type must be Table or Distribution' });
     validateParam(def.cellParameter, 'cellParameter', 'Cell parameter', errors, warnings, ctx);
+    if (weightIsSet(def.weightParameter)) {
+      validateParam(def.weightParameter, 'weightParameter', 'Weight', errors, warnings, ctx);
+      if (H() && H().normalizeStat(def.statistic) !== 'weighted') warnings.push({ path: 'statistic', message: 'A weight is set but the statistic is ' + (H().statLabel(def.statistic) || def.statistic) + ' — pick Weighted Avg to use it' });
+    }
     if (isObj(def.cellParameter) && def.cellParameter.unit && !def.cellParameter.math) {
       var cl = liveUnitFor(def.cellParameter, ctx);
       if (cl && !sameUnit(def.cellParameter.unit, cl)) warnings.push({ path: 'cellParameter.unit', message: 'Cell unit "' + def.cellParameter.unit + '" differs from the log\'s "' + cl + '"; values are reported in ' + cl });
@@ -885,7 +889,8 @@
   // ================================================================================================
   var TABS = [['general', 'General'], ['cell', 'Cell Parameter'], ['column', 'Column Axis'], ['row', 'Row Axis'], ['filter', 'Filter'], ['pages', 'Pages'], ['display', 'Display']];
   var SLOT_TAB = { cell: 'cell', column: 'column', row: 'row', filter: 'filter', pages: 'pages' };
-  var PATH_TAB = { name: 'general', type: 'general', cellParameter: 'cell', columnAxis: 'column', rowAxis: 'row', filter: 'filter', pages: 'pages', distribution: 'display', colorScale: 'display', minimumHits: 'display', statistic: 'display' };
+  var PATH_TAB = { name: 'general', type: 'general', cellParameter: 'cell', weightParameter: 'cell', columnAxis: 'column', rowAxis: 'row', filter: 'filter', pages: 'pages', distribution: 'display', colorScale: 'display', minimumHits: 'display', statistic: 'display' };
+  function weightIsSet(p) { return isObj(p) && !!(p.channel || p.role || p.math != null || p.mathChannelId); }
 
   // ---- pages (Histogram.pages: one def cycled through a numbered channel family) --------------------
   // The editor works on the TEMPLATE (with {n}); every check that touches the log -- resolver, filter
@@ -1219,7 +1224,7 @@
       } else delete ed.pendingConv[axKey];
       inputEl.setAttribute('data-prev', val || '');
       ed.render();
-    } else if (/^cellParameter\.math$/.test(path) || /^(columnAxis|rowAxis)\.parameter\.math$/.test(path)) {
+    } else if (/^(cellParameter|weightParameter)\.math$/.test(path) || /^(columnAxis|rowAxis)\.parameter\.math$/.test(path)) {
       var pPath = path.replace(/\.math$/, ''), param = getPath(w, pPath);
       if (param && !param.label) param.label = '';
       if (param && !param.unit) { var u = inferUnitForMath(val, ed.units); if (u) { param.unit = u; var ui = ed.ovl.querySelector('[data-path="' + pPath + '.unit"]'); if (ui) ui.value = u; } }
@@ -1347,7 +1352,20 @@
       mathPanel(ed, p, 'cellParameter') +
       row('Label', inp('cellParameter.label', p && p.label, 'nullstr', ' placeholder="shown on the table"')) +
       row('Unit', inp('cellParameter.unit', p && p.unit, 'nullstr', ' placeholder="' + ed.esc(liveUnitFor(p, ed.ctx) || 'as logged') + '"'), p && p.math != null && !p.channel ? 'Prefilled from the expression when it can be inferred (same-unit +/−, or × 100 → %).' : 'Informational for a channel parameter; values are reported in the log\'s unit.') +
+      weightSection(ed) +
       '</div>';
+  }
+  // Optional weight: Σ(weight × value) / Σweight per cell instead of a plain average. Ken's case
+  // (2026-09-08): Ford blends between mapped points, so a sample that is 70% MP15 / 30% MP16 should
+  // count 0.7 in MP15's table and 0.3 in MP16's, instead of a hard "Weight > 5" cut.
+  function weightSection(ed) {
+    var w = ed.work, wp = weightIsSet(w.weightParameter) ? w.weightParameter : null;
+    if (w.type === 'distribution') return '';
+    return '<div class="dlv-hg-sect-title sub">Weight <span class="dlv-hg-faint">— optional: each sample counts in proportion to a channel</span></div>' +
+      (wp ? slotHeader(ed, wp, 'weight', 'weightParameter') : '') +
+      row('Weight', '<div class="dlv-hg-inline">' + paramButton(ed, wp, 'weightParameter', 'weight') + (wp ? '<button type="button" class="dlv-hg-mini x" data-act="weight-clear" title="Remove the weight">×</button>' : '') + '</div>',
+        'Pick <i>Mapped Point {n} Weight</i> (with Pages on) or any channel, then use the <b>Weighted Avg</b> statistic: a sample that is 70% this mapped point counts 0.7 here. Hits become Σweight ÷ 100 for a percent weight (÷ 1 for a 0–1 weight), so Min Hits still means "whole samples".') +
+      (wp ? mathPanel(ed, wp, 'weightParameter') : '');
   }
   function bpLines(bp) { return (bp || []).map(function (v) { return isFin(v) ? fmtNum(v) : String(v); }).join('\n'); }
   function unitControl(ed, axKey, ax) {
@@ -1488,7 +1506,7 @@
   function displayTab(ed) {
     var w = ed.work, cs = w.colorScale, H_ = H(), html;
     html = '<div class="dlv-hg-section"><div class="dlv-hg-sect-title">Display</div>' +
-      row('Statistic', '<select class="dlv-hg-in" data-path="statistic">' + H_.STATISTICS.map(function (s) { return '<option value="' + s.id + '"' + (H_.normalizeStat(w.statistic) === s.id ? ' selected' : '') + '>' + s.label + '</option>'; }).join('') + '</select>', 'Default statistic shown in each cell; every statistic stays available in the view.') +
+      row('Statistic', '<select class="dlv-hg-in" data-path="statistic">' + H_.STATISTICS.map(function (s) { return '<option value="' + s.id + '"' + (H_.normalizeStat(w.statistic) === s.id ? ' selected' : '') + '>' + s.label + '</option>'; }).join('') + '</select>', 'Default statistic shown in each cell; every statistic stays available in the view. Weighted Avg uses the Weight on the Cell Parameter tab (plain average without one).') +
       row('Minimum hits', inp('minimumHits', w.minimumHits, 'int', ' min="0" step="1"'), 'Cells with fewer samples are shown greyed (not trusted).') +
       row('Color scale', seg('colorScale.mode', cs.mode === 'manual' ? 'manual' : 'auto', [['auto', 'Auto'], ['manual', 'Manual']]) +
         (cs.mode === 'manual' ? '<div class="dlv-hg-inline"><label>Min ' + inp('colorScale.min', cs.min, 'nullnum') + '</label><label>Center ' + inp('colorScale.center', cs.center, 'nullnum', ' placeholder="auto"') + '</label><label>Max ' + inp('colorScale.max', cs.max, 'nullnum') + '</label></div>' : '')) +
@@ -1703,6 +1721,12 @@
       param = { channel: null, role: null, math: wasMath ? prev.math : '', unit: wasMath ? prev.unit : null, label: wasMath ? (prev.label || '') : '' };
     }
     setPath(w, pPath, param);
+    // Picking a weight is the whole point of the weighted statistic -- switch a plain Average over
+    // so the table shows the weighted numbers straight away (any other statistic is left alone).
+    if (pPath === 'weightParameter' && weightIsSet(param) && H() && H().normalizeStat(w.statistic) === 'average') {
+      w.statistic = 'weighted';
+      ed.toast('Statistic set to Weighted Avg');
+    }
     if (isAxis) {
       var ax = w[pPath.split('.')[0]];
       if (info && info.categorical) { ax.categories = info.levels.slice(); ax.breakpoints = []; ax.unit = null; }
@@ -1751,7 +1775,8 @@
         applyPickedParam(ed, pPath, { channel: ch, role: cur2.role || null, math: null, unit: ed.units[ch] || null, label: ch }, { categorical: !!lv, levels: lv });
         return;
       }
-      case 'math-clear': { var p0 = getPath(w, pPath); if (p0) { p0.math = null; p0.channel = null; p0.role = null; p0.mathChannelId = null; } ed.render(); return; }
+      case 'math-clear': { var p0 = getPath(w, pPath); if (p0) { p0.math = null; p0.channel = null; p0.role = null; p0.mathChannelId = null; } if (pPath === 'weightParameter') w.weightParameter = null; ed.render(); return; }
+      case 'weight-clear': { w.weightParameter = null; if (H() && H().normalizeStat(w.statistic) === 'weighted') w.statistic = 'average'; ed.render(); return; }
       case 'open-mathmgr': { openMathManagerFromEditor(ed, btn.getAttribute('data-mcid') || null); return; }
       case 'insert-fn': insertIntoExpr(ed, pPath, btn.getAttribute('data-fn') + '('); return;
       case 'expr-jump': { var ta0 = exprTextarea(ed, pPath); if (ta0) { ta0.focus(); var pos = parseInt(btn.getAttribute('data-pos'), 10) || 0; try { ta0.setSelectionRange(pos, pos + 1); } catch (e0) { /* ignore */ } } return; }

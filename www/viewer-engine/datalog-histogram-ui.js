@@ -482,7 +482,8 @@
   // ================================================================================================
   // 4. DOM layer (browser only)
   // ================================================================================================
-  var STAT_BUTTONS = [['average', 'Average'], ['minimum', 'Minimum'], ['maximum', 'Maximum'], ['last', 'Last'], ['count', 'Count']];
+  // 'weighted' is only shown when the active def has a weight parameter (syncToolbar hides it).
+  var STAT_BUTTONS = [['average', 'Average'], ['weighted', 'Weighted'], ['minimum', 'Minimum'], ['maximum', 'Maximum'], ['last', 'Last'], ['count', 'Count']];
   var RANGE_DEBOUNCE_MS = 80, TIP_DELAY_MS = 150;
 
   function attachDomLayer(UI) {
@@ -522,6 +523,7 @@
               '<button type="button" class="dlv-hist-ibtn dlv-hist-page-arrow" data-a="pageprev" title="Previous page (←)">◀</button>' +
               '<button type="button" class="dlv-hist-page-lbl" data-a="pagemenu" title="Click to jump to a page"><b class="dlv-hist-page-name"></b><span class="dlv-hist-page-count"></span></button>' +
               '<button type="button" class="dlv-hist-ibtn dlv-hist-page-arrow" data-a="pagenext" title="Next page (→)">▶</button>' +
+              '<button type="button" class="dlv-hist-pill dlv-hist-page-owner" data-a="pageowner" title="Owner map: which page carries the most weight (or samples) in each cell, across every page">Owners</button>' +
             '</span>' +
             '<span class="dlv-hist-grp"><span class="dlv-hist-lbl">Statistic</span><span class="dlv-hist-seg" data-seg="stat">' + stat + '</span></span>' +
             '<span class="dlv-hist-grp"><span class="dlv-hist-lbl">Range</span><span class="dlv-hist-seg" data-seg="range">' +
@@ -558,7 +560,8 @@
         sel: null, pendingSel: null, anchor: null, detail: null, missing: null, dec: 1, scale: null, statTable: null,
         drag: null, mouseInside: false, rangeTimer: null, tip: null, tipTimer: null, menu: null,
         computeCount: 0, lastElapsed: 0, destroyed: false, listCollapsed: false, unsub: [],
-        cursorTime: null
+        cursorTime: null,
+        owner: null, ownerPages: null           // the owner map (Histogram.ownerTable) when that view is on
       };
       hostEl.classList.add('dlv-hist');
       hostEl.innerHTML = shellHtml();
@@ -653,6 +656,129 @@
         }
         return r;
       }
+      // ---- owner map: which page dominates each cell -------------------------------------------------
+      function ownerModeOf(def) { return !!(def && isObj(def.display) && def.display.pageView === 'owner'); }
+      function setOwnerMode(def, on) {
+        if (!def) return;
+        if (!isObj(def.display)) def.display = {};
+        if (on) def.display.pageView = 'owner'; else delete def.display.pageView;
+        changed(); S.owner = null; S.ownerPages = null;
+        if (def.id === S.activeId) renderActive('owner');
+      }
+      function ownerColor(i, share) {
+        var hue = (i * 137.508) % 360, a = isFin(share) ? 0.32 + 0.6 * Math.max(0, Math.min(1, share)) : 0.32;
+        return 'hsla(' + hue.toFixed(1) + ',62%,46%,' + a.toFixed(2) + ')';
+      }
+      function renderOwnerView(def, pi, reason) {
+        var data = ensureData();
+        if (!data) { statePanel('', 'No datalog loaded', 'Open a log to compute this histogram.'); return; }
+        if (!pi.values.length) { statePanel('', 'No pages on this log', 'No channel in this log matches ' + esc(def.pages.pattern) + '.'); return; }
+        var inverted = def.orientation === 'inverted', pages = [], skipped = [];
+        for (var i = 0; i < pi.values.length; i++) {
+          var v = pi.values[i], e = ensureEntry(def, reason, v);
+          if (e.state !== 'ok' || !e.result || !e.result.cells) { skipped.push(H().pageLabel(def, v) + (e.state === 'missing' ? ' (missing parameter)' : e.state === 'filter_error' ? ' (filter error)' : '')); continue; }
+          var view = e.result;
+          if (inverted && view.rows) { if (!e.viewT) e.viewT = H().transposeResult(e.result); view = e.viewT; }
+          pages.push({ page: v, label: H().pageLabel(def, v), result: view, entry: e });
+        }
+        if (!pages.length) { statePanel('dlv-hist-missing', 'No page could be computed', esc(skipped.join(' · ')), '<button type="button" class="dlv-hist-btn primary" data-a="edit">Edit…</button>'); return; }
+        var owner = H().ownerTable(pages), first = pages[0].result;
+        var sameShape = S.view && S.owner && S.R === first.shape.rows && S.C === first.shape.cols;
+        var keepSel = sameShape ? S.sel : null;
+        S.base = first;
+        renderTable(first);
+        if (keepSel) S.sel = keepSel;
+        S.owner = owner; S.ownerPages = pages;
+        applyOwnerCells(def);
+        applySelection();
+        applyCursorMark();
+        var w = [];
+        if (skipped.length) w.push('Skipped ' + skipped.join(', '));
+        if (owner.skipped.length) w.push('Different table shape on ' + owner.skipped.length + ' page(s)');
+        if (w.length) { D.warn.innerHTML = '<span class="dlv-hist-warn-ico">⚠</span> ' + esc(w.join(' · ')); D.warn.hidden = false; }
+        var reached = 0;
+        for (var k = 0; k < owner.owner.length; k++) if (owner.owner[k] >= 0) reached++;
+        D.samples.innerHTML = '<span><b>' + pages.length + '</b> pages · <b>' + reached + '</b> of ' + owner.owner.length + ' cells reached</span>';
+        if (S.detail && S.detail.r < S.R && S.detail.c < S.C) renderDetails(S.detail.r, S.detail.c); else renderDetails();
+      }
+      function applyOwnerCells(def) {
+        var o = S.owner, mh = minHitsOf(def);
+        if (!o || !S.cells.length) return;
+        S.statTable = null; S.scale = null; S.dec = 0;
+        for (var k = 0; k < S.cells.length; k++) {
+          var td = S.cells[k], i = o.owner[k], cls = '', text = '—', bg = '';
+          if (i < 0) cls = 'dlv-hist-cell-empty';
+          else {
+            text = o.pages[i].label;
+            cls = 'dlv-hist-cell-owner';
+            if (o.hits[k] < mh) cls += ' dlv-hist-cell-low';
+            else bg = ownerColor(i, o.share[k]);
+          }
+          if (S.sel && S.sel[k]) cls += ' dlv-hist-sel';
+          td.className = cls; td.textContent = text; td.style.background = bg;
+        }
+        renderOwnerLegend();
+      }
+      function renderOwnerLegend() {
+        var o = S.owner, present = {}, k;
+        for (k = 0; k < o.owner.length; k++) if (o.owner[k] >= 0) present[o.owner[k]] = (present[o.owner[k]] || 0) + 1;
+        var weighted = S.ownerPages.length && S.ownerPages[0].result.cells.weighted;
+        var html = '<span class="dlv-hist-legend-stat">Owner · most ' + (weighted ? 'weight' : 'samples') + ' in the cell</span>';
+        var idx = Object.keys(present).map(Number).sort(function (a, b) { return a - b; });
+        idx.slice(0, 16).forEach(function (i) { html += '<span class="dlv-hist-legend-sw"><i style="background:' + ownerColor(i, 1) + '"></i>' + esc(o.pages[i].label) + '<small>' + present[i] + '</small></span>'; });
+        if (idx.length > 16) html += '<span class="dlv-hist-legend-c">+' + (idx.length - 16) + ' more</span>';
+        html += '<span class="dlv-hist-legend-note">stronger colour = bigger share · click a cell for the split</span>';
+        D.legend.innerHTML = html;
+      }
+      function ownerTooltipHtml(r, c) {
+        var view = S.view, k = r * S.C + c, o = S.owner;
+        var head = '<div class="dlv-hist-tip-head">' + axisText(view, 'col', c) + (view.rows ? '<br>' + axisText(view, 'row', r) : '') + '</div>';
+        if (o.owner[k] < 0) return head + '<div class="dlv-hist-tip-row">No samples on any page</div>';
+        var mh = minHitsOf(activeDef());
+        return head + '<div class="dlv-hist-tip-grid">' +
+          o.breakdown(k).slice(0, 6).map(function (b) { return '<span>' + esc(b.label) + '</span><b>' + Math.round(b.share * 100) + '%</b>'; }).join('') +
+          '<span>Hits</span><b>' + fmtK(Math.round(o.hits[k])) + (o.hits[k] < mh ? ' <i>(below ' + mh + ')</i>' : '') + '</b></div>';
+      }
+      function ownerDetails(r, c) {
+        var view = S.view, k = r * S.C + c, o = S.owner;
+        S.detail = { r: r, c: c };
+        var html = '<span class="dlv-hist-d-axis">' + axisText(view, 'col', c) + (view.rows ? ' · ' + axisText(view, 'row', r) : '') + '</span>';
+        if (o.owner[k] < 0) { D.details.innerHTML = html + '<span class="dlv-hist-d-hint">No samples in this cell on any page</span>'; return; }
+        var rows = o.breakdown(k);
+        rows.slice(0, 8).forEach(function (b) {
+          html += '<span class="dlv-hist-d-owner"><i style="background:' + ownerColor(b.index, 1) + '"></i><b>' + esc(b.label) + '</b>' + Math.round(b.share * 100) + '%' +
+            '<button type="button" class="dlv-hist-link" data-gopage="' + esc(String(b.page)) + '" title="Show this page\'s table">open</button></span>';
+        });
+        if (rows.length > 8) html += '<span class="dlv-hist-d-hint">+' + (rows.length - 8) + ' more</span>';
+        html += '<span class="dlv-hist-d-hint">' + fmtK(Math.round(o.hits[k])) + ' hits across all pages</span>';
+        D.details.innerHTML = html;
+      }
+      function ownerCopyRows(withAxis) {
+        var view = S.view, o = S.owner, rows = [], r, c, line;
+        var axDec = axisDecimalsFor(activeDef());
+        if (withAxis) {
+          line = [cornerLabel(view)];
+          for (c = 0; c < S.C; c++) line.push(roundAxisLabel(view.columns[c].label, axDec));
+          rows.push(line);
+        }
+        for (r = 0; r < S.R; r++) {
+          line = withAxis ? [view.rows ? roundAxisLabel(view.rows[r].label, axDec) : 'Owner'] : [];
+          for (c = 0; c < S.C; c++) { var k = r * S.C + c, i = o.owner[k]; line.push(i < 0 ? '' : o.pages[i].label + ' ' + Math.round(o.share[k] * 100) + '%'); }
+          rows.push(line);
+        }
+        return rows;
+      }
+      function goToPage(def, raw) {
+        var pi = pageInfo(def);
+        if (!pi) return;
+        var hit = null;
+        for (var i = 0; i < pi.values.length; i++) if (H().samePage(pi.values[i], raw)) { hit = pi.values[i]; break; }
+        if (hit == null) return;
+        if (isObj(def.display)) delete def.display.pageView;
+        S.owner = null; S.ownerPages = null;
+        def.pages.current = hit;
+        changed(); renderList(); renderActive('page');
+      }
       function combinePagesInList() {
         var r = combinePages(S.defs, true);
         if (!r) return;
@@ -689,7 +815,7 @@
         var out = [];
         if (!data || !S.resolver || !def) return out;
         def = effectiveDef(def);
-        var slots = [['cell', def.cellParameter], ['column', def.columnAxis && def.columnAxis.parameter], ['row', def.rowAxis && def.rowAxis.parameter]];
+        var slots = [['cell', def.cellParameter], ['weight', def.weightParameter], ['column', def.columnAxis && def.columnAxis.parameter], ['row', def.rowAxis && def.rowAxis.parameter]];
         for (var i = 0; i < slots.length; i++) {
           var p = slots[i][1];
           if (!p) continue;
@@ -701,15 +827,18 @@
       }
 
       // ---- compute -----------------------------------------------------------------------------------
-      function ensureEntry(def, reason) {
+      // pageValue (optional) computes a specific page of a paged def instead of its current one --
+      // the owner map needs every page.
+      function ensureEntry(def, reason, pageValue) {
         var data = ensureData();
         if (!data) return { result: null, filter: null, state: 'no_data' };
         var range = null;
         if (def.dataRange === 'selection' && typeof glue.getRange === 'function') { try { range = glue.getRange(); } catch (e) { range = null; } }
         var rangeKey = (def.dataRange === 'selection' && range) ? range.startIdx + ':' + range.endIdx : 'all';
         var pi = pageInfo(def);
-        var eff = (pi && pi.current != null) ? H().applyPage(def, pi.current) : def;
-        var entryKey = pi ? def.id + '#' + pi.current : def.id;
+        var pv = pageValue != null ? pageValue : (pi ? pi.current : null);
+        var eff = (pi && pv != null) ? H().applyPage(def, pv) : def;
+        var entryKey = pi ? def.id + '#' + pv : def.id;
         var cur = S.entries[entryKey];
         if (cur && cur.rangeKey === rangeKey && cur.data === data) return cur;
         def = eff;
@@ -721,7 +850,7 @@
         };
         var result = H().compute(def, ctx);
         S.computeCount++; S.lastElapsed = result.elapsedMs;
-        var entry = { result: result, filter: filt, rangeKey: rangeKey, data: data, viewT: null, state: 'ok', page: pi ? pi.current : null };
+        var entry = { result: result, filter: filt, rangeKey: rangeKey, data: data, viewT: null, state: 'ok', page: pv };
         if (filt.error) entry.state = 'filter_error';
         else if (filt.missing.length || result.state === 'missing_parameter') entry.state = 'missing';
         else if (result.state === 'invalid' || result.state === 'error') entry.state = 'invalid';
@@ -1001,6 +1130,7 @@
         hideTip();
         D.wrap.innerHTML = html;
         S.view = null; S.base = null; S.cells = []; S.rowHeads = []; S.colHeads = []; S.sel = null; S.R = 0; S.C = 0;
+        S.owner = null; S.ownerPages = null;
         D.legend.innerHTML = ''; D.samples.innerHTML = '';
         renderDetails();
       }
@@ -1021,6 +1151,9 @@
             '<button type="button" class="dlv-hist-btn primary" data-a="enable">Enable</button>');
           syncToolbar(); return;
         }
+        var pInfo = pageInfo(def);
+        if (pInfo && ownerModeOf(def)) { renderOwnerView(def, pInfo, reason); syncToolbar(); return; }
+        S.owner = null; S.ownerPages = null;
         var entry = ensureEntry(def, reason);
         if (entry.state === 'no_data') { statePanel('', 'No datalog loaded', 'Open a log to compute this histogram.'); syncToolbar(); return; }
         var result = entry.result;
@@ -1082,7 +1215,7 @@
         var chans = S.resolver ? S.resolver.channels() : [];
         var opts = '<option value="">Choose a channel…</option>';
         for (var i = 0; i < chans.length; i++) opts += '<option value="' + esc(chans[i].name) + '">' + esc(chans[i].name) + (chans[i].unit ? ' (' + esc(displayUnit(chans[i].unit)) + ')' : '') + (chans[i].isText ? ' [text]' : '') + '</option>';
-        var slotName = { cell: 'cell value', column: 'column axis', row: 'row axis', filter: 'filter' };
+        var slotName = { cell: 'cell value', weight: 'weight', column: 'column axis', row: 'row axis', filter: 'filter' };
         var first = miss[0];
         var rows = '';
         for (var k = 0; k < miss.length; k++) {
@@ -1120,7 +1253,7 @@
           }
         } else {
           var axis = m.slot === 'column' ? def.columnAxis : (m.slot === 'row' ? def.rowAxis : null);
-          var p2 = axis ? axis.parameter : def.cellParameter;
+          var p2 = axis ? axis.parameter : (m.slot === 'weight' ? def.weightParameter : def.cellParameter);
           p2.channel = name; p2.role = null; p2.math = null; p2.label = null;
           // HIGH: this used to ALWAYS overwrite axis.unit with the replacement channel's live unit,
           // throwing away the unit the breakpoints were actually authored in -- a table saved with
@@ -1174,6 +1307,7 @@
       function applyCells() {
         var def = activeDef(), view = S.view;
         if (!def || !view || !view.cells) return;
+        if (S.owner) { applyOwnerCells(def); return; }
         var stat = statOf(def), mh = minHitsOf(def), showLow = showLowOf(def), isCount = stat === 'count';
         var table = H().statTable(view, stat), counts = view.cells.count;
         S.statTable = table;
@@ -1184,8 +1318,11 @@
         S.scale = makeScale(view, def, stat, mh);
         for (var k = 0; k < S.cells.length; k++) {
           var td = S.cells[k], n = counts[k], v = table[k], cls = '', text, bg = '';
+          // hits: the sample count, or Σweight/scale for the weighted statistic (a cell full of
+          // zero-weight samples is "low" however many samples it holds)
+          var hits = H().effectiveHits(view, k, stat);
           if (n === 0) { cls = 'dlv-hist-cell-empty'; text = '—'; }
-          else if (n < mh) { cls = 'dlv-hist-cell-low'; text = isCount ? String(n) : (showLow ? formatValue(v, S.dec) : '·'); }
+          else if (hits < mh || (!isCount && !isFin(v))) { cls = 'dlv-hist-cell-low'; text = isCount ? String(n) : (showLow && isFin(v) ? formatValue(v, S.dec) : '·'); }
           else { text = formatValue(v, S.dec); bg = colorFor(v, S.scale) || ''; }
           if (S.sel && S.sel[k]) cls += ' dlv-hist-sel';
           td.className = cls; td.textContent = text; td.style.background = bg;
@@ -1319,6 +1456,7 @@
       }
       function renderDetails(r, c) {
         var view = S.view;
+        if (S.owner && view && r != null) { ownerDetails(r, c); return; }
         if (!view || r == null) {
           S.detail = null;
           var n = selectedCount();
@@ -1340,9 +1478,10 @@
         else {
           var lv = view.cellLevels;
           var fv = function (v) { return lv && isFin(v) && lv[Math.round(v)] != null ? esc(lv[Math.round(v)]) : formatValue(v, dec) + u; };
-          html += '<span><b>Average</b> ' + fv(info.average) + '</span><span><b>Min</b> ' + fv(info.min) + '</span><span><b>Max</b> ' + fv(info.max) + '</span>' +
+          html += (info.weighted ? '<span><b>Weighted</b> ' + fv(info.weightedAverage) + '</span>' : '') +
+            '<span><b>Average</b> ' + fv(info.average) + '</span><span><b>Min</b> ' + fv(info.min) + '</span><span><b>Max</b> ' + fv(info.max) + '</span>' +
             '<span><b>Last</b> ' + fv(info.last) + '</span><span><b>First</b> ' + fv(info.first) + '</span>' +
-            '<span><b>Samples</b> ' + fmtK(info.count) + '</span>' +
+            '<span><b>Samples</b> ' + fmtK(info.count) + (info.weighted ? ' <span class="dlv-hist-d-hint">· ' + fmtK(Number(info.effectiveHits.toFixed(1))) + ' weighted hits</span>' : '') + '</span>' +
             '<span class="dlv-hist-d-time">first ' + fmtTime(info.firstTime) + ' → last ' + fmtTime(info.lastTime) + (isFin(info.maxTime) ? ' · max at ' + fmtTime(info.maxTime) : '') + '</span>' +
             '<span class="dlv-hist-d-acts"><span class="dlv-hist-lbl">Show samples</span>' +
               '<button type="button" class="dlv-hist-btn" data-nav="highlight">Highlight</button>' +
@@ -1354,14 +1493,17 @@
         D.details.innerHTML = html;
       }
       function tooltipHtml(r, c) {
+        if (S.owner) return ownerTooltipHtml(r, c);
         var view = S.view, info = H().cellInfo(view, r, c);
         if (!info) return '';
         var dec = Math.min(4, S.dec + 1), u = displayUnit(view.cellUnit);
         var head = '<div class="dlv-hist-tip-head">' + axisText(view, 'col', c) + (view.rows ? '<br>' + axisText(view, 'row', r) : '') + '</div>';
         if (info.count === 0) return head + '<div class="dlv-hist-tip-row">No samples</div>';
-        var mh = minHitsOf(activeDef());
+        var mh = minHitsOf(activeDef()), stat = statOf(activeDef());
+        var hits = H().effectiveHits(view, r * S.C + c, stat);
         return head + '<div class="dlv-hist-tip-grid">' +
-          '<span>Samples</span><b>' + fmtK(info.count) + (info.count < mh ? ' <i>(below ' + mh + ')</i>' : '') + '</b>' +
+          '<span>Samples</span><b>' + fmtK(info.count) + (info.weighted ? ' · ' + fmtK(Number(info.effectiveHits.toFixed(1))) + ' weighted' : '') + (hits < mh ? ' <i>(below ' + mh + ')</i>' : '') + '</b>' +
+          (info.weighted ? '<span>Weighted avg</span><b>' + formatValue(info.weightedAverage, dec) + ' ' + esc(u) + '</b>' : '') +
           '<span>Average</span><b>' + formatValue(info.average, dec) + ' ' + esc(u) + '</b>' +
           '<span>Min / Max</span><b>' + formatValue(info.min, dec) + ' / ' + formatValue(info.max, dec) + '</b>' +
           '<span>First / Last</span><b>' + formatValue(info.first, dec) + ' / ' + formatValue(info.last, dec) + '</b>' +
@@ -1395,7 +1537,7 @@
         var view = S.view, def = activeDef();
         if (!view || !view.cells) { toast('Nothing to copy'); return; }
         var stat = statOf(def), showLow = showLowOf(def);
-        var rows = H().toRows(view, stat, { includeAxis: withAxis, precision: S.dec, minHits: showLow ? null : minHitsOf(def), nanAs: '' });
+        var rows = S.owner ? ownerCopyRows(withAxis) : H().toRows(view, stat, { includeAxis: withAxis, precision: S.dec, minHits: showLow ? null : minHitsOf(def), nanAs: '' });
         // The engine's raw axis labels (10 significant figures) leak into the clipboard the same way
         // they used to leak onto screen; round them to match what the table now displays, so what you
         // copy is what you saw, not a column of 21.573482910273-style noise pasted into a tuning sheet.
@@ -1478,15 +1620,19 @@
       function syncToolbar() {
         var def = activeDef(), has = !!def, live = !!(S.view && S.view.cells);
         D.defsel.value = def ? def.id : '';
-        var pi = has ? pageInfo(def) : null;
+        var pi = has ? pageInfo(def) : null, ownerOn = !!(pi && ownerModeOf(def));
         D.pager.hidden = !pi;
         if (pi) {
-          D.pageName.textContent = pi.label || '—';
-          D.pageCount.textContent = pi.values.length ? (pi.index + 1) + '/' + pi.values.length : '0';
-          D.pager.title = pi.values.length ? 'Page ' + (pi.index + 1) + ' of ' + pi.values.length + ' of ' + def.pages.pattern : 'No channel in this log matches ' + def.pages.pattern;
+          D.pageName.textContent = ownerOn ? 'All pages' : (pi.label || '—');
+          D.pageCount.textContent = ownerOn ? pi.values.length + ' pages' : (pi.values.length ? (pi.index + 1) + '/' + pi.values.length : '0');
+          D.pager.title = ownerOn ? 'Owner map across ' + pi.values.length + ' pages of ' + def.pages.pattern : (pi.values.length ? 'Page ' + (pi.index + 1) + ' of ' + pi.values.length + ' of ' + def.pages.pattern : 'No channel in this log matches ' + def.pages.pattern);
           var arrows = D.tb.querySelectorAll('.dlv-hist-page-arrow');
-          for (var ai = 0; ai < arrows.length; ai++) arrows[ai].disabled = pi.values.length < 2;
+          for (var ai = 0; ai < arrows.length; ai++) arrows[ai].disabled = ownerOn || pi.values.length < 2;
+          var ob = D.tb.querySelector('[data-a="pageowner"]');
+          ob.classList.toggle('on', ownerOn); ob.disabled = pi.values.length < 2 && !ownerOn;
         }
+        var wb = D.tb.querySelector('[data-seg="stat"] [data-v="weighted"]');
+        if (wb) wb.hidden = !(has && def.weightParameter);
         setSeg('stat', has ? statOf(def) : '');
         setSeg('range', has ? (def.dataRange === 'selection' ? 'selection' : 'entire') : '');
         var cs = has && isObj(def.colorScale) ? def.colorScale : {};
@@ -1567,6 +1713,7 @@
           else if (a === 'copyaxis') copySelection(true);
           else if (a === 'pageprev') { if (def) stepPage(def, -1); }
           else if (a === 'pagenext') { if (def) stepPage(def, 1); }
+          else if (a === 'pageowner') { if (def) setOwnerMode(def, !ownerModeOf(def)); }
           else if (a === 'pagemenu') { if (def) { var pr = b.getBoundingClientRect(); openMenu(pr.left, pr.bottom + 4, pageMenuItems(def)); e.stopPropagation(); } }
           else if (a === 'clear') { if (def) { markDirty(def.id); renderActive('clear'); toast('Recomputed'); } }
           return;
@@ -1580,6 +1727,8 @@
         }
         var nav = closestAttr(e.target, 'data-nav', hostEl);
         if (nav) { navAction(nav.getAttribute('data-nav')); return; }
+        var gp = closestAttr(e.target, 'data-gopage', hostEl);
+        if (gp) { var gd = activeDef(); if (gd) goToPage(gd, gp.getAttribute('data-gopage')); return; }
         var rowMenu = e.target.classList && e.target.classList.contains('dlv-hist-row-menu') ? e.target : null;
         var row = closestAttr(e.target, 'data-id', hostEl);
         if (row) {
@@ -1675,7 +1824,7 @@
         if (key === 'Escape') { if (S.menu) closeMenu(); else { clearSelection(); renderDetails(); } hideTip(); return; }
         if (!mod && (key === 'ArrowLeft' || key === 'ArrowRight')) {
           var pd = activeDef();
-          if (pd && H().usesPages(pd)) { e.preventDefault(); stepPage(pd, key === 'ArrowRight' ? 1 : -1); return; }
+          if (pd && H().usesPages(pd) && !ownerModeOf(pd)) { e.preventDefault(); stepPage(pd, key === 'ArrowRight' ? 1 : -1); return; }
         }
         if (!S.view) return;
         if (mod && (key === 'c' || key === 'C')) { e.preventDefault(); copySelection(e.shiftKey); return; }
@@ -1724,6 +1873,8 @@
         stepPage: function (delta) { var d = activeDef(); if (d) stepPage(d, delta || 1); },
         pageInfo: function () { return pageInfo(activeDef()); },
         combinePages: combinePagesInList,
+        setOwnerMode: function (on) { var d = activeDef(); if (d) setOwnerMode(d, !!on); },
+        ownerTable: function () { return S.owner; },
         setStatistic: setStatistic,
         setRangeMode: setRangeMode,
         // dataX is a TIME value (or null = latest), in the same coordinate space the host's other
