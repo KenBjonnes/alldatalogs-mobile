@@ -3878,6 +3878,8 @@ function dashMigrateScorecards(gauges){
 // nearly untouched. The whole dash is zoomed as one block by the splitter, so text drawn at the
 // fascia's sizes grew with the bars until it dominated them (Ken, 2026-09-08).
 var DASH_TEXT_SCALE = { label: 0.72, tick: 0.75, value: 0.9 };
+// A vertical bar narrower than this has no room for a numeral gutter beside its track (see CSS).
+var DASH_BAR_NARROW_W = 48;
 function dashPlaceGauge(canvas, g){
   // Internal-only: a scorecard is simply not placed for users without permission -- the rest of the
   // dash renders normally, and the scorecard's config stays in VIEWER_DASH.gauges (preserved on save).
@@ -3891,6 +3893,7 @@ function dashPlaceGauge(canvas, g){
     el.style.removeProperty('--dlv-gauge-u');
     el.style.width = (g.w || 90) + 'px';
     el.style.height = (g.h || 200) + 'px';
+    el.classList.toggle('dlv-bar-narrow', (g.w || 90) < DASH_BAR_NARROW_W);   // no room for scale numerals
   } else {
     el.style.setProperty('--dlv-gauge-u', (g.scale || 1) + 'px');   // sizes the WHOLE gauge, aspect intact
   }
@@ -3934,6 +3937,7 @@ function dashMakeResizable(el, g, canvas){
         g.w = Math.max(40, Math.min(w, canvas.clientWidth - g.x));
         g.h = Math.max(30, Math.min(h, canvas.clientHeight - g.y));
         el.style.width = g.w + 'px'; el.style.height = g.h + 'px';
+        el.classList.toggle('dlv-bar-narrow', g.w < DASH_BAR_NARROW_W);
         g._w = g.w; g._h = g.h;
       } else {
         var nw = Math.max(56, startW + (ev.clientX - startX));
