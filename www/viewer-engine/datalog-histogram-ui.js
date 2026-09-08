@@ -516,6 +516,13 @@
           '<div class="dlv-hist-toolbar">' +
             '<select class="dlv-hist-defsel" title="Histogram"></select>' +
             '<button type="button" class="dlv-hist-btn" data-a="edit" title="Edit this histogram">Edit</button>' +
+            // Pages: one def cycled through a numbered channel family (Mapped Point {n} Weight...).
+            // Hidden unless the active def has pages; ← → on the keyboard do the same as the arrows.
+            '<span class="dlv-hist-pager" hidden>' +
+              '<button type="button" class="dlv-hist-ibtn dlv-hist-page-arrow" data-a="pageprev" title="Previous page (←)">◀</button>' +
+              '<button type="button" class="dlv-hist-page-lbl" data-a="pagemenu" title="Click to jump to a page"><b class="dlv-hist-page-name"></b><span class="dlv-hist-page-count"></span></button>' +
+              '<button type="button" class="dlv-hist-ibtn dlv-hist-page-arrow" data-a="pagenext" title="Next page (→)">▶</button>' +
+            '</span>' +
             '<span class="dlv-hist-grp"><span class="dlv-hist-lbl">Statistic</span><span class="dlv-hist-seg" data-seg="stat">' + stat + '</span></span>' +
             '<span class="dlv-hist-grp"><span class="dlv-hist-lbl">Range</span><span class="dlv-hist-seg" data-seg="range">' +
               '<button type="button" data-v="entire">Entire Log</button><button type="button" data-v="selection">Selection</button></span></span>' +
@@ -559,7 +566,8 @@
       var D = {
         list: Q('.dlv-hist-list'), rows: Q('.dlv-hist-list-rows'), expander: Q('.dlv-hist-expander'), file: Q('.dlv-hist-file'),
         tb: Q('.dlv-hist-toolbar'), defsel: Q('.dlv-hist-defsel'), legend: Q('.dlv-hist-legend'), warn: Q('.dlv-hist-warn'),
-        wrap: Q('.dlv-hist-tablewrap'), details: Q('.dlv-hist-details'), samples: Q('.dlv-hist-samples'), manual: Q('.dlv-hist-manual')
+        wrap: Q('.dlv-hist-tablewrap'), details: Q('.dlv-hist-details'), samples: Q('.dlv-hist-samples'), manual: Q('.dlv-hist-manual'),
+        pager: Q('.dlv-hist-pager'), pageName: Q('.dlv-hist-page-name'), pageCount: Q('.dlv-hist-page-count')
       };
       // The live cursor mark is one persistent element, re-attached to D.wrap after every renderTable()
       // wipes it out with a fresh innerHTML -- creating it once here (rather than per-render) means
@@ -573,7 +581,84 @@
       function defIndex(id) { for (var i = 0; i < S.defs.length; i++) if (S.defs[i].id === id) return i; return -1; }
       function activeDef() { return defById(S.activeId); }
       function changed() { if (typeof glue.defsChanged === 'function') { try { glue.defsChanged(S.defs); } catch (e) { if (global.console) console.error(e); } } }
-      function markDirty(id) { if (id == null) S.entries = {}; else delete S.entries[id]; }
+      // Entries are keyed by def id, or "id#page" for a paged def (one computed result per page, so
+      // stepping back to a page you already looked at is instant) -- dirtying a def drops all of them.
+      function markDirty(id) {
+        if (id == null) { S.entries = {}; return; }
+        delete S.entries[id];
+        var prefix = id + '#';
+        Object.keys(S.entries).forEach(function (k) { if (k.indexOf(prefix) === 0) delete S.entries[k]; });
+      }
+      // ---- pages -------------------------------------------------------------------------------------
+      // A def with `pages` is a template: {n} in its filter / parameters / name stands for the current
+      // page value (Histogram.applyPage). Everything below that computes, lists or validates a def
+      // goes through effectiveDef() so the concrete, current-page def is what gets binned.
+      function channelNames() {
+        var data = null;
+        try { data = ensureData(); } catch (e) { data = null; }
+        return data ? (data.channels || Object.keys(data.series || {})) : [];
+      }
+      function pageInfo(def) {
+        if (!def || !H().usesPages(def)) return null;
+        var values = H().pageValues(def, channelNames());
+        var cur = H().currentPage(def, values), idx = -1;
+        for (var i = 0; i < values.length; i++) if (H().samePage(values[i], cur)) { idx = i; break; }
+        return { values: values, current: cur, index: idx, label: H().pageLabel(def, cur) };
+      }
+      function effectiveDef(def) {
+        var pi = pageInfo(def);
+        return (pi && pi.current != null) ? H().applyPage(def, pi.current) : def;
+      }
+      function displayName(def) {
+        if (!def) return '';
+        var pi = pageInfo(def);
+        return (pi && pi.current != null) ? H().substitutePage(def.name, pi.current) : def.name;
+      }
+      function setPage(def, value) {
+        if (!def || !isObj(def.pages) || value == null) return;
+        if (H().samePage(def.pages.current, value)) return;
+        def.pages.current = value;
+        changed();
+        renderList();                                   // the row + toolbar select show the page's name
+        if (def.id === S.activeId) renderActive('page');
+      }
+      function stepPage(def, delta) {
+        var pi = pageInfo(def);
+        if (!pi || !pi.values.length) return;
+        var i = pi.index < 0 ? 0 : (pi.index + delta + pi.values.length) % pi.values.length;
+        setPage(def, pi.values[i]);
+      }
+      function pageMenuItems(def) {
+        var pi = pageInfo(def), items = [];
+        if (!pi) return items;
+        if (!pi.values.length) return [{ label: 'No channel in this log matches ' + def.pages.pattern, disabled: true }];
+        pi.values.forEach(function (v, i) {
+          items.push({ label: (i === pi.index ? '✓ ' : ' ') + H().pageLabel(def, v), action: function () { setPage(def, v); } });
+        });
+        return items;
+      }
+      // Fold MP0 FT / MP1 FT / ... (tables that differ only by one number in a channel name) into one
+      // paged def each. Offered from the list menu, and run automatically on an HP Tuners layout import.
+      function combinePages(defs, interactive) {
+        var r = H().collapsePaged(defs);
+        if (!r.collapsed.length) {
+          if (interactive) toast('No numbered families found — tables that differ only by a number in a channel name (Mapped Point 3 / 4 / 5 Weight…) can be combined.');
+          return null;
+        }
+        var what = r.collapsed.map(function (c) { return '"' + c.name + '" (' + c.count + ' tables, ' + H().pageLabel({ pages: { pattern: c.pattern } }, c.values[0]) + ' – ' + H().pageLabel({ pages: { pattern: c.pattern } }, c.values[c.values.length - 1]) + ')'; });
+        if (interactive) {
+          var okGo = true;
+          try { okGo = window.confirm('Combine into paged histograms?\n\n' + what.join('\n') + '\n\nThe separate tables are replaced by one table with ◀ ▶ page arrows.'); } catch (e) { okGo = true; }
+          if (!okGo) return null;
+        }
+        return r;
+      }
+      function combinePagesInList() {
+        var r = combinePages(S.defs, true);
+        if (!r) return;
+        S.defs = r.defs; S.entries = {}; changed(); renderList(); activate(r.collapsed[0].id, true);
+        toast('Combined ' + r.collapsed.map(function (c) { return c.count + ' tables into "' + c.name + '"'; }).join(', ') + ' — use ◀ ▶ to change page');
+      }
       function statOf(def) { return (def && H().normalizeStat(def.statistic)) || 'average'; }
       function minHitsOf(def) { return def && isFin(def.minimumHits) ? Math.max(0, def.minimumHits) : 0; }
       function showLowOf(def) { return !(def && def.display && def.display.showLowCount === false); }
@@ -603,6 +688,7 @@
       function missingFor(def, data) {
         var out = [];
         if (!data || !S.resolver || !def) return out;
+        def = effectiveDef(def);
         var slots = [['cell', def.cellParameter], ['column', def.columnAxis && def.columnAxis.parameter], ['row', def.rowAxis && def.rowAxis.parameter]];
         for (var i = 0; i < slots.length; i++) {
           var p = slots[i][1];
@@ -621,8 +707,12 @@
         var range = null;
         if (def.dataRange === 'selection' && typeof glue.getRange === 'function') { try { range = glue.getRange(); } catch (e) { range = null; } }
         var rangeKey = (def.dataRange === 'selection' && range) ? range.startIdx + ':' + range.endIdx : 'all';
-        var cur = S.entries[def.id];
+        var pi = pageInfo(def);
+        var eff = (pi && pi.current != null) ? H().applyPage(def, pi.current) : def;
+        var entryKey = pi ? def.id + '#' + pi.current : def.id;
+        var cur = S.entries[entryKey];
         if (cur && cur.rangeKey === rangeKey && cur.data === data) return cur;
+        def = eff;
         var filt = cachedFilter(def, data);
         var ctx = {
           getParam: S.resolver, time: data.time, n: data.time.length,
@@ -631,11 +721,11 @@
         };
         var result = H().compute(def, ctx);
         S.computeCount++; S.lastElapsed = result.elapsedMs;
-        var entry = { result: result, filter: filt, rangeKey: rangeKey, data: data, viewT: null, state: 'ok' };
+        var entry = { result: result, filter: filt, rangeKey: rangeKey, data: data, viewT: null, state: 'ok', page: pi ? pi.current : null };
         if (filt.error) entry.state = 'filter_error';
         else if (filt.missing.length || result.state === 'missing_parameter') entry.state = 'missing';
         else if (result.state === 'invalid' || result.state === 'error') entry.state = 'invalid';
-        S.entries[def.id] = entry;
+        S.entries[entryKey] = entry;
         if (typeof glue.onCompute === 'function') { try { glue.onCompute({ def: def, result: result, elapsedMs: result.elapsedMs, reason: reason || 'compute', count: S.computeCount }); } catch (e2) { /* dev hook */ } }
         return entry;
       }
@@ -647,10 +737,12 @@
         var html = '';
         for (var i = 0; i < S.defs.length; i++) {
           var d = S.defs[i], miss = d.enabled ? missingFor(d, data) : [];
+          var pi = pageInfo(d);
           html += '<div class="dlv-hist-row' + (d.id === S.activeId ? ' active' : '') + (d.enabled ? '' : ' off') + '" data-id="' + esc(d.id) + '" title="' + esc(d.description || d.name) + '">' +
             '<input type="checkbox" class="dlv-hist-row-en" title="Enabled"' + (d.enabled ? ' checked' : '') + '>' +
-            '<span class="dlv-hist-row-name">' + esc(d.name) + '</span>' +
+            '<span class="dlv-hist-row-name">' + esc(displayName(d)) + '</span>' +
             (miss.length ? '<span class="dlv-hist-dot" title="Missing on this log: ' + esc(miss.map(function (m) { return m.label; }).join(', ')) + '"></span>' : '') +
+            (pi ? '<span class="dlv-hist-badge pages" title="' + esc(pi.values.length + ' pages of ' + d.pages.pattern) + '">×' + pi.values.length + '</span>' : '') +
             '<span class="dlv-hist-badge">' + typeBadge(d) + '</span>' +
             '<button type="button" class="dlv-hist-row-menu" title="Actions">⋯</button></div>';
         }
@@ -658,7 +750,7 @@
         D.rows.innerHTML = html;
         // toolbar select mirrors the list
         var opts = '';
-        for (var j = 0; j < S.defs.length; j++) opts += '<option value="' + esc(S.defs[j].id) + '"' + (S.defs[j].id === S.activeId ? ' selected' : '') + '>' + esc(S.defs[j].name) + (S.defs[j].enabled ? '' : ' (off)') + '</option>';
+        for (var j = 0; j < S.defs.length; j++) opts += '<option value="' + esc(S.defs[j].id) + '"' + (S.defs[j].id === S.activeId ? ' selected' : '') + '>' + esc(displayName(S.defs[j])) + (S.defs[j].enabled ? '' : ' (off)') + '</option>';
         D.defsel.innerHTML = opts || '<option value="">— none —</option>';
         D.defsel.disabled = !S.defs.length;
       }
@@ -691,6 +783,7 @@
           // this is the entry point for getting in there WITHOUT opening a histogram first (Ken's ask,
           // 2026-09-07 -- previously the only way in was buried inside a parameter pick).
           { label: 'Manage math channels…', disabled: !mathManagerAvailable(), action: function () { openMathManagerFromList(); } },
+          { label: 'Combine numbered tables into pages…', disabled: S.defs.length < 2, action: function () { combinePagesInList(); } },
           'sep',
           { label: 'Import JSON…', action: function () { D.file.click(); } },
           // One picker for both: the file itself decides. A tuner reaches for "import" holding a
@@ -814,6 +907,13 @@
             var hr;
             try { hr = glue.hpt.importLayout(text, {}); }
             catch (e) { toast('Could not read that HP Tuners layout: ' + (e && e.message ? e.message : e)); return; }
+            // A VCM Scanner layout with one table per mapped point (MP0 FT … MP20 FT) becomes ONE paged
+            // table here; say so, since 21 tables going in and 1 coming out looks like a lossy import.
+            var folded = combinePages(hr.defs, false);
+            if (folded) {
+              hr.defs = folded.defs;
+              setTimeout(function () { toast('Combined ' + folded.collapsed.map(function (c) { return c.count + ' tables into "' + c.name + '"'; }).join(', ') + ' — use ◀ ▶ to change page'); }, 1200);
+            }
             adoptImported(hr.defs, hr.warnings, 'table');
             // Parameters HP Tuners names only by numeric id, that this log cannot resolve, arrive as
             // placeholders -- the table shows the missing-parameter panel, where mapping one remembers
@@ -1378,6 +1478,15 @@
       function syncToolbar() {
         var def = activeDef(), has = !!def, live = !!(S.view && S.view.cells);
         D.defsel.value = def ? def.id : '';
+        var pi = has ? pageInfo(def) : null;
+        D.pager.hidden = !pi;
+        if (pi) {
+          D.pageName.textContent = pi.label || '—';
+          D.pageCount.textContent = pi.values.length ? (pi.index + 1) + '/' + pi.values.length : '0';
+          D.pager.title = pi.values.length ? 'Page ' + (pi.index + 1) + ' of ' + pi.values.length + ' of ' + def.pages.pattern : 'No channel in this log matches ' + def.pages.pattern;
+          var arrows = D.tb.querySelectorAll('.dlv-hist-page-arrow');
+          for (var ai = 0; ai < arrows.length; ai++) arrows[ai].disabled = pi.values.length < 2;
+        }
         setSeg('stat', has ? statOf(def) : '');
         setSeg('range', has ? (def.dataRange === 'selection' ? 'selection' : 'entire') : '');
         var cs = has && isObj(def.colorScale) ? def.colorScale : {};
@@ -1456,6 +1565,9 @@
           else if (a === 'invert') invertAxes();
           else if (a === 'copy') copySelection(false);
           else if (a === 'copyaxis') copySelection(true);
+          else if (a === 'pageprev') { if (def) stepPage(def, -1); }
+          else if (a === 'pagenext') { if (def) stepPage(def, 1); }
+          else if (a === 'pagemenu') { if (def) { var pr = b.getBoundingClientRect(); openMenu(pr.left, pr.bottom + 4, pageMenuItems(def)); e.stopPropagation(); } }
           else if (a === 'clear') { if (def) { markDirty(def.id); renderActive('clear'); toast('Recomputed'); } }
           return;
         }
@@ -1561,6 +1673,10 @@
         if (isEditable(document.activeElement)) return;
         var mod = e.ctrlKey || e.metaKey, key = e.key;
         if (key === 'Escape') { if (S.menu) closeMenu(); else { clearSelection(); renderDetails(); } hideTip(); return; }
+        if (!mod && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+          var pd = activeDef();
+          if (pd && H().usesPages(pd)) { e.preventDefault(); stepPage(pd, key === 'ArrowRight' ? 1 : -1); return; }
+        }
         if (!S.view) return;
         if (mod && (key === 'c' || key === 'C')) { e.preventDefault(); copySelection(e.shiftKey); return; }
         if (mod && (key === 'a' || key === 'A')) { e.preventDefault(); selectAll(); }
@@ -1603,6 +1719,11 @@
         refresh: function () { S.entries = {}; S.filterCache = {}; S.resolver = null; renderList(); renderActive('refresh'); },
         importPackage: importPackage,
         openLibrary: openLibrary,
+        // pages
+        setPage: function (value) { var d = activeDef(); if (d) setPage(d, value); },
+        stepPage: function (delta) { var d = activeDef(); if (d) stepPage(d, delta || 1); },
+        pageInfo: function () { return pageInfo(activeDef()); },
+        combinePages: combinePagesInList,
         setStatistic: setStatistic,
         setRangeMode: setRangeMode,
         // dataX is a TIME value (or null = latest), in the same coordinate space the host's other

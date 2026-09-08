@@ -62,12 +62,18 @@
   flex-shrink:0;position:relative;
   max-height:14px;overflow:visible;
   border-top:3px solid rgba(209,19,46,.7);
-  /* The DELAY is the important part (Ken, 2026-07-22): opening is instant, closing waits ~0.9s so
-     clipping the strip on the way past doesn't make the bar flap open and shut. Without it the
-     header felt twitchy and grabbed attention constantly. */
-  transition:max-height .18s ease .9s, padding .18s ease .9s;
+  /* The DELAYS are the important part. Closing waits ~0.9s (Ken, 2026-07-22) so clipping the strip
+     on the way past doesn't make the bar flap open and shut. Opening ALSO waits (Ken, 2026-09-08:
+     reaching for the Gauges / Histograms tabs right under the strip kept pulling the header down)
+     -- a quarter second is longer than a pass-through and shorter than a deliberate hover. */
+  transition:max-height .18s ease .9s, padding .18s ease .9s, border-top-color .18s ease .9s;
 }
-.dlv-header > *{opacity:0;transition:opacity .12s ease;}
+/* Collapsed, the children are invisible but still laid out at full height and, with overflow:visible,
+   they hang ~45px below the 14px strip -- straight over the Graph / Gauges / Histograms tabs. They
+   were still hit-testable there, so aiming at a tab hovered (and could even click) an invisible
+   header control and pulled the bar open (Ken, 2026-09-08). Off the pointer entirely until the bar
+   is open; the strip and its ::before band remain the only things that open it. */
+.dlv-header > *{opacity:0;pointer-events:none;transition:opacity .12s ease;}
 .dlv-header:hover,
 .dlv-header:focus-within{
   /* max-height is a CEILING for the animation, not the real height -- the bar is content-sized and
@@ -76,7 +82,7 @@
      was clipped by overflow:hidden -- present in the DOM, invisible and unclickable. Generous
      ceiling + overflow:visible means it can never clip its own controls. */
   max-height:220px;padding:10px 18px;border-top-color:transparent;overflow:visible;
-  transition-delay:0s;                      /* opens immediately, only closing is delayed */
+  transition-delay:.28s;                    /* a brush past the strip never opens it; a hover does */
 }
 /* The hover band must not sit over the controls once the bar is open. Pseudo-elements paint beneath
    real children so it wasn't stealing clicks, but it has no job at all when open -- and leaving a
@@ -84,14 +90,16 @@
 .dlv-header:hover::before,
 .dlv-header:focus-within::before{pointer-events:none;}
 .dlv-header:hover > *,
-.dlv-header:focus-within > *{opacity:1;transition-delay:.06s;}
+.dlv-header:focus-within > *{opacity:1;pointer-events:auto;transition-delay:.34s;}
 /* THE HOVER TARGET MUST NOT MOVE OR VANISH WHEN HOVERED. It used to flash open-and-shut (Ken,
    2026-07-22): the tab below the strip was itself the thing you aimed at, and hovering it set it to
    height:0 -- so the target disappeared from under the cursor, :hover was lost, the bar closed, the
    tab came back, and the loop repeated. Any hover affordance that removes itself on hover does this.
-   The zone is now a fixed 38px band anchored to the top edge, covering the strip AND the tab, and
-   it never changes size or position in either state. */
-.dlv-header::before{content:'';position:absolute;left:0;right:0;top:0;height:38px;}
+   The zone is a fixed band anchored to the top edge, covering the strip AND the tab, and it never
+   changes size or position in either state. It was 38px, which reached 24px past the strip -- over
+   the top two-thirds of the Graph / Gauges / Histograms tabs directly beneath it, so aiming at a
+   tab opened the header (Ken, 2026-09-08). 22px covers the 14px strip plus the 7px tab and no more. */
+.dlv-header::before{content:'';position:absolute;left:0;right:0;top:0;height:22px;}
 /* The tab hanging below the strip -- otherwise nothing on screen says the header exists at all.
    It only FADES when open (never collapses), so it can't yank the hit area out from under you. */
 .dlv-header::after{

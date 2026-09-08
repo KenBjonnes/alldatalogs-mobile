@@ -465,6 +465,21 @@
     var errors = [], warnings = [];
     ctx = ctx || {};
     if (!isObj(def)) return { ok: false, errors: [{ path: '', message: 'definition is not an object' }], warnings: warnings };
+    // Pages: check the template, then validate the CURRENT page's concrete def (so "missing in this
+    // log" is judged on a real channel name, not on "Mapped Point {n} Weight").
+    if (H()) {
+      var H0 = H(), usesVar = H0.pageVarUses(def);
+      if (def.pages != null) {
+        if (!isObj(def.pages) || !H0.hasPageVar(def.pages.pattern)) errors.push({ path: 'pages', message: 'Pages needs a series channel or a pattern containing {n} (e.g. Mapped Point {n} Weight)' });
+        else {
+          var pchans = (ctx.data && ctx.data.channels) || [];
+          var pvals = H0.pageValues(def, pchans), pcur = H0.currentPage(def, pvals);
+          if (ctx.data && pchans.length && !pvals.length) warnings.push({ path: 'pages', message: 'No channel in this log matches "' + def.pages.pattern + '"' });
+          if (!usesVar.length) warnings.push({ path: 'pages', message: 'Nothing in this histogram uses {n} — every page would show the same table' });
+          if (pcur != null) def = H0.applyPage(def, pcur);
+        }
+      } else if (usesVar.length) warnings.push({ path: 'pages', message: 'This histogram uses {n} in its ' + usesVar.join(', ') + ' but Pages is off' });
+    }
     if (!trim(def.name)) warnings.push({ path: 'name', message: 'Give the histogram a name' });
     if (def.type !== 'table' && def.type !== 'distribution') errors.push({ path: 'type', message: 'Type must be Table or Distribution' });
     validateParam(def.cellParameter, 'cellParameter', 'Cell parameter', errors, warnings, ctx);
@@ -629,6 +644,10 @@
       }).join('') + '</div>';
     }).join('');
     var mathChannels = opts.mathChannels || [];
+    var series = isObj(opts.seriesChannel) && opts.seriesChannel.name ? opts.seriesChannel : null;
+    var seriesItem = series ? '<button type="button" class="dlv-hg-pick-item' + (cur.channel === series.name ? ' on' : '') + '" data-ch="' + esc(series.name) + '" data-search="' + esc((series.name + ' pages series').toLowerCase()) + '">' +
+      '<span class="dlv-hg-pick-name">' + esc(series.name) + '</span>' + (series.unit ? '<span class="dlv-hg-pick-unit">' + esc(displayUnit(series.unit)) + '</span>' : '') +
+      '<span class="dlv-hg-badge auto" title="Follows the page arrows">pages</span></button>' : '';
     var mcList = (opts.allowMath !== false && mathChannels.length) ?
       '<div class="dlv-hg-pick-group" data-group="mathchannels"><div class="dlv-hg-pick-glabel">Math Channels</div>' +
       mathChannels.map(function (mc) {
@@ -640,6 +659,7 @@
     pop.innerHTML =
       '<input type="text" class="dlv-hg-pick-search" placeholder="Filter channels… (name, role, unit)">' +
       (opts.allowMath !== false ? '<button type="button" class="dlv-hg-pick-item dlv-hg-pick-math' + (cur.math != null && !cur.channel ? ' on' : '') + '" data-math="1"><span class="dlv-hg-pick-name">ƒ  Math…</span><span class="dlv-hg-pick-unit">new calculated channel</span></button>' : '') +
+      seriesItem +
       mcList +
       '<div class="dlv-hg-pick-list">' + list + '</div>' +
       (typeof opts.onManageMath === 'function' ? '<button type="button" class="dlv-hg-pick-manage" data-manage-math="1">⚙ Manage math channels…</button>' : '') +
@@ -678,6 +698,7 @@
     function pick(ch) {
       var role = byCh[ch] || null;
       var param = { channel: ch, role: role, math: null, unit: units[ch] || null, label: ch };
+      if (series && ch === series.name) { param.role = null; param.unit = series.unit || null; }
       close();
       if (opts.onPick) opts.onPick(param, { categorical: !!levels[ch], levels: levels[ch] || null });
     }
@@ -862,9 +883,110 @@
   // ================================================================================================
   // 8. The editor overlay
   // ================================================================================================
-  var TABS = [['general', 'General'], ['cell', 'Cell Parameter'], ['column', 'Column Axis'], ['row', 'Row Axis'], ['filter', 'Filter'], ['display', 'Display']];
-  var SLOT_TAB = { cell: 'cell', column: 'column', row: 'row', filter: 'filter' };
-  var PATH_TAB = { name: 'general', type: 'general', cellParameter: 'cell', columnAxis: 'column', rowAxis: 'row', filter: 'filter', distribution: 'display', colorScale: 'display', minimumHits: 'display', statistic: 'display' };
+  var TABS = [['general', 'General'], ['cell', 'Cell Parameter'], ['column', 'Column Axis'], ['row', 'Row Axis'], ['filter', 'Filter'], ['pages', 'Pages'], ['display', 'Display']];
+  var SLOT_TAB = { cell: 'cell', column: 'column', row: 'row', filter: 'filter', pages: 'pages' };
+  var PATH_TAB = { name: 'general', type: 'general', cellParameter: 'cell', columnAxis: 'column', rowAxis: 'row', filter: 'filter', pages: 'pages', distribution: 'display', colorScale: 'display', minimumHits: 'display', statistic: 'display' };
+
+  // ---- pages (Histogram.pages: one def cycled through a numbered channel family) --------------------
+  // The editor works on the TEMPLATE (with {n}); every check that touches the log -- resolver, filter
+  // pass count, math preview, "not in this log" -- substitutes the current page first, so the editor
+  // reports exactly what the table will compute for the page on screen.
+  function edPage(ed) {
+    var w = ed && ed.work;
+    if (!w || !H() || !H().usesPages(w)) return null;
+    return H().currentPage(w, H().pageValues(w, (ed.data && ed.data.channels) || []));
+  }
+  function pageSub(ed, s) { var v = edPage(ed); return v != null ? H().substitutePage(s, v) : s; }
+  function pageAwareResolver(base, ed) {
+    if (typeof base !== 'function') return base;
+    var fn = function (param, slot) {
+      var v = edPage(ed);
+      return base((v != null && isObj(param)) ? H().substituteParam(param, v) : param, slot);
+    };
+    Object.keys(base).forEach(function (k) { fn[k] = base[k]; });
+    if (typeof base.lookup === 'function') fn.lookup = function (name) { return base.lookup(pageSub(ed, name)); };
+    return fn;
+  }
+  // The picker entry that stands for "whatever page is showing": the pattern itself, with the unit of
+  // the concrete channel it currently resolves to.
+  function seriesChannelOpt(ed) {
+    var w = ed.work;
+    if (!H() || !H().usesPages(w)) return null;
+    var concrete = pageSub(ed, w.pages.pattern);
+    return { name: w.pages.pattern, unit: (concrete && ed.units[concrete]) || '' };
+  }
+  function parsePageValues(text) {
+    var out = [], seen = {};
+    String(text == null ? '' : text).split(/[,\s]+/).forEach(function (tok) {
+      if (!tok) return;
+      var m = /^(-?\d+)\s*[-–]\s*(-?\d+)$/.exec(tok) || (/^(-?\d+)-(-?\d+)$/.exec(tok));
+      var vals = [];
+      if (m) { var a = parseInt(m[1], 10), b = parseInt(m[2], 10); if (a > b) { var t = a; a = b; b = t; } for (var v = a; v <= b && vals.length < 500; v++) vals.push(v); }
+      else vals.push(numberToken(tok) !== null ? numberToken(tok) : tok);
+      vals.forEach(function (v) { var k = String(v).toLowerCase(); if (!seen[k]) { seen[k] = true; out.push(v); } });
+    });
+    return out;
+  }
+  function formatPageValues(values) { return Array.isArray(values) ? values.map(String).join(', ') : ''; }
+  function setPagesEnabled(ed, on) {
+    var w = ed.work;
+    if (!on) { w.pages = null; ed.render(); return; }
+    if (isObj(w.pages)) return;
+    w.pages = { pattern: '', values: null, label: null, current: null };
+    // Guess the series from the FILTER (that is where "Mapped Point 15 Weight > 5" lives): exactly one
+    // numbered channel there -> adopt it straight away, otherwise leave the pick to the user.
+    var cands = [];
+    H().channelStringsOf({ filter: w.filter }).forEach(function (s) { var c = H().derivePagePattern(s); if (c && c.bounded) cands.push(c); });
+    if (cands.length === 1) adoptSeriesChannel(ed, cands[0].concrete, true);
+    else ed.render();
+  }
+  // Pick one member of the family ("Mapped Point 15 Weight"): its number becomes {n}, every use of that
+  // exact channel in the def becomes the pattern, and the table opens on that page.
+  function adoptSeriesChannel(ed, name, quiet) {
+    var H_ = H(), c = H_.derivePagePattern(name);
+    if (!c) { ed.toast('"' + name + '" has no number in it to page through'); ed.render(); return; }
+    var w = ed.work;
+    if (!isObj(w.pages)) w.pages = { pattern: '', values: null, label: null, current: null };
+    var r = H_.applyPagePattern(w, name, c.pattern, c.value);
+    Object.keys(r.def).forEach(function (k) { w[k] = r.def[k]; });
+    w.pages.pattern = c.pattern;
+    w.pages.current = c.value;
+    if (r.count) ed.toast('Replaced "' + name + '" with "' + c.pattern + '" in ' + r.count + ' place' + (r.count === 1 ? '' : 's'));
+    else if (!quiet) ed.toast('Series set to ' + c.pattern + ' — use [' + c.pattern + '] in the filter or a parameter');
+    ed.render();
+  }
+  function pagesTab(ed) {
+    var w = ed.work, p = isObj(w.pages) ? w.pages : null, H_ = H();
+    var html = '<div class="dlv-hg-section"><div class="dlv-hg-sect-title">Pages <span class="dlv-hg-faint">— one table, stepped through a numbered family of channels</span></div>' +
+      '<div class="dlv-hg-help block"><b>Example: fueling error by mapped point.</b> Instead of one histogram per mapped point (MP0 FT, MP1 FT, …), pick <i>Mapped Point 15 Weight</i> as the series channel. ' +
+        'Its number becomes <span class="mono" style="display:inline;margin:0">{n}</span> and the table gets ◀ ▶ arrows that step {n} through every value found in the log (0, 1, 2 … 20).' +
+        '<span>{n} works anywhere: filter conditions, cell / axis parameters, math, and the name.</span></div>' +
+      row('Pages', '<label class="dlv-hg-chk"><input type="checkbox" data-toggle="pages"' + (p ? ' checked' : '') + '> Step this histogram through pages</label>');
+    if (!p) return html + '</div>';
+    var chans = (ed.data && ed.data.channels) || [];
+    var values = H_.pageValues(w, chans), cur = H_.currentPage(w, values);
+    var uses = H_.pageVarUses(w), concretes = H_.pageConcretes(w, p.pattern);
+    var found;
+    if (!H_.hasPageVar(p.pattern)) found = '<span class="dlv-hg-warn">Pick a series channel, or type a pattern with {n} in it.</span>';
+    else if (!ed.data || !chans.length) found = '<span class="dlv-hg-faint">No log loaded — pages are found when a log is open.</span>';
+    else if (p.values && p.values.length) found = '<b>' + p.values.length + '</b> pages listed below' + (values.length ? '' : '') + ' <span class="dlv-hg-faint">(' + ed.esc(formatPageValues(p.values).slice(0, 80)) + ')</span>';
+    else if (!values.length) found = '<span class="dlv-hg-warn">No channel in this log matches "' + ed.esc(p.pattern) + '"</span>';
+    else found = '<b>' + values.length + '</b> page' + (values.length === 1 ? '' : 's') + ': <span class="dlv-hg-faint">' + ed.esc(values.map(function (v) { return H_.pageLabel(w, v); }).join(' · ').slice(0, 160)) + (values.length > 24 ? ' …' : '') + '</span>';
+    html += row('Series channel', '<button type="button" class="dlv-hg-parambtn' + (p.pattern ? '' : ' empty') + '" data-act="pages-pick" title="Pick any one member of the family"><span class="name">' + ed.esc(p.pattern || 'Pick the channel that changes from page to page…') + '</span><span class="caret">▾</span></button>',
+        'Pick any one member (e.g. <i>Mapped Point 15 Weight</i>); its number becomes {n} and every use of that channel here is rewritten to the pattern.') +
+      row('Pattern', inp('pages.pattern', p.pattern, 'str', ' placeholder="Mapped Point {n} Weight" spellcheck="false"'), 'The channel-name pattern, {n} where the page value goes. Editable.') +
+      row('Found in log', '<div class="dlv-hg-pages-found">' + found + '</div>') +
+      row('Page values', '<input class="dlv-hg-in" type="text" data-pages-values value="' + ed.esc(formatPageValues(p.values)) + '" placeholder="every value found in the log" spellcheck="false">', 'Leave blank to page through every value found in the log. Or list them: <span class="mono" style="display:inline;margin:0">0-20</span> or <span class="mono" style="display:inline;margin:0">0, 1, 2, 5</span>.') +
+      row('Page label', inp('pages.label', p.label, 'nullstr', ' placeholder="' + ed.esc(H_.defaultPageLabel(p.pattern)) + '" spellcheck="false"'), 'Shown between the arrows, {n} filled in' + (cur != null ? ' — now <b>' + ed.esc(H_.pageLabel(w, cur)) + '</b>' : '') + '.') +
+      row('Where {n} is used', uses.length ? '<div class="dlv-hg-pages-found ok">' + ed.esc(uses.join(', ')) + '</div>' :
+        '<div class="dlv-hg-pages-found"><span class="dlv-hg-warn">Nothing uses {n} yet — every page would show the same table.</span>' +
+        (concretes.length ? ' <button type="button" class="dlv-hg-btn sm" data-act="pages-apply" data-ch="' + ed.esc(concretes[0]) + '">Replace "' + ed.esc(concretes[0]) + '" with the pattern</button>' :
+          ' <span class="dlv-hg-faint">Write [' + ed.esc(p.pattern || 'Pattern {n}') + '] into the filter or pick "' + ed.esc(p.pattern || 'the pattern') + '" as a parameter.</span>') + '</div>');
+    if (uses.length && concretes.length) {
+      html += row('', '<div class="dlv-hg-pages-found"><span class="dlv-hg-warn">Still written out in full: ' + ed.esc(concretes.join(', ')) + '</span> <button type="button" class="dlv-hg-btn sm" data-act="pages-apply" data-ch="' + ed.esc(concretes[0]) + '">Replace with the pattern</button></div>');
+    }
+    return html + '</div>';
+  }
   var OPS = [['>', '>'], ['>=', '≥'], ['<', '<'], ['<=', '≤'], ['==', '='], ['!=', '≠']];
 
   function openEditor(def, opts) {
@@ -889,6 +1011,8 @@
       rowStash: null, pendingConv: {}, confirmOpen: false, timers: {}, closed: false
     };
     ed.isDirty = function () { return JSON.stringify(ed.work) !== ed.baseline; };
+    // Paged def: the resolver sees the current page's concrete parameters, never {n}.
+    ed.resolver = ctx.resolver = pageAwareResolver(resolver, ed);
 
     var ovl = document.createElement('div');
     ovl.className = 'dlv-hg-ed-ovl';
@@ -1020,6 +1144,11 @@
       if (t.getAttribute && t.getAttribute('data-clause')) { onClauseChange(ed, t); refreshValidation(); return; }
       if (t.getAttribute && t.getAttribute('data-insert-ch')) { if (t.value) insertIntoExpr(ed, t.getAttribute('data-insert-ch'), '[' + t.value + ']'); t.value = ''; return; }
       if (t.getAttribute && t.getAttribute('data-toggle') === 'row') { setRowEnabled(ed, !t.checked); refreshValidation(); return; }
+      if (t.getAttribute && t.getAttribute('data-toggle') === 'pages') { setPagesEnabled(ed, !!t.checked); refreshValidation(); return; }
+      if (t.getAttribute && t.getAttribute('data-pages-values') != null) {
+        if (isObj(ed.work.pages)) { var pv = parsePageValues(t.value); ed.work.pages.values = pv.length ? pv : null; }
+        ed.render(); refreshValidation(); return;
+      }
     });
     // Pasting into a breakpoints box replaces the list with the normalised values (row / column /
     // 2-D HPT table). A single plain number falls through to the default paste.
@@ -1102,6 +1231,8 @@
       updateMathPreview(ed, pPath);
     } else if (path === 'colorScale.mode' || path === 'distribution.mode') {
       ed.render();
+    } else if (path === 'pages.pattern' || path === 'pages.label') {
+      ed.render();   // the "found in log" / label readouts follow the text
     }
   }
   function onSegClick(ed, btn) {
@@ -1123,6 +1254,7 @@
       case 'column': return axisTab(ed, 'columnAxis');
       case 'row': return axisTab(ed, 'rowAxis');
       case 'filter': return filterTab(ed);
+      case 'pages': return pagesTab(ed);
       case 'display': return displayTab(ed);
       default: return generalTab(ed);
     }
@@ -1309,8 +1441,8 @@
           '<div class="dlv-hg-btnrow"><button type="button" class="dlv-hg-btn sm" data-act="clause-add" data-cpath="' + cpath + '">+ Add condition</button></div><span class="dlv-hg-flt-paren">)</span></div>' +
           '<button type="button" class="dlv-hg-mini x" data-act="clause-remove" data-cpath="' + cpath + '" title="Remove group">×</button></div>';
       }
-      var lv = c.param ? levels[c.param] : null;
-      var unit = c.param ? (ed.units[c.param] || '') : '';
+      var lv = c.param ? levels[pageSub(ed, c.param)] : null;
+      var unit = c.param ? (ed.units[pageSub(ed, c.param)] || '') : '';
       var valCtl = lv ? '<select class="dlv-hg-in" data-clause="value" data-cpath="' + cpath + '">' + lv.map(function (l) { return '<option value="' + ed.esc(l) + '"' + (String(c.value) === l ? ' selected' : '') + '>' + ed.esc(l) + '</option>'; }).join('') + '</select>' :
         '<input type="number" step="any" class="dlv-hg-in" data-clause="value" data-cpath="' + cpath + '" value="' + ed.esc(c.value == null ? '' : c.value) + '" placeholder="value">' + (unit ? '<span class="dlv-hg-unit">' + ed.esc(displayUnit(unit)) + '</span>' : '');
       return '<div class="dlv-hg-flt-row">' + joinSel +
@@ -1324,6 +1456,10 @@
     var f = ed.work.filter, mode = f.mode === 'advanced' ? 'advanced' : 'simple', html;
     html = '<div class="dlv-hg-section"><div class="dlv-hg-sect-title">Sample filter <span class="dlv-hg-faint">— only samples that pass are binned</span></div>' +
       row('Mode', seg('filter.mode', mode, [['simple', 'Simple'], ['advanced', 'Advanced']]));
+    if (H() && H().usesPages(ed.work)) {
+      var pv0 = edPage(ed);
+      html += '<div class="dlv-hg-help">Pages are on: <b>' + ed.esc(ed.work.pages.pattern) + '</b> stands for the page on screen' + (pv0 != null ? ' (now ' + ed.esc(pageSub(ed, ed.work.pages.pattern)) + ')' : '') + '. It is offered first in the parameter picker.</div>';
+    }
     if (mode === 'simple') {
       var clauses = ensureClauses(ed);
       html += '<div class="dlv-hg-flt">' + (clauses.length ? clauseRows(ed, clauses, '') : '<div class="dlv-hg-faint">No conditions — every sample passes.</div>') +
@@ -1440,7 +1576,9 @@
         var chanFor = X().seriesResolver ? X().seriesResolver(ed.data.series, ed.data.textLevels || {}).channelFor : function (r) { return ed.data.series[r] ? r : null; };
         var mathNames = {};
         knownExprNames(ed).forEach(function (nm) { mathNames[X().normName ? X().normName(nm) : String(nm).toLowerCase()] = 1; });
-        p.references.forEach(function (r) { if (!chanFor(r) && !mathNames[X().normName ? X().normName(r) : String(r).toLowerCase()]) missing.push(r); });
+        // A paged def: judge the references with the current page filled in ([Mapped Point 4 Weight]).
+        var pSub = X().parse(pageSub(ed, src)), refs = pSub.ok ? pSub.references : p.references;
+        refs.forEach(function (r) { if (!chanFor(r) && !mathNames[X().normName ? X().normName(r) : String(r).toLowerCase()]) missing.push(r); });
       }
       st.innerHTML = '<span class="dlv-hg-ok">✓ valid</span> <span class="dlv-hg-faint">' + p.references.length + ' channel' + (p.references.length === 1 ? '' : 's') + (p.functions.length ? ' · ' + p.functions.join(', ') : '') + '</span>' +
         (missing.length ? ' <span class="dlv-hg-warn">not in this log: ' + ed.esc(missing.join(', ')) + '</span>' : '');
@@ -1454,7 +1592,7 @@
     var ta = exprTextarea(ed, pPath), src = ta ? ta.value : (getPath(ed.work, pPath + '.math') || '');
     if (!trim(src)) { pv.innerHTML = ''; return; }
     if (!ed.data || !ed.data.series) { pv.innerHTML = '<span class="dlv-hg-faint">No log loaded — preview unavailable.</span>'; return; }
-    var c = X().compile(src, exprCtx(ed.data));
+    var c = X().compile(pageSub(ed, src), exprCtx(ed.data));
     if (!c.ok) { pv.innerHTML = ''; return; }
     if (c.missing.length) { pv.innerHTML = '<span class="dlv-hg-warn">Cannot preview: ' + ed.esc(c.missing.join(', ')) + ' missing in this log</span>'; return; }
     var vals = c.evaluateAll(), n = vals.length, k = 0, mn = Infinity, mx = -Infinity, sum = 0, nan = 0;
@@ -1472,7 +1610,7 @@
     if (debounced) { debounce(ed, 'fcount', function () { liveFilterCount(ed, false); }, 200); return; }
     var out = ed.body.querySelector('[data-filter-count]');
     if (!out) return;
-    var src = currentFilterSource(ed), M = ed.data && ed.data.time ? ed.data.time.length : 0;
+    var src = pageSub(ed, currentFilterSource(ed)), M = ed.data && ed.data.time ? ed.data.time.length : 0;
     if (!X() || !ed.data || !M) { out.innerHTML = '<span class="dlv-hg-faint">No log loaded — pass count unavailable.</span>'; return; }
     if (!trim(src)) { out.innerHTML = 'No filter — <b>all ' + M + '</b> samples pass'; return; }
     var c = X().compile(src, exprCtx(ed.data));
@@ -1601,7 +1739,7 @@
         channelPicker(btn, {
           channels: (ed.data && ed.data.channels) || [], unitByChannel: ed.units, textLevels: (ed.data && ed.data.textLevels) || {},
           resolvedRoles: ed.ctx.resolvedRoles, allowCategorical: true, allowMath: true, current: cur,
-          mathChannels: mcListFn ? mcListFn() : [],
+          mathChannels: mcListFn ? mcListFn() : [], seriesChannel: seriesChannelOpt(ed),
           onManageMath: mcListFn ? function () { openMathManagerFromEditor(ed, null); } : null,
           onPick: function (param, info) { applyPickedParam(ed, pPath, param, info); }
         });
@@ -1679,6 +1817,15 @@
         ed.render();
         return;
       }
+      case 'pages-pick': {
+        channelPicker(btn, {
+          channels: (ed.data && ed.data.channels) || [], unitByChannel: ed.units, textLevels: (ed.data && ed.data.textLevels) || {},
+          resolvedRoles: ed.ctx.resolvedRoles, allowCategorical: false, allowMath: false, current: {},
+          onPick: function (param) { if (param && param.channel) adoptSeriesChannel(ed, param.channel, false); }
+        });
+        return;
+      }
+      case 'pages-apply': { adoptSeriesChannel(ed, btn.getAttribute('data-ch'), false); return; }
       case 'clause-add': case 'group-add': {
         var clauses = ensureClauses(ed), cpath = btn.getAttribute('data-cpath'), list = clauses;
         if (cpath) { var grp = clauseAt(clauses, cpath); list = Array.isArray(grp) ? grp : grp.group; }
@@ -1699,7 +1846,7 @@
         var cp = btn.getAttribute('data-cpath'), cl = clauseAt(ensureClauses(ed), cp);
         channelPicker(btn, {
           channels: (ed.data && ed.data.channels) || [], unitByChannel: ed.units, textLevels: (ed.data && ed.data.textLevels) || {},
-          resolvedRoles: ed.ctx.resolvedRoles, allowCategorical: true, allowMath: false, current: { channel: cl ? cl.param : null },
+          resolvedRoles: ed.ctx.resolvedRoles, allowCategorical: true, allowMath: false, current: { channel: cl ? cl.param : null }, seriesChannel: seriesChannelOpt(ed),
           onPick: function (param, info) {
             if (!cl) return;
             // HIGH: leaving a prior pick's `role` on the clause let the TABLE (which resolves role
@@ -1733,6 +1880,7 @@
     makeLocalResolver: makeLocalResolver,
     familyMembers: familyMembers,
     open: openEditor,
+    parsePageValues: parsePageValues,
     channelPicker: channelPicker,
     closePicker: closePicker,
     openMathManager: openMathManager

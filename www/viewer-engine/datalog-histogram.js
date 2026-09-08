@@ -269,8 +269,322 @@
       // The shared-library item this def was published to / pulled from (so "Share to library"
       // can offer to update it rather than duplicate it). Null for a def that has never been shared.
       libraryId: typeof partial.libraryId === 'string' && partial.libraryId ? partial.libraryId : null,
-      vehicle: isObj(partial.vehicle) ? clone(partial.vehicle) : null
+      vehicle: isObj(partial.vehicle) ? clone(partial.vehicle) : null,
+      // One definition cycled through a numbered family of channels (see "Pages" below). null = off.
+      pages: normalizePages(partial.pages)
     };
+  }
+
+  // ================================================================================================
+  // 2b. Pages -- one definition, cycled through a numbered family of channels
+  // ================================================================================================
+  // Ken (2026-09-08): a Coyote's fueling error has to be read PER MAPPED POINT (the ECU's pre-mapped
+  // cam positions), so the filter is "[Mapped Point 15 Weight] > 5" -- and a copy of the same table
+  // existed for every point ("I have to have a ton of them"). def.pages names the channel family with
+  // a {n} placeholder ("Mapped Point {n} Weight"); the values {n} takes are discovered from the log's
+  // channel names (or listed explicitly), and applyPage() writes the current value into every string
+  // of the def -- filter, parameters, math, name -- to make the concrete def that gets computed. The
+  // engine's compute never sees {n}; the table UI keeps one result per page and steps with the arrows.
+  var PAGE_VAR = '{n}';
+  function hasPageVar(s) { return typeof s === 'string' && s.indexOf(PAGE_VAR) >= 0; }
+  function substitutePage(s, value) { return (typeof s === 'string' && value != null) ? s.split(PAGE_VAR).join(String(value)) : s; }
+  function isPageValue(v) { return typeof v === 'number' ? isFin(v) : (typeof v === 'string' && v !== ''); }
+  function normalizePages(p) {
+    if (!isObj(p)) return null;
+    var pattern = typeof p.pattern === 'string' ? p.pattern.replace(/^\s+|\s+$/g, '') : '';
+    if (!pattern) return null;
+    var values = Array.isArray(p.values) ? p.values.filter(isPageValue) : null;
+    return {
+      pattern: pattern,
+      values: values && values.length ? values : null,
+      label: (typeof p.label === 'string' && p.label.replace(/^\s+|\s+$/g, '')) ? p.label : null,
+      current: isPageValue(p.current) ? p.current : null
+    };
+  }
+  function usesPages(def) { return !!(isObj(def) && isObj(def.pages) && typeof def.pages.pattern === 'string' && def.pages.pattern); }
+  function samePage(a, b) { return a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase(); }
+  function escapeRe(s) { return String(s).replace(/[.*+?^$\{}()|[\]\\]/g, '\\$&'); }
+  /** RegExp that matches a channel name against a {n} pattern -- case-insensitive, any run of spaces or
+   *  underscores matches any other, {n} captures the value. null when the pattern has no {n}. */
+  function pageRegExp(pattern) {
+    if (!hasPageVar(pattern)) return null;
+    var parts = String(pattern).split(PAGE_VAR).map(function (t) {
+      return escapeRe(t.replace(/^\s+|\s+$/g, '')).replace(/\s+/g, '[\\s_]+');
+    });
+    return new RegExp('^' + parts.join('[\\s_]*(.+?)[\\s_]*') + '$', 'i');
+  }
+  function pageValueOf(raw) {
+    raw = String(raw == null ? '' : raw).replace(/^\s+|\s+$/g, '');
+    return (/^-?\d+(\.\d+)?$/.test(raw) && String(Number(raw)) === raw) ? Number(raw) : raw;
+  }
+  /** The values {n} takes: def.pages.values when listed, else every value found in channelNames. */
+  function pageValues(def, channelNames) {
+    if (!usesPages(def)) return [];
+    var p = def.pages;
+    if (Array.isArray(p.values) && p.values.length) return p.values.slice();
+    var re = pageRegExp(p.pattern);
+    if (!re || !Array.isArray(channelNames)) return [];
+    var out = [], seen = {};
+    for (var i = 0; i < channelNames.length; i++) {
+      var m = re.exec(String(channelNames[i] == null ? '' : channelNames[i]));
+      if (!m) continue;
+      var v = pageValueOf(m[1]);
+      if (v === '') continue;
+      var key = typeof v === 'number' ? 'n:' + v : 's:' + v.toLowerCase();
+      if (seen[key]) continue;
+      seen[key] = true; out.push(v);
+    }
+    var allNum = out.every(function (v) { return typeof v === 'number'; });
+    out.sort(allNum ? function (a, b) { return a - b; } : function (a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); });
+    return out;
+  }
+  /** The page to show: def.pages.current when it is one of `values`, else the first value, else current. */
+  function currentPage(def, values) {
+    if (!usesPages(def)) return null;
+    var cur = def.pages.current;
+    if (Array.isArray(values) && values.length) {
+      if (cur != null) for (var i = 0; i < values.length; i++) if (samePage(values[i], cur)) return values[i];
+      return values[0];
+    }
+    return cur;
+  }
+  /** Short label for the arrows: "MP 15" for "Mapped Point {n} Weight" (initials of the words before
+   *  {n} when they are long, the words themselves when short), or def.pages.label with {n} filled in. */
+  function defaultPageLabel(pattern) {
+    var head = String(pattern || '').split(PAGE_VAR)[0].replace(/[\s_]+$/g, '').replace(/[\s_]+/g, ' ');
+    if (!head) return 'Page ' + PAGE_VAR;
+    if (head.length > 8) {
+      var words = head.split(' ').filter(Boolean);
+      if (words.length > 1) head = words.map(function (w) { return w.charAt(0).toUpperCase(); }).join('');
+    }
+    return head + ' ' + PAGE_VAR;
+  }
+  function pageLabel(def, value) {
+    if (!usesPages(def)) return '';
+    var tpl = def.pages.label || defaultPageLabel(def.pages.pattern);
+    return value == null ? tpl : substitutePage(tpl, value);
+  }
+  function substituteParam(p, value) {
+    if (!isObj(p)) return p;
+    var c = clone(p);
+    c.channel = substitutePage(c.channel, value);
+    c.math = substitutePage(c.math, value);
+    c.label = substitutePage(c.label, value);
+    return c;
+  }
+  function substituteClauses(list, value) {
+    if (!Array.isArray(list)) return list;
+    return list.map(function (c) {
+      if (Array.isArray(c)) return substituteClauses(c, value);
+      if (!isObj(c)) return c;
+      var copy = clone(c);
+      if (Array.isArray(copy.group)) { copy.group = substituteClauses(copy.group, value); return copy; }
+      if (typeof copy.param === 'string') copy.param = substitutePage(copy.param, value);
+      else if (isObj(copy.param)) copy.param = substituteParam(copy.param, value);
+      return copy;
+    });
+  }
+  /** The concrete def for one page: a deep copy with {n} replaced by `value` everywhere it can appear
+   *  (name, cell/axis parameters, inline math, filter expression and simple-filter clauses). */
+  function applyPage(def, value) {
+    if (!isObj(def)) return def;
+    var d = clone(def);
+    if (value == null) return d;
+    d.name = substitutePage(d.name, value);
+    d.cellParameter = substituteParam(d.cellParameter, value);
+    if (isObj(d.columnAxis)) d.columnAxis.parameter = substituteParam(d.columnAxis.parameter, value);
+    if (isObj(d.rowAxis)) d.rowAxis.parameter = substituteParam(d.rowAxis.parameter, value);
+    if (isObj(d.filter)) {
+      d.filter.expression = substitutePage(d.filter.expression, value);
+      d.filter.clauses = substituteClauses(d.filter.clauses, value);
+    }
+    return d;
+  }
+  function paramUsesPageVar(p) { return isObj(p) && (hasPageVar(p.channel) || hasPageVar(p.math) || hasPageVar(p.label)); }
+  function clausesUsePageVar(list) {
+    if (!Array.isArray(list)) return false;
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (Array.isArray(c)) { if (clausesUsePageVar(c)) return true; continue; }
+      if (!isObj(c)) continue;
+      if (Array.isArray(c.group)) { if (clausesUsePageVar(c.group)) return true; continue; }
+      if (hasPageVar(c.param) || paramUsesPageVar(c.param)) return true;
+    }
+    return false;
+  }
+  /** Which parts of the def carry {n}: any of 'name', 'cell parameter', 'column axis', 'row axis', 'filter'. */
+  function pageVarUses(def) {
+    var out = [];
+    if (!isObj(def)) return out;
+    if (hasPageVar(def.name)) out.push('name');
+    if (paramUsesPageVar(def.cellParameter)) out.push('cell parameter');
+    if (isObj(def.columnAxis) && paramUsesPageVar(def.columnAxis.parameter)) out.push('column axis');
+    if (isObj(def.rowAxis) && paramUsesPageVar(def.rowAxis.parameter)) out.push('row axis');
+    if (isObj(def.filter) && (hasPageVar(def.filter.expression) || clausesUsePageVar(def.filter.clauses))) out.push('filter');
+    return out;
+  }
+  /** Every way to read a channel name as "family + number": one candidate per integer in the name,
+   *  {pattern, value}, space-bounded numbers first ("Mapped Point 15 Weight" -> "Mapped Point {n} Weight", 15). */
+  function derivePagePatterns(name) {
+    name = String(name == null ? '' : name);
+    var out = [], re = /\d+/g, m;
+    while ((m = re.exec(name))) {
+      var s = m.index, e = s + m[0].length;
+      var before = s > 0 ? name.charAt(s - 1) : '', after = e < name.length ? name.charAt(e) : '';
+      if (before === '.' || after === '.') continue;          // part of a decimal
+      var bounded = (before === '' || /[\s_]/.test(before)) && (after === '' || /[\s_]/.test(after));
+      out.push({ pattern: name.slice(0, s) + PAGE_VAR + name.slice(e), value: Number(m[0]), bounded: bounded, concrete: name });
+    }
+    out.sort(function (a, b) { return (b.bounded ? 1 : 0) - (a.bounded ? 1 : 0); });
+    return out;
+  }
+  function derivePagePattern(name) { var c = derivePagePatterns(name); return c.length ? c[0] : null; }
+  function sameChannelName(a, b) { return normChannelName(a) === normChannelName(b) && normChannelName(a) !== ''; }
+  function replaceRefs(src, concrete, pattern, counter) {
+    if (typeof src !== 'string') return src;
+    return src.replace(/\[([^\]]+)\]|"([^"]+)"/g, function (whole, br, qu) {
+      var ref = br != null ? br : qu;
+      if (!sameChannelName(ref, concrete)) return whole;
+      counter.n++;
+      return '[' + pattern + ']';
+    });
+  }
+  function patternParam(p, concrete, pattern, counter) {
+    if (!isObj(p)) return p;
+    var c = clone(p);
+    if (sameChannelName(c.channel, concrete)) { c.channel = pattern; c.role = null; counter.n++; if (sameChannelName(c.label, concrete)) c.label = pattern; }
+    if (typeof c.math === 'string') c.math = replaceRefs(c.math, concrete, pattern, counter);
+    return c;
+  }
+  function patternClauses(list, concrete, pattern, counter) {
+    if (!Array.isArray(list)) return list;
+    return list.map(function (c) {
+      if (Array.isArray(c)) return patternClauses(c, concrete, pattern, counter);
+      if (!isObj(c)) return c;
+      var copy = clone(c);
+      if (Array.isArray(copy.group)) { copy.group = patternClauses(copy.group, concrete, pattern, counter); return copy; }
+      if (typeof copy.param === 'string') { if (sameChannelName(copy.param, concrete)) { copy.param = pattern; copy.role = null; counter.n++; } }
+      else if (isObj(copy.param)) { var before = counter.n; copy.param = patternParam(copy.param, concrete, pattern, counter); if (counter.n > before) copy.role = null; }
+      return copy;
+    });
+  }
+  /** Rewrite every use of the concrete channel `concrete` in a def as the {n} `pattern` (parameters,
+   *  inline math and filter expression references, simple-filter clauses); when `value` is given, a
+   *  standalone occurrence of that number in the NAME becomes {n} too ("MP15 FT" -> "MP{n} FT").
+   *  Returns { def, count } -- a deep copy and how many places changed. */
+  function applyPagePattern(def, concrete, pattern, value) {
+    var counter = { n: 0 };
+    if (!isObj(def)) return { def: def, count: 0 };
+    var d = clone(def);
+    d.cellParameter = patternParam(d.cellParameter, concrete, pattern, counter);
+    if (isObj(d.columnAxis)) d.columnAxis.parameter = patternParam(d.columnAxis.parameter, concrete, pattern, counter);
+    if (isObj(d.rowAxis)) d.rowAxis.parameter = patternParam(d.rowAxis.parameter, concrete, pattern, counter);
+    if (isObj(d.filter)) {
+      d.filter.expression = replaceRefs(d.filter.expression, concrete, pattern, counter);
+      d.filter.clauses = patternClauses(d.filter.clauses, concrete, pattern, counter);
+    }
+    if (typeof d.name === 'string' && !hasPageVar(d.name)) {
+      if (sameChannelName(d.name, concrete)) { d.name = pattern; counter.n++; }
+      else if (value != null && /^-?\d+$/.test(String(value))) {
+        var re = new RegExp('(^|\\D)' + escapeRe(String(value)) + '(?!\\d)');
+        if (re.test(d.name)) { d.name = d.name.replace(re, '$1' + PAGE_VAR); counter.n++; }
+      }
+    }
+    return { def: d, count: counter.n };
+  }
+  /** Every concrete channel name a def refers to (parameters, bracketed refs in math/filters, clauses). */
+  function channelStringsOf(def) {
+    var out = [];
+    var add = function (s) { if (typeof s === 'string' && s && out.indexOf(s) < 0) out.push(s); };
+    var fromParam = function (p) {
+      if (!isObj(p)) return;
+      if (p.channel) add(p.channel);
+      if (typeof p.math === 'string') p.math.replace(/\[([^\]]+)\]/g, function (_, ref) { add(ref.replace(/^\s+|\s+$/g, '')); return _; });
+    };
+    var walk = function (list) {
+      if (!Array.isArray(list)) return;
+      list.forEach(function (c) {
+        if (Array.isArray(c)) { walk(c); return; }
+        if (!isObj(c)) return;
+        if (Array.isArray(c.group)) { walk(c.group); return; }
+        if (typeof c.param === 'string') add(c.param); else fromParam(c.param);
+      });
+    };
+    if (!isObj(def)) return out;
+    fromParam(def.cellParameter);
+    if (isObj(def.columnAxis)) fromParam(def.columnAxis.parameter);
+    if (isObj(def.rowAxis)) fromParam(def.rowAxis.parameter);
+    if (isObj(def.filter)) {
+      if (typeof def.filter.expression === 'string') def.filter.expression.replace(/\[([^\]]+)\]/g, function (_, ref) { add(ref.replace(/^\s+|\s+$/g, '')); return _; });
+      walk(def.filter.clauses);
+    }
+    return out;
+  }
+  /** The concrete members of a def's page family still written out in full (e.g. "Mapped Point 15
+   *  Weight" while the pattern is "Mapped Point {n} Weight") -- what "Replace with the pattern" acts on. */
+  function pageConcretes(def, pattern) {
+    var re = pageRegExp(pattern);
+    if (!re) return [];
+    return channelStringsOf(def).filter(function (s) { return !hasPageVar(s) && re.test(s); });
+  }
+  /** Fold a list of defs that differ only by one number in a channel name (MP0 FT, MP1 FT, ... each
+   *  filtering on its own "Mapped Point N Weight") into one paged def per family. Returns
+   *  { defs, collapsed:[{id, name, pattern, values, count}] }; defs keeps the original order, the paged
+   *  def taking the first member's place and id. Defs with no family come through untouched. */
+  function collapsePaged(defs) {
+    var out = { defs: Array.isArray(defs) ? defs.slice() : [], collapsed: [] };
+    if (out.defs.length < 2) return out;
+    var groups = {}, order = [];
+    var normalKey = function (d) {
+      var c = clone(d);
+      delete c.id; delete c.display; delete c.description; delete c.libraryId; delete c.enabled;
+      c.pages = null;
+      return JSON.stringify(c);
+    };
+    out.defs.forEach(function (d, idx) {
+      if (!isObj(d) || usesPages(d)) return;
+      channelStringsOf(d).forEach(function (s) {
+        derivePagePatterns(s).forEach(function (cand) {
+          var r = applyPagePattern(d, s, cand.pattern, cand.value);
+          if (!r.count) return;
+          var key = cand.pattern.toLowerCase() + '\u0001' + normalKey(r.def);
+          if (!groups[key]) { groups[key] = { pattern: cand.pattern, members: [] }; order.push(key); }
+          groups[key].members.push({ idx: idx, value: cand.value, def: r.def, concrete: s });
+        });
+      });
+    });
+    // Largest family first; a def joins one family only.
+    var keys = order.slice().sort(function (a, b) { return groups[b].members.length - groups[a].members.length; });
+    var taken = {}, replaceAt = {}, remove = {};
+    keys.forEach(function (key) {
+      var g = groups[key], members = [], seenVal = {};
+      g.members.forEach(function (m) {
+        if (taken[m.idx] || seenVal[m.value]) return;
+        members.push(m); seenVal[m.value] = true;
+      });
+      if (members.length < 2) return;
+      members.sort(function (a, b) { return a.value - b.value; });
+      members.forEach(function (m) { taken[m.idx] = true; });
+      // The paged def takes the LIST-FIRST member's slot and id (a layout that referenced that table
+      // still finds it); it opens on the lowest page value.
+      var firstIdx = Math.min.apply(null, members.map(function (m) { return m.idx; }));
+      var lead = null;
+      for (var li = 0; li < members.length; li++) if (members[li].idx === firstIdx) lead = members[li];
+      var paged = lead.def;
+      paged.id = out.defs[firstIdx].id;
+      paged.pages = normalizePages({ pattern: g.pattern, values: null, label: null, current: members[0].value });
+      replaceAt[firstIdx] = paged;
+      members.forEach(function (m) { if (m.idx !== firstIdx) remove[m.idx] = true; });
+      out.collapsed.push({ id: paged.id, name: paged.name, pattern: g.pattern, values: members.map(function (m) { return m.value; }), count: members.length });
+    });
+    if (!out.collapsed.length) return out;
+    var list = [];
+    out.defs.forEach(function (d, idx) {
+      if (replaceAt[idx]) list.push(replaceAt[idx]);
+      else if (!remove[idx]) list.push(d);
+    });
+    out.defs = list;
+    return out;
   }
 
   function validateAxis(ax, name, errors) {
@@ -306,6 +620,13 @@
     if (OUT_OF_RANGE.indexOf(def.outOfRange) === -1) errors.push('outOfRange must be "clamp" or "drop"');
     if (DATA_RANGES.indexOf(def.dataRange) === -1) errors.push('dataRange must be "entire" or "selection"');
     if (ORIENTATIONS.indexOf(def.orientation) === -1) errors.push('orientation must be "normal" or "inverted"');
+    if (def.pages != null) {
+      if (!isObj(def.pages)) errors.push('pages must be an object or null');
+      else {
+        if (!hasPageVar(def.pages.pattern)) errors.push('pages.pattern must contain ' + PAGE_VAR + ' (e.g. "Mapped Point ' + PAGE_VAR + ' Weight")');
+        if (def.pages.values != null && !(Array.isArray(def.pages.values) && def.pages.values.every(isPageValue))) errors.push('pages.values must be a list of numbers or names');
+      }
+    }
     if (def.type === 'table') {
       validateAxis(def.columnAxis, 'columnAxis', errors);
       if (def.rowAxis != null) validateAxis(def.rowAxis, 'rowAxis', errors);
@@ -1164,6 +1485,12 @@
     // math-channel references + packaging
     mathChannelByRef: mathChannelByRef, remapMathChannelIds: remapMathChannelIds, normChannelName: normChannelName,
     loadScaleFor: loadScaleFor, isLoadName: isLoadName,
+    // pages (one def cycled through a numbered channel family)
+    PAGE_VAR: PAGE_VAR, hasPageVar: hasPageVar, substitutePage: substitutePage, normalizePages: normalizePages, usesPages: usesPages,
+    samePage: samePage, pageRegExp: pageRegExp, pageValues: pageValues, currentPage: currentPage, pageLabel: pageLabel,
+    defaultPageLabel: defaultPageLabel, applyPage: applyPage, substituteParam: substituteParam, pageVarUses: pageVarUses,
+    derivePagePatterns: derivePagePatterns, derivePagePattern: derivePagePattern, applyPagePattern: applyPagePattern,
+    pageConcretes: pageConcretes, channelStringsOf: channelStringsOf, collapsePaged: collapsePaged,
     mathChannelDeps: mathChannelDeps, mergeMathChannels: mergeMathChannels, packMathChannel: packMathChannel,
     // breakpoints
     parseBreakpoints: parseBreakpoints, sortBreakpoints: sortBreakpoints, reverseBreakpoints: reverseBreakpoints,
