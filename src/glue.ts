@@ -49,6 +49,19 @@ function note(s: string) { log.push(new Date().toISOString().slice(11, 19) + ' '
 // Tell the engine it is inside a native app BEFORE any log renders (it reads this at render time).
 window.ADL_HOST = { kind: 'capacitor', platform: native.platform, handlesFullscreen: true, device };
 
+// The engine's "saved" / "loaded" / "copied" feedback: runtime.js only installs a console fallback
+// when the host has none, so the real toast must exist before the engine looks (glue.js loads last,
+// but the check happens lazily at call time, so defining it here is in time).
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
+window.showToast = (msg: string) => {
+  const el = document.getElementById('toast');
+  if (!el) { try { console.info('[BigData] ' + msg); } catch { /* ignore */ } return; }
+  el.textContent = String(msg == null ? '' : msg);
+  el.hidden = false;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
+};
+
 // ---- Saved layouts: local-first provider (same as the desktop) ----------------------------------------
 const LS_KEY = 'alldatalogs.viewerLayouts.v1';
 function readLocal(): SavedLayout[] {
@@ -104,7 +117,7 @@ function openParsed(parsed: any, src: LogSource): boolean {
   if (!parsed || !Array.isArray(parsed.channelNames) || !parsed.channelNames.length) { showError('No numeric channels found in this file.'); return false; }
   const data = buildViewerPayload(parsed, { maxPoints: MAX_POINTS, budgetCells: fullBudgetCells(device, caps), bucketDecimate: window.DVCore.bucketDecimate });
   window.openViewerFromPromise(Promise.resolve({ ok: true, data }), { fileName: src.name, source: src.origin === 'sample' ? 'sample' : 'local' });
-  void noteRecent(src).then(refreshRecents);
+  void noteRecent(src, lic.currentUserId()).then(refreshRecents);
   return true;
 }
 function decodeSync(fmt: string, buf: ArrayBuffer): any {
@@ -210,7 +223,7 @@ function fmtWhen(iso: string) {
 }
 async function refreshRecents() {
   let rows: RecentRow[] = [];
-  try { rows = await listRecents(); } catch { rows = []; }
+  try { rows = await listRecents(lic.currentUserId()); } catch { rows = []; }
   const ul = $('recentList'); ul.textContent = '';
   $('recentEmpty').hidden = rows.length > 0;
   for (const r of rows) {
@@ -248,9 +261,11 @@ function planLine(s: LicenseState): string {
   return 'Free · ' + s.reason.replace(/_/g, ' ');
 }
 function applyLicense(s: LicenseState) {
+  const switched = license.email !== s.email;
   license = s;
   window.setViewerPro?.(s.pro === true);
   maybePullLayouts(s);
+  if (switched) void refreshRecents(); // recents are per account
   $('checking').hidden = s.reason !== 'checking';
   const b = BANNERS[s.reason];
   for (const id of ['banner', 'accountBanner']) {

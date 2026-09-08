@@ -45,13 +45,16 @@ export async function openSample(): Promise<LogSource> {
 }
 
 // ---- recents ---------------------------------------------------------------------------------------
-export async function listRecents(): Promise<RecentRow[]> {
-  try { const a = JSON.parse((await prefGet(RECENTS_KEY)) || '[]'); return Array.isArray(a) ? a.filter((r) => r && r.name) : []; } catch { return []; }
+// Scoped by the signed-in account (`who` = user id, or 'anon' while signed out): a shared phone must
+// not show one person's logs to the next (Ken, 2026-09-08, reported on the Windows app first).
+function recentsKey(who: string | null) { return RECENTS_KEY + ':' + (who || 'anon'); }
+export async function listRecents(who: string | null): Promise<RecentRow[]> {
+  try { const a = JSON.parse((await prefGet(recentsKey(who))) || '[]'); return Array.isArray(a) ? a.filter((r) => r && r.name) : []; } catch { return []; }
 }
-export async function noteRecent(src: LogSource): Promise<void> {
+export async function noteRecent(src: LogSource, who: string | null): Promise<void> {
   if (src.origin === 'sample') return;
-  const rows = (await listRecents()).filter((r) => !(r.name === src.name && r.size === src.size));
+  const rows = (await listRecents(who)).filter((r) => !(r.name === src.name && r.size === src.size));
   rows.unshift({ name: src.name, size: src.size, format: fmtOf(src.name), openedAt: new Date().toISOString(), uri: src.uri });
-  await prefSet(RECENTS_KEY, JSON.stringify(rows.slice(0, RECENTS_MAX)));
+  await prefSet(recentsKey(who), JSON.stringify(rows.slice(0, RECENTS_MAX)));
 }
-export async function clearRecents(): Promise<void> { await prefSet(RECENTS_KEY, '[]'); }
+export async function clearRecents(who: string | null): Promise<void> { await prefSet(recentsKey(who), '[]'); }

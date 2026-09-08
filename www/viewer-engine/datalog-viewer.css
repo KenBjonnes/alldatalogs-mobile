@@ -1168,12 +1168,17 @@ table.dlv-channel-table tbody tr.dlv-row-selected{background:rgba(209,19,46,0.06
   /* One graph means "which graph?" has no answer -- the U/L/M assignment column is noise, and the
      Gauge column refers to a cluster that isn't rendered. The checkbox alone decides membership
      (channelsForSlot folds every assignment into the only visible panel). */
-  .dlv-mobile .dlv-channel-table col:nth-child(3),
-  .dlv-mobile .dlv-channel-table col:nth-child(4),
-  .dlv-mobile .dlv-channel-table th:nth-child(3),
-  .dlv-mobile .dlv-channel-table th:nth-child(4),
-  .dlv-mobile .dlv-channel-table td:nth-child(3),
-  .dlv-mobile .dlv-channel-table td:nth-child(4){display:none;}
+  /* Addressed from the END of the row, never by a fixed index: the drag-handle column (and the
+     prototype pin column) shifted the positions once already, and nth-child(3) then hid the NAME
+     cell -- the phone drawer showed checkboxes and values with no channel names (Ken, 2026-09-08,
+     first phone-app build). */
+  .dlv-mobile .dlv-channel-table col:nth-last-child(1),
+  .dlv-mobile .dlv-channel-table col:nth-last-child(2),
+  .dlv-mobile .dlv-channel-table th:nth-last-child(1),
+  .dlv-mobile .dlv-channel-table th:nth-last-child(2),
+  .dlv-mobile .dlv-channel-table td:nth-last-child(1),
+  .dlv-mobile .dlv-channel-table td:nth-last-child(2){display:none;}
+  .dlv-mobile .dlv-channel-table .dlv-ch-cell{display:table-cell;}
   /* Per-graph chips/controls belong to a multi-panel layout. */
   .dlv-mobile .dlv-graph-head{display:none;}
   /* In-graph legend is desktop-only: on a phone the numeric cards along the top already show every

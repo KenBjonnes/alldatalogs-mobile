@@ -22740,9 +22740,14 @@ ${suffix}`;
       return { ok: false, error: "malformed" };
     }
   }
+  var lastUserId = null;
   async function sessionInfo() {
     const s = await getSession();
+    lastUserId = s && s.user ? s.user.id : null;
     return s && s.user ? { userId: s.user.id, email: s.user.email || null, accessToken: s.access_token } : null;
+  }
+  function currentUserId() {
+    return DEV_PRO ? "dev" : lastUserId;
   }
   async function recompute() {
     if (DEV_PRO) return state;
@@ -22897,19 +22902,22 @@ ${suffix}`;
     const blob = await res.blob();
     return { name: "mile.hpl", size: blob.size, file: new File([blob], "mile.hpl"), origin: "sample" };
   }
-  async function listRecents() {
+  function recentsKey(who) {
+    return RECENTS_KEY + ":" + (who || "anon");
+  }
+  async function listRecents(who) {
     try {
-      const a = JSON.parse(await prefGet(RECENTS_KEY) || "[]");
+      const a = JSON.parse(await prefGet(recentsKey(who)) || "[]");
       return Array.isArray(a) ? a.filter((r) => r && r.name) : [];
     } catch {
       return [];
     }
   }
-  async function noteRecent(src) {
+  async function noteRecent(src, who) {
     if (src.origin === "sample") return;
-    const rows = (await listRecents()).filter((r) => !(r.name === src.name && r.size === src.size));
+    const rows = (await listRecents(who)).filter((r) => !(r.name === src.name && r.size === src.size));
     rows.unshift({ name: src.name, size: src.size, format: fmtOf(src.name), openedAt: (/* @__PURE__ */ new Date()).toISOString(), uri: src.uri });
-    await prefSet(RECENTS_KEY, JSON.stringify(rows.slice(0, RECENTS_MAX)));
+    await prefSet(recentsKey(who), JSON.stringify(rows.slice(0, RECENTS_MAX)));
   }
 
   // src/glue.ts
@@ -22925,6 +22933,23 @@ ${suffix}`;
     if (log.length > 200) log.shift();
   }
   window.ADL_HOST = { kind: "capacitor", platform, handlesFullscreen: true, device };
+  var toastTimer = null;
+  window.showToast = (msg) => {
+    const el = document.getElementById("toast");
+    if (!el) {
+      try {
+        console.info("[BigData] " + msg);
+      } catch {
+      }
+      return;
+    }
+    el.textContent = String(msg == null ? "" : msg);
+    el.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      el.hidden = true;
+    }, 3200);
+  };
   var LS_KEY = "alldatalogs.viewerLayouts.v1";
   function readLocal() {
     try {
@@ -23006,7 +23031,7 @@ ${suffix}`;
     }
     const data = buildViewerPayload(parsed, { maxPoints: MAX_POINTS, budgetCells: fullBudgetCells(device, caps), bucketDecimate: window.DVCore.bucketDecimate });
     window.openViewerFromPromise(Promise.resolve({ ok: true, data }), { fileName: src.name, source: src.origin === "sample" ? "sample" : "local" });
-    void noteRecent(src).then(refreshRecents);
+    void noteRecent(src, currentUserId()).then(refreshRecents);
     return true;
   }
   function decodeSync(fmt, buf) {
@@ -23182,7 +23207,7 @@ ${suffix}`;
   async function refreshRecents() {
     let rows = [];
     try {
-      rows = await listRecents();
+      rows = await listRecents(currentUserId());
     } catch {
       rows = [];
     }
@@ -23230,9 +23255,11 @@ ${suffix}`;
     return "Free \xB7 " + s.reason.replace(/_/g, " ");
   }
   function applyLicense(s) {
+    const switched = license.email !== s.email;
     license = s;
     window.setViewerPro?.(s.pro === true);
     maybePullLayouts(s);
+    if (switched) void refreshRecents();
     $("checking").hidden = s.reason !== "checking";
     const b = BANNERS[s.reason];
     for (const id of ["banner", "accountBanner"]) {

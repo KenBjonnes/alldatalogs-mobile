@@ -49,10 +49,14 @@ async function verifyStored(now: number): Promise<Verified | null> {
   try { return await verifyJws(store.token, { keys: ENTITLEMENT_KEYS, iss: TOKEN_ISS, aud: TOKEN_AUD, now: Math.floor(now / 1000) }) as Verified; }
   catch { return { ok: false, error: 'malformed' }; }
 }
+let lastUserId: string | null = null; // the signed-in account as of the last session read (recents are scoped by it)
 async function sessionInfo() {
   const s = await getSession();
+  lastUserId = s && s.user ? s.user.id : null;
   return s && s.user ? { userId: s.user.id, email: s.user.email || null, accessToken: s.access_token } : null;
 }
+/** The account id from the most recent session read, or null when signed out. */
+export function currentUserId(): string | null { return DEV_PRO ? 'dev' : lastUserId; }
 
 async function recompute(): Promise<LicenseState> {
   if (DEV_PRO) return state;
