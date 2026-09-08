@@ -1,0 +1,146 @@
+{
+  "builtAt": "2026-09-08T12:20:15.589Z",
+  "version": "0.1.0",
+  "sources": {
+    "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
+    "siteRepo": "C:/websites/Alldatalogs",
+    "siteCommit": "22bfa48"
+  },
+  "files": {
+    "viewer-engine/datalog-viewer.css": {
+      "sha256": "f208da0ad93baaa971401e94c607c3901b2e54765c14677a3d74a24fcf0970ce",
+      "bytes": 116478,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.css"
+    },
+    "viewer-engine/datalog-histogram.css": {
+      "sha256": "8850a77d3c9a7bd734737e9a0348adc8b4b9fb60c1cf4c2bb4c6810142e676e0",
+      "bytes": 16589,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram.css"
+    },
+    "viewer-engine/datalog-histogram-editor.css": {
+      "sha256": "ca87c02f974f1672e5c35d94b970bce48e11ee79b77e964c3cf13a7955caa1a8",
+      "bytes": 20150,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram-editor.css"
+    },
+    "viewer-engine/datalog-presets.js": {
+      "sha256": "0bbaa7fd3ffb49b899c494adf57af3171bee50c614a7e036613628a8fb06f109",
+      "bytes": 77680,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-presets.js"
+    },
+    "viewer-engine/datalog-gauges.js": {
+      "sha256": "d9f252a90a1d53a983d3675a030ff999d8389b3450db190bf76deca2e8dd8543",
+      "bytes": 49063,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-gauges.js"
+    },
+    "viewer-engine/datalog-scorecard.js": {
+      "sha256": "f21d6831fc4d3d5fe720ceeb91ff63ce9165c5797e57c74890788e09204b1b1a",
+      "bytes": 53063,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-scorecard.js"
+    },
+    "viewer-engine/datalog-scorecard-evaluators.js": {
+      "sha256": "9e813b214263a56bb4631143de8bfa13349951744b922410dbda5c35c87a1c4a",
+      "bytes": 30236,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-scorecard-evaluators.js"
+    },
+    "viewer-engine/datalog-expr.js": {
+      "sha256": "23f2a49317e084a03dc603c43f1d72fa8c3a166bdff1a9e3594108b8a9db4be4",
+      "bytes": 57144,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-expr.js"
+    },
+    "viewer-engine/datalog-histogram.js": {
+      "sha256": "8fcefa4666a491fb64de2cc301f1f1be3a4c1e8d6b95ceb759ba95f9ad2f0ff3",
+      "bytes": 70204,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram.js"
+    },
+    "viewer-engine/datalog-histogram-ui.js": {
+      "sha256": "430d0ccf6cedc4c99a6876cf341f4c94770295ea5d4e7ca67c75d6bc8cad9b03",
+      "bytes": 110166,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram-ui.js"
+    },
+    "viewer-engine/datalog-histogram-editor.js": {
+      "sha256": "c6049eb1f1624a586f1ca65878d3819c03594d8ceaca0f195852dd8f7cddf094",
+      "bytes": 119101,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram-editor.js"
+    },
+    "viewer-engine/datalog-hpt.js": {
+      "sha256": "8bd6483b50d0861b92f42a683befc470f050d041f994e55eee546aef7916a6b1",
+      "bytes": 46426,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-hpt.js"
+    },
+    "viewer-engine/datalog-library.js": {
+      "sha256": "dc89c7be065f66a7234d06ab59e10b2138ffec2739b2d308e9318b2d05be32e4",
+      "bytes": 23908,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-library.js"
+    },
+    "viewer-engine/datalog-library.css": {
+      "sha256": "4f3421400dad997af6a450a4b18ff7871ca72fa2ac9b4318c2ee04223c5060ec",
+      "bytes": 6003,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-library.css"
+    },
+    "viewer-engine/datalog-vehicles.js": {
+      "sha256": "923be99634c8b59049c9cd15f9795535190cdc1eac96acdf77fb22a0352f7447",
+      "bytes": 13165,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-vehicles.js"
+    },
+    "viewer-engine/datalog-viewer.js": {
+      "sha256": "e9afacc18072b7dbff3b1bccadeb67a19ddd65a27ce939b848610780a599657f",
+      "bytes": 380797,
+      "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.js"
+    },
+    "viewer-engine/runtime.js": {
+      "sha256": "cee36dcd1c092891e4f811d35e115ca229c241b8895327b69548228ab0c65382",
+      "bytes": 4263,
+      "from": "C:/websites/Alldatalogs/packages/viewer-engine/src/runtime.js"
+    },
+    "vendor/chart.umd.js": {
+      "sha256": "2e3da592d5f6a2bd75385fbd2e6eee45e61d22b33441140ac71543d992239989",
+      "bytes": 205489,
+      "from": "C:/websites/Alldatalogs/apps/web/public/vendor/chart.umd.js"
+    },
+    "vendor/hammer.min.js": {
+      "sha256": "dc70d21f4aff8306125f8153760205ab72d2cf56d537d77b31a2b5c46f1f4a6c",
+      "bytes": 20771,
+      "from": "C:/websites/Alldatalogs/apps/web/public/vendor/hammer.min.js"
+    },
+    "vendor/chartjs-plugin-zoom.min.js": {
+      "sha256": "e70928b72911c79cb58532af5e9d32e3958748ff94184de26c8f3d02c564dabe",
+      "bytes": 12861,
+      "from": "C:/websites/Alldatalogs/apps/web/public/vendor/chartjs-plugin-zoom.min.js"
+    },
+    "vendor/pako.min.js": {
+      "sha256": "c0ca8a09d52a28b918fcbe6e3ca6c9e75668a8628992e7ac9387484209844c56",
+      "bytes": 46861,
+      "from": "C:/websites/Alldatalogs/apps/web/public/vendor/pako.min.js"
+    },
+    "sample/mile.hpl": {
+      "sha256": "5a5b6078f9f1bc5cf2c4d3ee990a3494a4ac55b02cba441bbe3906168d522015",
+      "bytes": 308261,
+      "from": "C:/websites/Alldatalogs/apps/web/public/sample/mile.hpl"
+    },
+    "app.css": {
+      "sha256": "701a253003fc4c96d045d90ebc36c3c0f5a5d8ba7dbd9fbcc6d86d2d33a591fa",
+      "bytes": 7485,
+      "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/app.css"
+    },
+    "viewer-engine/dvcore.js": {
+      "sha256": "cbcdc9c42ec95605ec32c51b5fdd2a6f7597b0a223575c1f4daf3462d2de6652",
+      "bytes": 59057,
+      "from": "C:/websites/Alldatalogs/packages/datalog-core/browser/entry.ts (esbuild)"
+    },
+    "glue.js": {
+      "sha256": "5a887b8e67b5b5aaed86426ffca4d5bc2a3dcfcb18af67465e5c4b3c6c48411e",
+      "bytes": 889336,
+      "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/glue.ts (esbuild)"
+    },
+    "parse-worker.js": {
+      "sha256": "ebb13718a9febb55375d84910b70d221858d3c797526910106fdb9ca72a688fb",
+      "bytes": 140252,
+      "from": "apps/web/public/parse-worker.js (esbuild)"
+    },
+    "index.html": {
+      "sha256": "b597bc514bad6537853dc2b44a625f8d6724f4d923756ec2e8616a9982a1d7fb",
+      "bytes": 7555,
+      "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/index.html (version stamped)"
+    }
+  }
+}

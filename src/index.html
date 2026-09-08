@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- script-src needs 'unsafe-inline': Capacitor for Android injects its native bridge as an inline
+     <script> into this document (iOS uses a WKUserScript). Everything else stays local; the only
+     remote hosts are our Supabase project and alldatalogs.com. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://nvkfhbfyrbifkbynjbsd.supabase.co https://alldatalogs.com https://localhost capacitor://localhost; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="format-detection" content="telephone=no">
+<title>BigData</title>
+<link rel="stylesheet" href="/viewer-engine/datalog-viewer.css?v=__APP_VERSION__">
+<link rel="stylesheet" href="/viewer-engine/datalog-histogram.css?v=__APP_VERSION__">
+<link rel="stylesheet" href="/viewer-engine/datalog-histogram-editor.css?v=__APP_VERSION__">
+<link rel="stylesheet" href="/viewer-engine/datalog-library.css?v=__APP_VERSION__">
+<link rel="stylesheet" href="/app.css?v=__APP_VERSION__">
+</head>
+<body>
+<div id="app">
+
+  <!-- Home ------------------------------------------------------------------------------------ -->
+  <section id="screen-home" class="screen" hidden>
+    <header class="top">
+      <div class="brand"><span class="brand-mark">BIG<b>DATA</b></span><span class="brand-sub">DATALOG VIEWER</span></div>
+      <button type="button" class="link" id="btnAccount">Sign in</button>
+    </header>
+    <div class="banner" id="banner" hidden></div>
+    <main class="home-main">
+      <div class="hero">
+        <div class="hero-glyph" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="56" height="56"><path d="M8 44 L20 30 L30 38 L42 18 L56 34" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 54 H56" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".35"/></svg>
+        </div>
+        <h1>Open a datalog</h1>
+        <p class="muted">HP Tuners <b>.hpl</b> · <b>.csv</b> · MoTeC <b>.ld</b> · Holley <b>.dl</b><br>or share a log to BigData from any app.</p>
+        <div class="hero-actions">
+          <button type="button" class="btn btn-primary btn-big" id="btnOpen">Open log…</button>
+          <button type="button" class="btn" id="btnSample">Open sample</button>
+        </div>
+        <div class="form-error" id="homeError" hidden></div>
+        <p class="muted small" id="capNote"></p>
+      </div>
+      <aside class="recent">
+        <h2>Recent</h2>
+        <ul id="recentList"></ul>
+        <p class="muted small" id="recentEmpty">Logs you open will show up here.</p>
+      </aside>
+    </main>
+    <footer class="foot">
+      <span id="footAccount"></span>
+      <span id="footPro"></span>
+      <span class="grow"></span>
+      <button type="button" class="link" id="btnDiag">Diagnostics</button>
+      <span id="footVersion"></span>
+    </footer>
+  </section>
+
+  <!-- Account: sign in, or plan + membership controls ------------------------------------------- -->
+  <section id="screen-account" class="screen screen-scroll" hidden>
+    <header class="top">
+      <button type="button" class="link" data-nav="home">&larr; Back</button>
+      <div class="brand"><span class="brand-mark">BIG<b>DATA</b></span></div>
+    </header>
+    <div class="card" id="signinCard" hidden>
+      <h1>Sign in</h1>
+      <p class="muted" id="signinIntro">Sign in with your alldatalogs.com account to unlock Pro on this phone.</p>
+      <form id="signinForm" autocomplete="on">
+        <label>Email <input id="signinEmail" type="email" name="email" required autocomplete="username" inputmode="email" autocapitalize="off"></label>
+        <label>Password <input id="signinPassword" type="password" name="password" required autocomplete="current-password"></label>
+        <div class="form-error" id="signinError" hidden></div>
+        <button type="submit" class="btn btn-primary" id="signinBtn">Sign in</button>
+      </form>
+      <div class="links">
+        <button type="button" class="link" data-ext="https://alldatalogs.com/account/">Forgot password?</button>
+        <button type="button" class="link" data-ext="https://alldatalogs.com/pricing/?src=mobile" data-pro-link>No account? Start Pro</button>
+      </div>
+    </div>
+    <div class="card" id="accountCard" hidden>
+      <h1 id="accountEmail"></h1>
+      <p class="muted" id="accountPlan"></p>
+      <div class="banner" id="accountBanner" hidden></div>
+      <div class="stack">
+        <button type="button" class="btn btn-primary" id="btnGetPro" data-ext="https://alldatalogs.com/pricing/?src=mobile" hidden>Get Pro</button>
+        <button type="button" class="btn" data-ext="https://alldatalogs.com/account/">Manage subscription</button>
+        <button type="button" class="btn" id="btnRefresh">Check membership again</button>
+        <button type="button" class="btn" id="btnSignOut">Sign out</button>
+        <button type="button" class="link danger" id="btnDeleteAccount">Delete my account…</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Diagnostics: the only debug surface on a phone without a computer attached ----------------- -->
+  <section id="screen-diag" class="screen screen-scroll" hidden>
+    <header class="top">
+      <button type="button" class="link" data-nav="home">&larr; Back</button>
+      <div class="brand"><span class="brand-mark">Diagnostics</span></div>
+      <span class="grow"></span>
+      <button type="button" class="link" id="btnDiagCopy">Copy</button>
+    </header>
+    <pre class="diag" id="diagText"></pre>
+  </section>
+
+  <!-- Membership check (boot / after sign-in), loader + toast ------------------------------------ -->
+  <div id="checking" class="loader" hidden>
+    <div class="dv-spinner"></div>
+    <div class="loader-name">Checking your AllDataLogs membership…</div>
+  </div>
+  <div id="loader" class="loader" hidden>
+    <div class="dv-spinner"></div>
+    <div class="loader-name" id="loaderName"></div>
+    <button type="button" class="btn" id="btnCancelLoad">Cancel</button>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+</div>
+
+<script src="/vendor/chart.umd.js?v=__APP_VERSION__"></script>
+<script src="/vendor/hammer.min.js?v=__APP_VERSION__"></script>
+<script src="/vendor/chartjs-plugin-zoom.min.js?v=__APP_VERSION__"></script>
+<script src="/vendor/pako.min.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/dvcore.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/runtime.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-presets.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-gauges.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-scorecard.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-scorecard-evaluators.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-expr.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-histogram.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-histogram-ui.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-histogram-editor.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-hpt.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-vehicles.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-library.js?v=__APP_VERSION__"></script>
+<script src="/viewer-engine/datalog-viewer.js?v=__APP_VERSION__"></script>
+<script src="/glue.js?v=__APP_VERSION__"></script>
+</body>
+</html>

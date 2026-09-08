@@ -1,0 +1,3 @@
+# Byte-exact everywhere: www/ is hashed into www/BUNDLED.json and verified on every checkout (CI
+# included); any CRLF/LF conversion would change the bytes and fail the check. Same rule as the desktop.
+* -text

@@ -1,0 +1,47 @@
+{
+  "name": "bigdata-mobile",
+  "productName": "BigData",
+  "version": "0.1.0",
+  "description": "BigData datalog viewer for Android and iOS, by AllDataLogs",
+  "author": "AllDataLogs",
+  "homepage": "https://alldatalogs.com",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "payload": "node scripts/build-payload.mjs",
+    "payload:check": "node scripts/build-payload.mjs --check",
+    "web": "node scripts/serve.mjs",
+    "test": "node --test \"test/**/*.test.js\"",
+    "smoke:web": "node scripts/smoke-web.mjs",
+    "sync": "cap sync",
+    "sync:android": "cap sync android",
+    "sync:ios": "cap sync ios"
+  },
+  "dependencies": {
+    "@aparajita/capacitor-secure-storage": "8.0.0",
+    "@capacitor-community/keep-awake": "8.0.1",
+    "@capacitor/android": "8.5.1",
+    "@capacitor/app": "8.1.1",
+    "@capacitor/browser": "8.0.4",
+    "@capacitor/core": "8.5.1",
+    "@capacitor/ios": "8.5.1",
+    "@capacitor/network": "8.0.1",
+    "@capacitor/preferences": "8.0.1",
+    "@capacitor/screen-orientation": "8.0.1",
+    "@capacitor/splash-screen": "8.0.2",
+    "@capawesome/capacitor-file-picker": "8.1.0",
+    "@supabase/supabase-js": "2.116.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "3.0.5",
+    "@capacitor/cli": "8.5.1",
+    "esbuild": "0.28.2",
+    "playwright": "1.63.0",
+    "typescript": "^5.9.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "sharp@0.32.6": true
+  }
+}

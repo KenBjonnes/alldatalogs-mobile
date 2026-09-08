@@ -1,0 +1,28 @@
+node_modules/
+scripts/.smoke/
+*.log
+.DS_Store
+Thumbs.db
+
+# native build output (the projects themselves ARE committed)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/app/*.iml
+ios/App/build/
+ios/App/DerivedData/
+ios/App/Pods/
+ios/App/App.xcworkspace/xcuserdata/
+ios/App/App.xcodeproj/xcuserdata/
+ios/App/.build/
+
+# signing material never enters the repo
+*.keystore
+*.jks
+*.p12
+*.pem
+*.mobileprovision
+keys/

@@ -1,0 +1,243 @@
+/* datalog-histogram.css -- the BigData Histograms table view (datalog-histogram-ui.js).
+   Loaded next to datalog-viewer.css by every host that shows the Histograms view.
+
+   HOST TOKENS: same rule as datalog-viewer.css -- every host custom property (--bg-elev, --card,
+   --card-border, --text, --text-dim, --text-faint, --red, --amber, --green) is used WITH its PBD
+   fallback, because an undefined custom property invalidates the whole declaration (that is how
+   the gauge-menu tab vanished on alldatalogs.com). And every piece of text sets `color` EXPLICITLY:
+   the staff "Industry" ticket theme sets body{color:#050505} and some hosts carry a bare
+   `td{color:#050505}`, so nothing in here may rely on inherited colour.
+
+   Density over chrome: a tuner leaves this open all day. 11-12px type, tabular numbers, thin
+   borders, sticky axis headers, and no card padding to speak of. */
+
+.dlv-hist{
+  display:flex;width:100%;height:100%;min-height:0;min-width:0;overflow:hidden;
+  color:var(--text, #f2f2f4);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Arial,sans-serif;font-size:12px;line-height:1.35;
+  background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);border-radius:var(--dlv-radius, 10px);
+}
+.dlv-hist *{box-sizing:border-box;}
+.dlv-hist button{font:inherit;}
+/* dark scrollbars (default ones render white-ish over the dark theme) */
+.dlv-hist *{scrollbar-width:thin;scrollbar-color:#3a3a42 #0c0c0f;}
+.dlv-hist *::-webkit-scrollbar{width:10px;height:10px;}
+.dlv-hist *::-webkit-scrollbar-track{background:#0c0c0f;}
+.dlv-hist *::-webkit-scrollbar-thumb{background:#3a3a42;border-radius:6px;border:2px solid #0c0c0f;}
+.dlv-hist *::-webkit-scrollbar-thumb:hover{background:#4a4a54;}
+.dlv-hist *::-webkit-scrollbar-corner{background:#0c0c0f;}
+
+/* ---- shared controls --------------------------------------------------------------------------- */
+.dlv-hist-btn{
+  background:var(--card, #16161a);border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);
+  border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:700;cursor:pointer;line-height:1.2;white-space:nowrap;
+}
+.dlv-hist-btn:hover:not(:disabled){border-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
+.dlv-hist-btn.primary{background:var(--red, #d1132e);border-color:var(--red, #d1132e);color:#fff;}
+.dlv-hist-btn.primary:hover:not(:disabled){color:#fff;filter:brightness(1.1);}
+.dlv-hist-btn:disabled{opacity:.4;cursor:default;}
+.dlv-hist-ibtn{
+  width:22px;height:22px;border-radius:5px;padding:0;line-height:1;font-size:13px;font-weight:800;cursor:pointer;
+  background:transparent;border:1px solid transparent;color:var(--text-faint, #5c5c66);
+}
+.dlv-hist-ibtn:hover{color:var(--text, #f2f2f4);border-color:var(--card-border, #26262c);}
+/* on/off pill (same idiom as .dlv-dash-park-btn.on) */
+.dlv-hist-pill{
+  background:var(--card, #16161a);border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);
+  border-radius:6px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;line-height:1.2;white-space:nowrap;
+}
+.dlv-hist-pill:hover:not(:disabled){border-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
+.dlv-hist-pill.on{background:var(--red, #d1132e);border-color:var(--red, #d1132e);color:#fff;}
+.dlv-hist-pill:disabled{opacity:.4;cursor:default;}
+/* segmented control (same idiom as .dlv-gcount-btn) */
+.dlv-hist-seg{display:inline-flex;gap:2px;background:rgba(8,8,11,.62);border:1px solid var(--card-border, #26262c);border-radius:6px;padding:2px;}
+.dlv-hist-seg button{
+  background:transparent;border:1px solid transparent;color:var(--text-faint, #5c5c66);
+  border-radius:4px;padding:3px 8px;font-size:11px;font-weight:800;cursor:pointer;line-height:1.2;white-space:nowrap;
+}
+.dlv-hist-seg button:hover:not(:disabled){color:var(--text, #f2f2f4);border-color:var(--card-border, #26262c);}
+.dlv-hist-seg button.active{background:var(--red, #d1132e);border-color:var(--red, #d1132e);color:#fff;}
+.dlv-hist-seg button:disabled{opacity:.4;cursor:default;}
+.dlv-hist-lbl{font-size:9.5px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--text-faint, #5c5c66);white-space:nowrap;}
+.dlv-hist-grp{display:inline-flex;align-items:center;gap:5px;}
+.dlv-hist-defsel,.dlv-hist-mini,.dlv-hist-miss-sel{
+  background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);
+  border-radius:6px;padding:4px 6px;font:inherit;font-size:12px;font-weight:700;max-width:240px;
+}
+.dlv-hist-mini{font-size:11px;font-weight:600;padding:3px 4px;}
+.dlv-hist-num{
+  width:58px;background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);
+  border-radius:6px;padding:3px 6px;font:inherit;font-size:11.5px;font-variant-numeric:tabular-nums;
+}
+.dlv-hist-num::placeholder{color:var(--text-faint, #5c5c66);}
+.dlv-hist-num:focus,.dlv-hist-defsel:focus,.dlv-hist-mini:focus,.dlv-hist-miss-sel:focus{outline:none;border-color:var(--amber, #f5a623);}
+.dlv-hist-manual{display:inline-flex;gap:3px;}
+.dlv-hist-manual[hidden]{display:none;}
+.dlv-hist-badge{
+  font-size:8.5px;font-weight:800;letter-spacing:.5px;padding:1px 4px;border-radius:3px;flex-shrink:0;
+  background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text-faint, #5c5c66);
+}
+.dlv-hist-badge.warn{color:var(--amber, #f5a623);border-color:rgba(245,166,35,.5);background:rgba(245,166,35,.1);text-transform:uppercase;cursor:help;}
+
+/* ---- list panel -------------------------------------------------------------------------------- */
+.dlv-hist-list{
+  width:220px;flex:0 0 220px;display:flex;flex-direction:column;min-height:0;
+  border-right:1px solid var(--card-border, #26262c);background:var(--card, #16161a);
+}
+.dlv-hist-list[hidden]{display:none;}
+.dlv-hist-list-head{display:flex;align-items:center;gap:4px;padding:6px 6px 6px 10px;border-bottom:1px solid var(--card-border, #26262c);flex-shrink:0;}
+.dlv-hist-list-title{flex:1;font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-faint, #5c5c66);}
+.dlv-hist-add{padding:3px 7px;font-size:11px;}
+.dlv-hist-list-rows{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0;padding:3px 0;}
+.dlv-hist-list-empty{padding:12px 10px;font-size:11.5px;color:var(--text-faint, #5c5c66);}
+.dlv-hist-row{
+  display:flex;align-items:center;gap:6px;padding:5px 4px 5px 7px;cursor:pointer;
+  border-left:3px solid transparent;color:var(--text-dim, #9a9aa2);
+}
+.dlv-hist-row:hover{background:var(--bg-elev, #111114);color:var(--text, #f2f2f4);}
+.dlv-hist-row.active{background:rgba(209,19,46,.10);border-left-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
+.dlv-hist-row.off{color:var(--text-faint, #5c5c66);}
+.dlv-hist-row.off .dlv-hist-row-name{text-decoration:line-through;opacity:.6;}
+.dlv-hist-row-en{width:13px;height:13px;margin:0;accent-color:var(--red, #d1132e);flex-shrink:0;cursor:pointer;}
+.dlv-hist-row-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;color:inherit;}
+.dlv-hist-dot{width:7px;height:7px;border-radius:50%;background:var(--amber, #f5a623);flex-shrink:0;cursor:help;}
+.dlv-hist-row-menu{
+  width:18px;height:18px;border-radius:4px;padding:0;line-height:1;font-size:13px;font-weight:800;cursor:pointer;flex-shrink:0;
+  background:transparent;border:none;color:var(--text-faint, #5c5c66);opacity:0;
+}
+.dlv-hist-row:hover .dlv-hist-row-menu,.dlv-hist-row.active .dlv-hist-row-menu{opacity:.85;}
+.dlv-hist-row-menu:hover{color:var(--text, #f2f2f4);background:#26262c;}
+.dlv-hist-expander{
+  flex:0 0 16px;border:none;border-right:1px solid var(--card-border, #26262c);background:var(--card, #16161a);
+  color:var(--text-faint, #5c5c66);cursor:pointer;font-size:14px;font-weight:800;padding:0;
+}
+.dlv-hist-expander:hover{color:var(--text, #f2f2f4);}
+.dlv-hist-expander[hidden]{display:none;}
+
+/* ---- main column --------------------------------------------------------------------------------- */
+.dlv-hist-main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;}
+.dlv-hist-toolbar{
+  display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:6px 10px;
+  border-bottom:1px solid var(--card-border, #26262c);background:var(--card, #16161a);flex-shrink:0;
+}
+.dlv-hist-samples{margin-left:auto;font-size:11px;color:var(--text-dim, #9a9aa2);white-space:nowrap;display:inline-flex;align-items:center;gap:6px;}
+.dlv-hist-samples b{color:var(--text, #f2f2f4);font-variant-numeric:tabular-nums;}
+.dlv-hist-legend{
+  display:flex;align-items:center;gap:8px;padding:3px 10px;min-height:22px;flex-shrink:0;
+  font-size:10.5px;color:var(--text-dim, #9a9aa2);border-bottom:1px solid var(--card-border, #26262c);
+}
+.dlv-hist-legend-stat{font-weight:700;color:var(--text-dim, #9a9aa2);}
+.dlv-hist-legend-bar{width:170px;height:9px;border-radius:4px;border:1px solid rgba(255,255,255,.12);flex-shrink:0;}
+.dlv-hist-legend-v{font-variant-numeric:tabular-nums;color:var(--text, #f2f2f4);font-weight:600;}
+.dlv-hist-legend-c,.dlv-hist-legend-note{color:var(--text-faint, #5c5c66);}
+.dlv-hist-warn{
+  padding:4px 10px;font-size:11px;color:var(--amber, #f5a623);background:rgba(245,166,35,.08);
+  border-bottom:1px solid rgba(245,166,35,.25);flex-shrink:0;line-height:1.4;
+}
+.dlv-hist-warn[hidden]{display:none;}
+.dlv-hist-warn-ico{font-weight:800;}
+
+/* ---- the table ----------------------------------------------------------------------------------- */
+/* The WRAP scrolls both ways; the page never does. border-collapse:separate is what keeps the sticky
+   header borders drawn while scrolling (collapsed borders detach from sticky cells in Chrome). */
+.dlv-hist-tablewrap{flex:1;min-height:0;min-width:0;overflow:auto;position:relative;background:#0c0c0f;outline:none;}
+.dlv-hist-tablewrap:focus-visible{box-shadow:inset 0 0 0 1px var(--amber, #f5a623);}
+table.dlv-hist-table{
+  border-collapse:separate;border-spacing:0;table-layout:auto;
+  font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--text, #f2f2f4);
+}
+table.dlv-hist-table th{
+  position:sticky;background:#1a1a1f;color:var(--text-dim, #9a9aa2);font-weight:700;font-size:11px;
+  padding:4px 7px;border-right:1px solid #26262c;border-bottom:1px solid #26262c;
+  white-space:nowrap;user-select:none;cursor:pointer;text-align:right;
+}
+table.dlv-hist-table th:hover{color:var(--text, #f2f2f4);background:#20202a;}
+table.dlv-hist-table thead th{top:0;z-index:3;min-width:48px;}
+table.dlv-hist-table tbody th{left:0;z-index:2;}
+table.dlv-hist-table th.dlv-hist-corner{left:0;top:0;z-index:4;text-align:left;font-size:10px;line-height:1.3;min-width:0;}
+.dlv-hist-corner-a{color:var(--text, #f2f2f4);white-space:nowrap;}
+.dlv-hist-corner-b{color:var(--text-dim, #9a9aa2);white-space:nowrap;}
+.dlv-hist-unit{color:var(--text-faint, #5c5c66);font-weight:600;}
+table.dlv-hist-table td{
+  padding:3px 7px;text-align:right;min-width:48px;white-space:nowrap;user-select:none;cursor:cell;
+  border-right:1px solid #1c1c21;border-bottom:1px solid #1c1c21;
+  color:var(--text, #f2f2f4);background:var(--card, #16161a);
+}
+table.dlv-hist-table td:hover{filter:brightness(1.3);}
+/* 0 hits: an em dash on a darker ground */
+table.dlv-hist-table td.dlv-hist-cell-empty{color:#3a3a44;background:#0f0f12;}
+/* 0 < hits < min hits: faint value (or "·"), no heat -- must read as clearly weaker than a real cell */
+table.dlv-hist-table td.dlv-hist-cell-low{color:#5a5a64;background:#121215;font-weight:400;}
+/* selection: white ring + dark halo so it survives any heat colour */
+table.dlv-hist-table td.dlv-hist-sel{box-shadow:inset 0 0 0 2px #fff, inset 0 0 0 3px #000;}
+/* live cursor: a floating dot at the scrubber/graph cursor's INTERPOLATED position on the table's
+   axes (not snapped to a cell -- Ken, 2026-09-08). Positioned in D.wrap's own layout space (offsetLeft/
+   Top on the header cells it's centered between), so it scrolls naturally with the table content
+   instead of needing repositioning on scroll. transform centers the dot ON left/top rather than
+   above-left of it, and gives left/top something to animate for a smooth glide between positions. */
+.dlv-hist-cursor-mark{
+  position:absolute;width:10px;height:10px;margin:0;border-radius:50%;
+  background:var(--accent, #d1132e);box-shadow:0 0 0 2px rgba(0,0,0,.65), 0 0 6px rgba(209,19,46,.9);
+  transform:translate(-50%, -50%);pointer-events:none;z-index:5;
+  transition:left .08s linear, top .08s linear;
+}
+.dlv-hist-cursor-mark[hidden]{display:none;}
+
+/* ---- state panels (empty / disabled / missing parameter / error) ------------------------------ */
+.dlv-hist-state{padding:26px 24px;max-width:680px;color:var(--text-dim, #9a9aa2);}
+.dlv-hist-state-title{font-size:14px;font-weight:800;color:var(--text, #f2f2f4);margin-bottom:6px;}
+.dlv-hist-state-sub{font-weight:600;color:var(--text-dim, #9a9aa2);font-size:12px;}
+.dlv-hist-state-body{font-size:12px;line-height:1.55;color:var(--text-dim, #9a9aa2);}
+.dlv-hist-state-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;}
+.dlv-hist-error .dlv-hist-state-title{color:var(--red, #d1132e);}
+.dlv-hist-missing .dlv-hist-state-title{color:var(--amber, #f5a623);}
+.dlv-hist-code{
+  font-family:ui-monospace,Consolas,monospace;font-size:11px;background:#0b0b0e;border:1px solid var(--card-border, #26262c);
+  border-radius:6px;padding:6px 8px;margin-top:8px;color:var(--text, #f2f2f4);white-space:pre-wrap;
+}
+.dlv-hist-miss-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px dashed var(--card-border, #26262c);}
+.dlv-hist-miss-row b{color:var(--text, #f2f2f4);}
+.dlv-hist-miss-slot{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-faint, #5c5c66);}
+.dlv-hist-miss-why{font-size:11px;color:var(--amber, #f5a623);width:100%;}
+.dlv-hist-miss-sel{margin-left:auto;max-width:300px;font-size:11.5px;font-weight:600;}
+
+/* ---- details strip -------------------------------------------------------------------------------- */
+.dlv-hist-details{
+  display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;padding:6px 10px;min-height:32px;flex-shrink:0;
+  border-top:1px solid var(--card-border, #26262c);background:var(--card, #16161a);font-size:11.5px;color:var(--text-dim, #9a9aa2);
+}
+.dlv-hist-details b{color:var(--text, #f2f2f4);font-variant-numeric:tabular-nums;}
+.dlv-hist-d-axis{font-weight:600;color:var(--text, #f2f2f4);}
+.dlv-hist-d-axis b{color:var(--text-dim, #9a9aa2);font-weight:600;}
+.dlv-hist-d-time{color:var(--text-faint, #5c5c66);font-variant-numeric:tabular-nums;}
+.dlv-hist-d-hint{color:var(--text-faint, #5c5c66);}
+.dlv-hist-d-acts{display:inline-flex;gap:4px;align-items:center;margin-left:auto;}
+.dlv-hist-d-acts .dlv-hist-btn{padding:3px 7px;font-size:11px;}
+
+/* ---- tooltip + floating menu (appended to <body>, so styled standalone) ----------------------- */
+.dlv-hist-tip{
+  position:fixed;z-index:1001;pointer-events:none;max-width:320px;
+  background:#141419;border:1px solid var(--card-border, #26262c);border-radius:8px;padding:7px 9px;
+  font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Arial,sans-serif;font-size:11px;line-height:1.35;color:var(--text-dim, #9a9aa2);
+  box-shadow:0 8px 24px rgba(0,0,0,.6);
+}
+.dlv-hist-tip[hidden]{display:none;}
+.dlv-hist-tip-head{color:var(--text, #f2f2f4);font-weight:600;margin-bottom:4px;}
+.dlv-hist-tip-head b{color:var(--text-dim, #9a9aa2);font-weight:600;}
+.dlv-hist-tip-row{color:var(--text-faint, #5c5c66);}
+.dlv-hist-tip-grid{display:grid;grid-template-columns:auto auto;gap:1px 10px;}
+.dlv-hist-tip-grid span{color:var(--text-faint, #5c5c66);}
+.dlv-hist-tip-grid b{color:var(--text, #f2f2f4);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
+.dlv-hist-tip-grid i{color:var(--amber, #f5a623);font-style:normal;font-weight:600;}
+.dlv-hist-menu{
+  position:fixed;z-index:1002;min-width:190px;display:flex;flex-direction:column;
+  background:#141419;border:1px solid var(--card-border, #26262c);border-radius:8px;padding:4px;
+  box-shadow:0 12px 34px rgba(0,0,0,.65);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Arial,sans-serif;
+}
+.dlv-hist-menu-item{
+  display:block;width:100%;text-align:left;background:transparent;border:none;color:var(--text, #f2f2f4);
+  padding:6px 10px;border-radius:5px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;
+}
+.dlv-hist-menu-item:hover:not(:disabled){background:#20202a;}
+.dlv-hist-menu-item:disabled{opacity:.35;cursor:default;}
+.dlv-hist-menu-item.danger{color:var(--red, #d1132e);}
+.dlv-hist-menu-sep{height:1px;background:var(--card-border, #26262c);margin:3px 4px;}

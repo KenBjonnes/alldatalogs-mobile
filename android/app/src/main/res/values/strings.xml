@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BigData</string>
+    <string name="title_activity_main">BigData</string>
+    <string name="package_name">com.alldatalogs.bigdata</string>
+    <string name="custom_url_scheme">com.alldatalogs.bigdata</string>
+</resources>

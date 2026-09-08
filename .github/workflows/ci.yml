@@ -1,0 +1,28 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm approve-scripts esbuild sharp && npm rebuild esbuild sharp
+      # www/ is committed; the manifest must match it byte for byte (the source folders are not on the runner).
+      - run: npm run payload:check
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run smoke:web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-screenshots
+          path: scripts/.smoke/
+          if-no-files-found: ignore

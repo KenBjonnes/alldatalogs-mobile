@@ -1,0 +1,1492 @@
+﻿/* datalog-viewer.css -- full-viewport redesign of the PBD Control Center datalog viewer.
+   Loaded by data-logs.html alongside datalog-presets.js / datalog-gauges.js / datalog-viewer.js.
+
+   THEME TOKENS: this file *prefers* the host page's palette (--bg, --bg-elev, --card,
+   --card-border, --red, --green, --amber, --text, --text-dim, --text-faint) but no longer
+   *depends* on it -- every use carries the PBD value as a fallback, so a host that defines them
+   is unaffected and a host that doesn't still renders correctly.
+
+   That dependency was invisible on the two hosts that happen to define the full palette
+   (data-logs.html and the dev harness) and broke on alldatalogs.com, which doesn't: an undefined
+   custom property makes the whole declaration invalid, so `background:var(--amber)` on the active
+   gauge-menu tab computed to transparent -- dark text on a dark panel, i.e. the selected tab
+   vanished -- and the Apply button lost its red fill. Nothing errored; it just looked wrong, and
+   only on one site. Keep fallbacks on any NEW host token added here.
+
+   The --dlv-* tokens below are ours and are defined right here, so they need no fallback. */
+
+:root{
+  --dlv-blue:#3b82f6;
+  --dlv-cyan:#06b6d4;
+  --dlv-purple:#a855f7;
+  --dlv-bg-grad:linear-gradient(160deg,#0a0a0d 0%,#08080a 55%,#0c0c12 100%);
+  --dlv-radius:10px;
+}
+
+/* Plain #viewerOverlay default-hidden rule (not just the more specific .dlv-fullscreen one right
+   below) -- data-logs.html's own inline <style> already had a `.viewer-overlay{display:none;...}`
+   rule so this was previously redundant there, but host pages that don't define that class rule
+   themselves (e.g. admin ticket pages embedding the viewer via tickets-widget.js's "View Log"
+   button, 2026-07-20) need this file to be fully self-sufficient for the overlay's default state. */
+#viewerOverlay{display:none;}
+#viewerOverlay.dlv-fullscreen{
+  display:none;position:fixed;inset:0;z-index:900;background:var(--dlv-bg-grad);
+  flex-direction:column;padding:0;overflow:hidden;
+  /* Establish the viewer's OWN light default text colour on the overlay root. Without this, any viewer
+     text that doesn't set an explicit colour inherits the HOST page's `body { color }` -- fine on the dark
+     hosts (data-logs.html / alldatalogs) but near-invisible on the staff "Industry" ticket theme, which
+     sets body{color:#050505}. That made the channel list read as dark-on-dark. (Reproduced in the harness
+     by loading cc-theme.css/tickets-widget.css + body{color:#050505}: td colour went #050505; this fixes it.) */
+  color:var(--text, #f2f2f4);
+}
+#viewerOverlay.dlv-fullscreen.open{display:flex;}
+#viewerOverlay.dlv-fullscreen .viewer-modal{
+  display:flex;flex-direction:column;width:100%;height:100%;max-width:none;
+  background:transparent;border:none;border-radius:0;padding:0;
+}
+
+/* ---- AUTO-HIDING HEADER (desktop) -----------------------------------------------------------
+   Ken tunes on a 14" laptop where the fascia + graphs are fighting for every pixel, and the header
+   holds nothing you need WHILE working -- filename, view picker, Save, Close. It collapses to a
+   6px strip and slides open on hover, returning ~46px of height to the graphs on every screen.
+
+   Collapsed height is deliberately not 0: a zero-height strip is unhoverable, so there'd be no way
+   back to Save or Close without a keyboard. The strip carries a faint red top edge as the "there's
+   something here" cue -- the same red as the mobile channels button, for the same reason.
+
+   Kept open whenever anything inside it has keyboard focus, or tabbing to Save would scroll the
+   header open and then snap it shut under the cursor. */
+.dlv-header{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:0 18px;background:var(--card, #16161a);border-bottom:1px solid var(--card-border, #26262c);
+  flex-shrink:0;position:relative;
+  max-height:14px;overflow:visible;
+  border-top:3px solid rgba(209,19,46,.7);
+  /* The DELAY is the important part (Ken, 2026-07-22): opening is instant, closing waits ~0.9s so
+     clipping the strip on the way past doesn't make the bar flap open and shut. Without it the
+     header felt twitchy and grabbed attention constantly. */
+  transition:max-height .18s ease .9s, padding .18s ease .9s;
+}
+.dlv-header > *{opacity:0;transition:opacity .12s ease;}
+.dlv-header:hover,
+.dlv-header:focus-within{
+  /* max-height is a CEILING for the animation, not the real height -- the bar is content-sized and
+     measures ~59px. It was 64px, which left almost no headroom: the header is flex-wrap, so on a
+     narrower window (or with a longer filename) it wraps to a second line, and anything past 64px
+     was clipped by overflow:hidden -- present in the DOM, invisible and unclickable. Generous
+     ceiling + overflow:visible means it can never clip its own controls. */
+  max-height:220px;padding:10px 18px;border-top-color:transparent;overflow:visible;
+  transition-delay:0s;                      /* opens immediately, only closing is delayed */
+}
+/* The hover band must not sit over the controls once the bar is open. Pseudo-elements paint beneath
+   real children so it wasn't stealing clicks, but it has no job at all when open -- and leaving a
+   38px invisible layer across the toolbar is a trap for the next person. */
+.dlv-header:hover::before,
+.dlv-header:focus-within::before{pointer-events:none;}
+.dlv-header:hover > *,
+.dlv-header:focus-within > *{opacity:1;transition-delay:.06s;}
+/* THE HOVER TARGET MUST NOT MOVE OR VANISH WHEN HOVERED. It used to flash open-and-shut (Ken,
+   2026-07-22): the tab below the strip was itself the thing you aimed at, and hovering it set it to
+   height:0 -- so the target disappeared from under the cursor, :hover was lost, the bar closed, the
+   tab came back, and the loop repeated. Any hover affordance that removes itself on hover does this.
+   The zone is now a fixed 38px band anchored to the top edge, covering the strip AND the tab, and
+   it never changes size or position in either state. */
+.dlv-header::before{content:'';position:absolute;left:0;right:0;top:0;height:38px;}
+/* The tab hanging below the strip -- otherwise nothing on screen says the header exists at all.
+   It only FADES when open (never collapses), so it can't yank the hit area out from under you. */
+.dlv-header::after{
+  content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);
+  width:64px;height:7px;border-radius:0 0 6px 6px;
+  background:rgba(209,19,46,.8);box-shadow:0 2px 6px rgba(0,0,0,.5);
+  transition:opacity .15s ease;pointer-events:none;
+}
+.dlv-header:hover::after,
+.dlv-header:focus-within::after{opacity:0;}
+/* ---- Mode tabs: Graph / Gauges / Histograms, plus a Default/Custom sub-toggle inside Gauges ---
+   Deliberately NOT part of .dlv-header's hover-collapse: that strip hides the controls you reach
+   for occasionally (Analyze, Layout, view pickers) to save graph space, but mode-switching is the
+   one thing Ken specifically wants to reach in a single, always-visible click -- burying it behind
+   a hover would undercut the entire point of asking for a tab interface. Kept thin to limit the
+   permanent vertical cost. */
+.dlv-mode-tabs{
+  display:flex;align-items:center;gap:2px;flex-wrap:wrap;
+  padding:0 18px;background:var(--card, #16161a);border-bottom:1px solid var(--card-border, #26262c);
+  flex-shrink:0;
+}
+.dlv-mode-tab{
+  padding:8px 14px 7px;border:none;border-bottom:2px solid transparent;background:transparent;
+  color:var(--text-dim, #9a9aa2);font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;
+}
+.dlv-mode-tab:hover{color:var(--text, #f2f2f4);}
+.dlv-mode-tab.on{color:var(--text, #f2f2f4);border-bottom-color:var(--red, #d1132e);}
+/* Divider between the tab strip and the Default/Custom sub-toggle, so the pills read as "inside
+   Gauges" rather than as two more top-level tabs. */
+.dlv-mode-tabs-sep{width:1px;height:16px;background:var(--card-border, #26262c);margin:0 8px;}
+.dlv-sub-pill{
+  padding:5px 12px;border-radius:14px;border:1px solid var(--card-border, #26262c);background:transparent;
+  color:var(--text-dim, #9a9aa2);font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;
+}
+.dlv-sub-pill:hover{color:var(--text, #f2f2f4);border-color:var(--red, #d1132e);}
+.dlv-sub-pill.on{background:var(--red, #d1132e);border-color:var(--red, #d1132e);color:#fff;}
+.dlv-sub-pill-empty{opacity:.5;cursor:default;}
+.dlv-sub-pill-empty:hover{color:var(--text-dim, #9a9aa2);border-color:var(--card-border, #26262c);}
+.dlv-header-brand{display:flex;align-items:center;gap:9px;flex-shrink:0;}
+.dlv-header-brand .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(145deg,var(--red, #d1132e),#7a0c1c);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:14px;}
+.dlv-header-brand .name{font-size:12px;font-weight:800;letter-spacing:.5px;line-height:1.2;}
+.dlv-header-brand .name small{display:block;font-size:9.5px;color:var(--text-dim, #9a9aa2);font-weight:700;letter-spacing:1.5px;}
+/* BigData mark. Source art is near-black + red for a light page; its dark strokes are driven off
+   currentColor (see BRAND_LOGO_SVG), so `color` recolours them light on our dark UI while red stays. */
+.dlv-brand{color:#f4f4f5;}
+.dlv-brand svg{display:block;width:auto;}
+.dlv-header-brand.dlv-brand{gap:0;}
+.dlv-header-brand.dlv-brand svg{height:28px;}
+/* Faint upper-graph watermark, along the top and to the LEFT of the readout legend (which is
+   right-anchored, ~92px wide in the default view). z-index below the legend so if a wider legend ever
+   reaches it, the live readout stays on top and legible. Non-interactive. */
+/* Left-of-centre, not top-right: the channel legend (top-right, z-index 3) was covering it on
+   narrower screens (Ken). Anchored left, clear of the graph-count buttons (left:60px, ~90px wide). */
+.dlv-graph-watermark{position:absolute;top:8px;left:160px;right:auto;z-index:1;opacity:.2;pointer-events:none;line-height:0;}
+.dlv-graph-watermark svg{height:20px;}
+.dlv-header-info{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--text-dim, #9a9aa2);min-width:0;}
+.dlv-header-info .fname{font-weight:800;color:var(--text, #f2f2f4);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;}
+.dlv-header-info .dlv-ver{font-size:11px;opacity:.55;white-space:nowrap;cursor:default;}
+.dlv-status-ok{color:var(--green, #22c55e);font-weight:800;}
+.dlv-header-spacer{flex:1;}
+.dlv-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.dlv-btn{padding:8px 14px;border-radius:8px;background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;}
+.dlv-btn:hover{border-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
+.dlv-btn.dlv-btn-primary{background:var(--red, #d1132e);color:#fff;border-color:var(--red, #d1132e);}
+.dlv-btn.dlv-btn-primary:hover{background:#e6193a;}
+.dlv-select{padding:8px 12px;border-radius:8px;background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);font-size:12.5px;font-weight:600;cursor:pointer;}
+.dlv-select:disabled{background:#19191d;border-color:#26262c;color:var(--text-faint, #5c5c66);cursor:not-allowed;opacity:0.65;}
+/* Split Layout / Custom Gauges pickers (custom menus with per-item delete). Each button stacks its
+   fixed category over the active item's name (Ken, 2026-09-08: "clear where custom stuff is") --
+   ALWAYS both, never one button showing a name while the other shows a generic placeholder depending
+   on which kind was loaded last. Stacking (not a "Category: Name" prefix) keeps the category legible
+   even when a long name has to truncate -- the name is the part that's expendable, not the label. */
+.dlv-vpick{display:inline-flex;gap:6px;}
+.dlv-vpick-btn{max-width:190px;flex-direction:column;align-items:flex-start!important;gap:0!important;padding:4px 10px;line-height:1.15;}
+.dlv-vpick-cat{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint, #5c5c66);}
+.dlv-vpick-name{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dlv-vpick-menu{min-width:210px;max-height:60vh;overflow-y:auto;}
+.dlv-vrow{display:flex;align-items:center;gap:2px;}
+.dlv-vrow-pick{flex:1;text-align:left;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dlv-vrow-on{color:var(--red, #d1132e);font-weight:700;}
+.dlv-vrow-del{width:26px;height:26px;flex-shrink:0;border:none;background:none;color:var(--text-faint, #5c5c66);cursor:pointer;border-radius:6px;font-size:13px;line-height:1;padding:0;}
+.dlv-vrow-del:hover{background:var(--bg-elev, #111114);color:var(--red, #d1132e);}
+.dlv-vpick-grouplabel{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint, #5c5c66);padding:5px 9px 2px;font-weight:700;}
+.dlv-close{width:32px;height:32px;border-radius:8px;background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.dlv-close:hover{border-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
+
+/* #viewerContent is the sole child of .viewer-modal and holds both the header and .dlv-body --
+   it MUST be a flex column itself (not just a plain block) or none of the flex:1/min-height:0
+   sizing below it has anything to measure against, and the graph panels fall back to Chart.js's
+   own default (too-tall) canvas sizing instead of filling the available viewport height. */
+/* Measurement probe for currentGaugeUnit(): exactly 100 gauge units wide, zero height, invisible
+   and non-interactive. Its ONLY job is to be measured, which is what makes it trustworthy -- the
+   previous approach measured a real gauge element and broke the moment that element was resized. */
+.dlv-u-probe{position:absolute;left:-9999px;top:0;height:0;pointer-events:none;visibility:hidden;
+  width:calc(100 * var(--dlv-gauge-u, 1px));}
+
+#viewerContent{display:flex;flex-direction:column;flex:1;min-height:0;height:100%;}
+.dlv-body{flex:1;display:flex;min-height:0;overflow:hidden;}
+
+/* ---- Left channel browser --------------------------------------------------------------- */
+.dlv-channel-panel{
+  width:300px;flex-shrink:0;display:flex;flex-direction:column;
+  background:var(--card, #16161a);border-right:1px solid var(--card-border, #26262c);
+  transition:width .15s ease;
+}
+.dlv-channel-panel.dlv-collapsed{width:40px;}
+.dlv-channel-panel.dlv-collapsed .dlv-channel-inner{display:none;}
+.dlv-channel-collapse-btn{width:26px;height:26px;border-radius:6px;background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);cursor:pointer;font-size:11px;flex-shrink:0;}
+.dlv-channel-collapse-btn:hover{color:var(--text, #f2f2f4);border-color:var(--red, #d1132e);}
+.dlv-channel-toolbar{display:flex;align-items:center;gap:6px;padding:10px;border-bottom:1px solid var(--card-border, #26262c);flex-shrink:0;}
+.dlv-channel-search{flex:1;padding:7px 10px;border-radius:7px;border:1px solid var(--card-border, #26262c);background:var(--bg-elev, #111114);color:var(--text, #f2f2f4);font-size:12px;min-width:0;}
+/* Filter box + its clear (x) button, shown only when there's text (dlv-has-text toggled in JS). */
+.dlv-search-wrap{flex:1;position:relative;display:flex;min-width:0;}
+.dlv-search-wrap .dlv-channel-search{flex:1;padding-right:28px;}
+.dlv-search-clear{display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);
+  width:20px;height:20px;padding:0;border:none;border-radius:50%;background:var(--card-border, #26262c);
+  color:var(--text, #f2f2f4);font-size:15px;line-height:1;cursor:pointer;align-items:center;justify-content:center;}
+.dlv-search-wrap.dlv-has-text .dlv-search-clear{display:flex;}
+.dlv-search-clear:hover{background:var(--red, #d1132e);color:#fff;}
+
+/* ---- CHANNEL LIST PROTOTYPE (Ken, 2026-07-22 -- not released) --------------------------------
+   Pin / drag / group. Deliberately styled quietly: this is for judging the INTERACTION, so nothing
+   here should win attention away from the channel names themselves. */
+.dlv-chanmode-btn{flex-shrink:0;width:28px;height:28px;border-radius:7px;
+  border:1px solid var(--card-border, #26262c);background:var(--bg-elev, #111114);
+  color:var(--text-dim, #9a9aa2);cursor:pointer;font-size:13px;line-height:1;}
+.dlv-chanmode-btn:hover{border-color:var(--red, #e5484d);color:var(--text, #f2f2f4);}
+
+/* Group heading. Sticky so you always know which section you're scrolled into -- with 13 groups the
+   heading otherwise leaves the viewport before its channels do. */
+.dlv-group-row{cursor:pointer;user-select:none;}
+.dlv-group-row > td{position:sticky;top:0;z-index:2;
+  background:var(--bg-elev, #111114);border-top:1px solid var(--card-border, #26262c);
+  border-bottom:1px solid var(--card-border, #26262c);
+  padding:5px 8px;font-size:10.5px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;
+  color:var(--text-dim, #9a9aa2);}
+.dlv-group-row:hover > td{color:var(--text, #f2f2f4);}
+.dlv-group-caret{display:inline-block;width:12px;color:var(--text-faint, #5c5c66);}
+.dlv-group-count{float:right;color:var(--text-faint, #5c5c66);font-weight:700;}
+/* The pinned block is the one group the user built themselves, so it gets the accent. */
+.dlv-group-pinned > td{color:var(--red, #e5484d);border-top-color:var(--red, #e5484d);}
+.dlv-group-pinned .dlv-group-caret,.dlv-group-pinned .dlv-group-count{color:var(--red, #e5484d);}
+
+.dlv-pin-btn{width:18px;height:18px;padding:0;border:0;background:none;cursor:pointer;
+  color:var(--text-faint, #5c5c66);font-size:12px;line-height:1;border-radius:4px;opacity:0;
+  transition:opacity .1s ease;}
+/* Hidden until the row is hovered: 98 up-arrows down the left edge is visual noise, and the one
+   you want is always on the row you're already pointing at. Pinned rows keep theirs visible, since
+   that dot is the only way to tell a pinned row from a copy of it. */
+tr:hover .dlv-pin-btn,.dlv-pin-btn.pinned,.dlv-pin-btn:focus-visible{opacity:1;}
+.dlv-pin-btn:hover{color:var(--red, #e5484d);background:rgba(229,72,77,.12);}
+.dlv-pin-btn.pinned{color:var(--red, #e5484d);}
+.dlv-row-pinned > td{background:rgba(229,72,77,.05);}
+/* Touch has no hover, so the arrow would never appear on the phone. */
+@media (hover:none){ .dlv-pin-btn{opacity:1;} }
+
+.dlv-drag-handle{display:inline-block;width:18px;line-height:18px;text-align:center;cursor:grab;
+  color:var(--text-faint, #5c5c66);font-size:13px;opacity:0;transition:opacity .1s ease;
+  touch-action:none;}                       /* required, not cosmetic -- see .dlv-scrub-handle */
+/* Same hidden-until-hover convention as the pin arrow -- the grip on every one of 98 rows would be
+   visual noise; touch has no hover, so it stays visible there. */
+tr:hover .dlv-drag-handle,.dlv-drag-handle:focus-visible{opacity:1;}
+@media (hover:none){ .dlv-drag-handle{opacity:1;} }
+.dlv-row-dragging > td{background:var(--bg-elev, #111114) !important;opacity:.9;
+  box-shadow:0 6px 18px rgba(0,0,0,.5);}
+tbody.dlv-dragging{cursor:grabbing;}
+tbody.dlv-dragging *{user-select:none;}
+/* Dropping a dragged channel row onto a graph -- every panel gets a faint dashed hint the moment a
+   drag starts (so it reads as a drop zone at all), and the one under the pointer lights up harder. */
+.dlv-graphs-droppable .dlv-graph-panel{outline:1px dashed var(--card-border, #26262c);outline-offset:-1px;}
+.dlv-graph-panel.dlv-graph-drop-target{outline:2px dashed var(--red, #d1132e);outline-offset:-2px;background:rgba(209,19,46,.06);}
+.dlv-channel-inner{display:flex;flex-direction:column;min-height:0;flex:1;}
+/* overflow-x:hidden is the horizontal-scrollbar fix -- combined with table-layout:fixed below and
+   the <colgroup> written in renderChannelPanelHtml() (fixed px widths for Sel/Up/Lo/Gauge, the
+   Channel column takes 100% of whatever's left), the table can never render wider than the panel,
+   so there's nothing left for a horizontal scrollbar to appear for. Only overflow-y (the styled
+   scrollbar above) remains. */
+.dlv-channel-table-wrap{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0;}
+table.dlv-channel-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:11.5px;}
+table.dlv-channel-table thead th{
+  position:sticky;top:0;z-index:2;background:#1a1a1f;color:var(--text-faint, #5c5c66);
+  font-size:9.5px;letter-spacing:.6px;text-transform:uppercase;text-align:left;
+  padding:7px 6px;border-bottom:1px solid var(--card-border, #26262c);cursor:pointer;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+}
+table.dlv-channel-table thead th:hover{color:var(--text-dim, #9a9aa2);}
+/* The icon columns (Sel / U/L / Gauge) are narrow, so their header labels were clipping. Center them
+   with tight padding + no letter-spacing so the short labels read in full (Ken, 2026-07-24). */
+table.dlv-channel-table thead th.dlv-th-center{text-align:center;padding-left:2px;padding-right:2px;letter-spacing:0;}
+/* Explicit cell colour, NOT inherited: some host pages (e.g. cc-pbdperformance tunes-in-progress.html)
+   carry a bare, unscoped `td { color:#050505 }` in their own styles. A directly-set td colour beats the
+   overlay's inherited light colour, so the channel names rendered near-black on the dark panel -- but only
+   when the viewer was opened embedded in THAT page. This rule (specificity beats a bare `td`) pins the
+   cell text to the viewer's own light colour; inner buttons/dots set their own colour and are untouched. */
+table.dlv-channel-table tbody td{padding:5px 6px;border-bottom:1px solid #1c1c21;vertical-align:middle;overflow:hidden;color:var(--text, #f2f2f4);}
+table.dlv-channel-table tbody tr:hover{background:var(--bg-elev, #111114);}
+table.dlv-channel-table tbody tr.dlv-row-selected{background:rgba(209,19,46,0.06);}
+/* Two-line channel cell: name on top, live value + unit underneath -- every channel's current
+   value is visible at a glance (not just selected/graphed ones), updated on every cursor move via
+   updateAtCursor()'s textContent-only pass over VIEWER_CHANNEL_VALUE_ELS. */
+.dlv-ch-cell{min-width:0;}
+.dlv-ch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim, #9a9aa2);cursor:default;line-height:1.3;font-size:13px;}
+.dlv-row-selected .dlv-ch-name{color:var(--text, #f2f2f4);font-weight:600;}
+/* Marks a channel as computed (a math channel injected into the list, not a real log column) --
+   Ken, 2026-09-08: "math channels are not showing up in the channels list to the left". */
+.dlv-ch-math-badge{display:inline-block;margin-right:4px;font-style:italic;font-weight:800;
+  color:var(--amber, #f5a623);}
+.dlv-ch-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;margin-top:2px;}
+.dlv-ch-value-num{color:var(--text, #f2f2f4);font-weight:700;font-variant-numeric:tabular-nums;font-size:14.5px;}
+/* State labels are words, not numbers: smaller so more of the label survives the column width
+   (the row already ellipsises, and updateAtCursor sets a title so the full state is on hover). */
+.dlv-ch-value-text{font-size:11.5px;font-variant-numeric:normal;}
+.dlv-ch-value-unit{color:var(--text-faint, #5c5c66);font-size:11px;margin-left:3px;}
+.dlv-cell-center{text-align:center;}
+/* Up/Lo buttons stacked vertically (U over L) instead of side by side -- now that each channel row
+   is two lines tall (name + value), stacking reclaims the horizontal width the old side-by-side
+   layout used, which goes to the Channel column instead. */
+.dlv-ul-cell{display:flex;flex-direction:column;align-items:center;gap:2px;}
+.dlv-cell-btn{width:20px;height:16px;border-radius:4px;border:1px solid var(--card-border, #26262c);background:var(--card, #16161a);color:var(--text-faint, #5c5c66);font-size:8.5px;font-weight:800;cursor:pointer;line-height:1;padding:0;}
+.dlv-cell-btn.active{color:#fff;border-color:transparent;}
+.dlv-cell-btn.active.dlv-upper{background:var(--dlv-blue);}
+/* middle only exists in views that render 3 graphs (no gauge cluster) */
+.dlv-cell-btn.active.dlv-middle{background:var(--green,#22c55e);}
+.dlv-cell-btn.active.dlv-lower{background:var(--amber, #f5a623);}
+.dlv-gauge-dot{width:8px;height:8px;border-radius:50%;background:var(--green, #22c55e);display:inline-block;margin:0 auto;}
+.dlv-channel-footer{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-top:1px solid var(--card-border, #26262c);font-size:11.5px;color:var(--text-dim, #9a9aa2);flex-shrink:0;}
+.dlv-clear-all{background:none;border:none;color:var(--red, #d1132e);font-size:11.5px;font-weight:700;cursor:pointer;}
+.dlv-clear-all:hover{text-decoration:underline;}
+
+/* ---- Main chart column -------------------------------------------------------------------- */
+.dlv-main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;padding:12px 14px 8px;gap:10px;}
+
+.dlv-cards-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;max-height:190px;overflow-y:auto;flex-shrink:0;}
+.dlv-cards-row.dlv-cards-collapsed{display:none;}
+.dlv-card{background:var(--card, #16161a);border:1px solid var(--card-border, #26262c);border-left:3px solid var(--red, #d1132e);border-radius:8px;padding:8px 11px;min-width:0;}
+.dlv-card-label{font-size:9.5px;color:var(--text-dim, #9a9aa2);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dlv-card-value{font-size:19px;font-weight:800;margin-top:1px;white-space:nowrap;}
+/* Categorical channels ("Spark Source" = "TQ Red. < Driver Demand") print a phrase where a number
+   goes. At 19px those blow the card's width apart, so state values get their own smaller, wrapping
+   treatment -- readable in two short lines rather than one clipped one. The line is clamped so a
+   long label can't make one card taller than the rest of the row. */
+.dlv-card-value-text{font-size:12.5px;font-weight:700;white-space:normal;line-height:1.25;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.dlv-card-unit{font-size:10.5px;color:var(--text-faint, #5c5c66);margin-left:3px;font-weight:600;}
+.dlv-card-stats{font-size:9.5px;color:var(--text-faint, #5c5c66);margin-top:2px;white-space:nowrap;}
+.dlv-cards-more{grid-column:1/-1;text-align:center;padding:4px;font-size:11px;color:var(--text-dim, #9a9aa2);cursor:pointer;background:var(--bg-elev, #111114);border-radius:7px;border:1px solid var(--card-border, #26262c);}
+.dlv-cards-more:hover{color:var(--text, #f2f2f4);border-color:var(--red, #d1132e);}
+
+.dlv-graphs{flex:1;display:flex;flex-direction:column;gap:6px;min-height:0;}
+.dlv-graph-panel{flex:1;display:flex;flex-direction:column;background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);border-radius:var(--dlv-radius);padding:8px 10px;min-height:0;position:relative;}
+/* ---- in-graph legend (replaced the per-graph header bar) -------------------------------------
+   Sits over the chart's top-right, where a time-series almost never has data worth occluding.
+   Semi-transparent so a trace passing behind it is still visible. Each row is a button: clicking
+   removes that channel from the panel, which is what the chip's × used to do. */
+/* Tightened (Ken, 2026-07-22): this is a reference readout you glance at, not something to read --
+   it should take as little of the plot as possible while staying legible. */
+.dlv-graph-legend{position:absolute;top:4px;right:6px;z-index:3;
+  display:flex;flex-direction:column;gap:0;align-items:flex-end;
+  background:rgba(8,8,11,.62);border-radius:5px;padding:2px 5px;
+  /* Drag/resize pivot the box around its top-right corner (see wireGraphLegends) -- matching
+     transform-origin here keeps that corner visually fixed while resizing. */
+  transform-origin:100% 0%;cursor:grab;touch-action:none;}
+.dlv-graph-legend.dlv-legend-dragging{cursor:grabbing;}
+.dlv-legend-row{display:flex;align-items:center;gap:6px;background:none;border:none;padding:0 1px;
+  border-radius:3px;font:inherit;line-height:1.25;}
+.dlv-legend-row:hover{background:rgba(255,255,255,.07);}
+.dlv-legend-name{font-size:9px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;}
+.dlv-legend-val{font-size:10.5px;font-weight:800;font-variant-numeric:tabular-nums;
+  min-width:42px;text-align:right;}
+/* Per-parameter remove button in the legend. Subtle by default, red on hover so it reads as "delete". */
+.dlv-legend-x{flex-shrink:0;background:none;border:none;padding:0 1px;margin-left:1px;cursor:pointer;
+  font-size:12px;line-height:1;font-weight:800;color:var(--text-faint, #5c5c66);opacity:.55;}
+.dlv-legend-x:hover{color:var(--red, #d1132e);opacity:1;}
+/* Resize handle: bottom-left corner, opposite the fixed top-right anchor, so dragging it away from
+   the anchor (down-left) grows the whole legend and dragging toward it shrinks. Hidden until the
+   legend is hovered, like the row-remove ×, so it doesn't clutter every graph at rest. */
+.dlv-legend-resize{position:absolute;left:-7px;bottom:-7px;width:14px;height:14px;
+  cursor:nesw-resize;touch-action:none;opacity:0;transition:opacity .1s ease;}
+.dlv-legend-resize::before{content:'';position:absolute;left:3px;bottom:3px;width:8px;height:8px;
+  border-left:2px solid var(--text-faint, #5c5c66);border-bottom:2px solid var(--text-faint, #5c5c66);
+  border-radius:0 0 0 3px;}
+.dlv-graph-legend:hover .dlv-legend-resize,.dlv-legend-resize:focus-visible{opacity:1;}
+.dlv-legend-resize:hover::before{border-color:var(--red, #d1132e);}
+@media (hover:none){ .dlv-legend-resize{opacity:1;} }
+/* ---- graph-count buttons (upper graph, top-left) --------------------------------------------
+   Upper is the master panel and always on screen, so the control can never vanish with the thing
+   it controls. Quiet until hovered -- it's a setting you touch when you change desks, not a tool. */
+.dlv-graph-count{position:absolute;top:6px;left:60px;right:auto;z-index:3;display:flex;gap:2px;
+  background:rgba(8,8,11,.62);border-radius:6px;padding:3px;opacity:.45;transition:opacity .15s;}
+.dlv-graph-panel:hover .dlv-graph-count{opacity:1;}
+.dlv-gcount-btn{width:20px;height:20px;border-radius:4px;cursor:pointer;font:inherit;
+  font-size:11px;font-weight:800;line-height:1;padding:0;
+  background:transparent;border:1px solid transparent;color:var(--text-faint, #5c5c66);}
+.dlv-gcount-btn:hover{color:var(--text, #f2f2f4);border-color:var(--card-border, #26262c);}
+.dlv-gcount-btn.active{background:var(--red, #d1132e);border-color:var(--red, #d1132e);color:#fff;}
+.dlv-graph-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;flex-shrink:0;}
+.dlv-graph-title{font-size:10px;font-weight:800;letter-spacing:.6px;color:var(--text-faint, #5c5c66);text-transform:uppercase;}
+.dlv-graph-chips{display:flex;gap:5px;flex-wrap:wrap;flex:1;}
+.dlv-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:6px;background:var(--card, #16161a);border:1px solid var(--card-border, #26262c);font-size:11px;font-weight:600;}
+.dlv-chip .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.dlv-chip button{background:none;border:none;color:var(--text-faint, #5c5c66);font-size:12px;cursor:pointer;line-height:1;padding:0;}
+.dlv-chip button:hover{color:var(--red, #d1132e);}
+.dlv-add-channel-btn{padding:3px 9px;border-radius:6px;background:none;border:1px dashed var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);font-size:11px;cursor:pointer;}
+.dlv-add-channel-btn:hover{border-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
+.dlv-graph-controls{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.dlv-mini-select{padding:4px 8px;border-radius:6px;background:var(--card, #16161a);border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);font-size:11px;}
+.dlv-icon-btn{width:24px;height:24px;border-radius:6px;background:var(--card, #16161a);border:1px solid var(--card-border, #26262c);color:var(--text-faint, #5c5c66);font-size:12px;cursor:pointer;}
+.dlv-icon-btn:hover{color:var(--text, #f2f2f4);border-color:var(--red, #d1132e);}
+.dlv-graph-canvas-wrap{flex:1;min-height:0;position:relative;}
+.dlv-graph-canvas-wrap canvas{width:100% !important;height:100% !important;}
+
+/* ---- Dark scrollbars (default browser scrollbars render white-ish over this dark theme) --- */
+#viewerOverlay.dlv-fullscreen *{scrollbar-width:thin;scrollbar-color:#3a3a42 var(--bg-elev, #111114);}
+#viewerOverlay.dlv-fullscreen *::-webkit-scrollbar{width:10px;height:10px;}
+#viewerOverlay.dlv-fullscreen *::-webkit-scrollbar-track{background:var(--bg-elev, #111114);}
+#viewerOverlay.dlv-fullscreen *::-webkit-scrollbar-thumb{background:#3a3a42;border-radius:6px;border:2px solid var(--bg-elev, #111114);}
+#viewerOverlay.dlv-fullscreen *::-webkit-scrollbar-thumb:hover{background:#4a4a54;}
+#viewerOverlay.dlv-fullscreen *::-webkit-scrollbar-corner{background:var(--bg-elev, #111114);}
+
+/* ---- Bottom overview scrubber ------------------------------------------------------------- */
+.dlv-scrubber-row{display:flex;align-items:center;gap:8px;flex-shrink:0;padding:6px 0 2px;}
+/* 56 -> 28px (Ken, 2026-07-21). It's an orientation strip showing where you are in the run, not
+   something you read values off -- at 56px it was spending laptop height to draw a shape you only
+   glance at. Still comfortably drag-able. */
+.dlv-scrubber-wrap{flex:1;height:28px;position:relative;background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);border-radius:8px;overflow:hidden;cursor:pointer;}
+.dlv-scrubber-wrap canvas{position:absolute;inset:0;width:100%;height:100%;}
+.dlv-scrubber-window{position:absolute;top:0;bottom:0;background:rgba(209,19,46,0.18);border-left:2px solid var(--red, #d1132e);border-right:2px solid var(--red, #d1132e);cursor:grab;}
+.dlv-scrubber-window:active{cursor:grabbing;}
+/* Edge handles: drag either end to zoom (the body of the window still pans). The hit area is wider
+   than the visible grip and extends OUTSIDE the window, because at high zoom the window itself is
+   only a few pixels across -- exactly when you most want to grab an edge. */
+/* ---- graph right-click menu ------------------------------------------------------------------
+   Names the action before performing it, and shows the exact timestamp under the cursor so a click
+   that lands a few pixels off is visible before you commit. Must out-rank #viewerOverlay (z 900)
+   for the same reason the gauge menu does -- it's appended to <body>. */
+.dlv-ctxmenu{position:fixed;z-index:1000;background:#141419;border:1px solid var(--card-border, #26262c);
+  border-radius:9px;padding:6px;min-width:196px;box-shadow:0 12px 34px rgba(0,0,0,.65);}
+.dlv-ctx-head{font-size:10px;letter-spacing:1.1px;text-transform:uppercase;font-weight:800;
+  color:var(--amber, #f5a623);padding:4px 8px 6px;font-variant-numeric:tabular-nums;}
+.dlv-ctx-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  background:none;border:none;color:var(--text, #f2f2f4);font:inherit;font-size:12.5px;
+  padding:8px 9px;border-radius:6px;cursor:pointer;}
+.dlv-ctx-item:hover{background:var(--bg-elev, #111114);}
+.dlv-ctx-dot{width:8px;height:8px;border-radius:50%;background:var(--amber, #f5a623);flex-shrink:0;}
+.dlv-ctx-cancel{color:var(--text-faint, #5c5c66);font-size:11.5px;}
+.dlv-ctx-note{font-size:10.5px;color:var(--text-faint, #5c5c66);padding:2px 9px 5px;
+  font-variant-numeric:tabular-nums;}
+/* Right-click -> Y-axis range: one compact row per channel (name, min, max, Set/Auto). */
+.dlv-ctx-sep{height:1px;background:var(--card-border, #26262c);margin:5px 4px;}
+.dlv-ctx-subhead{font-size:10px;letter-spacing:1.1px;text-transform:uppercase;font-weight:800;
+  color:var(--text-dim, #9a9aa2);padding:2px 8px 4px;}
+.dlv-ctx-axis{display:flex;align-items:center;gap:5px;padding:2px 6px;}
+.dlv-ctx-axis-name{flex:0 0 60px;font-size:11px;font-weight:600;color:var(--text, #f2f2f4);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dlv-ctx-axis-in{width:50px;background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);
+  color:var(--text, #f2f2f4);border-radius:5px;padding:3px 5px;font-size:11px;
+  font-variant-numeric:tabular-nums;-moz-appearance:textfield;}
+.dlv-ctx-axis-in::-webkit-outer-spin-button,.dlv-ctx-axis-in::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+.dlv-ctx-axis-btn{background:var(--card-border, #26262c);border:none;color:var(--text, #f2f2f4);
+  border-radius:5px;padding:3px 8px;font-size:11px;font-weight:700;cursor:pointer;}
+.dlv-ctx-axis-btn:hover{background:var(--red, #d1132e);color:#fff;}
+.dlv-ctx-axis-auto{background:transparent;border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);}
+
+/* ---- RACE TIME (desktop) ---------------------------------------------------------------------
+   Sits in the scrubber row, which is the one strip that's always on screen -- the header auto-hides
+   and this is meant to be read continuously while scrubbing. Tabular figures and a fixed min-width
+   so the number can't jitter the row as it crosses zero or gains a digit. */
+.dlv-race{display:flex;align-items:center;gap:7px;flex-shrink:0;padding:0 10px 0 2px;}
+.dlv-race-label{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-faint, #5c5c66);font-weight:700;}
+.dlv-race-value{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;
+  color:var(--text-faint, #5c5c66);min-width:72px;text-align:right;}
+.dlv-race.armed .dlv-race-value{color:var(--amber, #f5a623);}
+.dlv-race-unit{font-size:10px;color:var(--text-faint, #5c5c66);margin-left:-4px;}
+.dlv-race-btn{background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);
+  color:var(--text-dim, #9a9aa2);border-radius:6px;padding:4px 9px;font-size:11px;font-weight:700;
+  cursor:pointer;white-space:nowrap;}
+.dlv-race-btn:hover{border-color:var(--amber, #f5a623);color:var(--text, #f2f2f4);}
+.dlv-race.armed .dlv-race-btn{border-color:rgba(245,166,35,.45);}
+.dlv-race-clear{padding:4px 7px;font-size:13px;line-height:1;}
+/* The Set button teaches the gesture rather than performing it -- hovering is how you find out
+   right-click is the way. Tooltip rises above the button since the scrubber row is at the very
+   bottom of the window and anything below would be off-screen. */
+.dlv-race-btn{position:relative;}
+/* LEFT-anchored, not centred. The race block is pinned to the far-left of the scrubber row, so a
+   centre-anchored tooltip put half its width past the window edge and the sentence was cut off
+   (Ken, 2026-07-22). Growing rightward from the button's left edge keeps it on screen, and wrapping
+   at a max-width stops a long line running under the scrubber controls on a narrow window. */
+.dlv-race-tip{position:absolute;bottom:calc(100% + 8px);left:0;transform:none;
+  white-space:normal;width:max-content;max-width:min(300px, 55vw);line-height:1.35;
+  background:rgba(18,18,22,.97);color:var(--text, #f2f2f4);
+  border:1px solid var(--amber, #f5a623);border-radius:7px;padding:7px 11px;
+  font-size:11.5px;font-weight:600;letter-spacing:.2px;box-shadow:0 6px 20px rgba(0,0,0,.6);
+  opacity:0;pointer-events:none;transition:opacity .12s ease;z-index:20;}
+.dlv-race-tip::after{content:'';position:absolute;top:100%;left:16px;
+  border:6px solid transparent;border-top-color:var(--amber, #f5a623);}
+.dlv-race-btn:hover .dlv-race-tip,
+.dlv-race-btn:focus-visible .dlv-race-tip{opacity:1;}
+/* ---- PRO GATING ------------------------------------------------------------------------------
+   Locked features are SHOWN, not hidden: greyed back, uninteractive, and explaining themselves on
+   hover. Hiding them would mean nobody ever discovers what the upgrade is for. Two rules make the
+   locked state legible without a redesign per feature --
+
+   1. `filter:grayscale(1)` on top of the dimming. Opacity alone left the amber accents readable as
+      "available, just subdued"; draining the colour is what makes it read as OFF at a glance.
+   2. `pointer-events` stays ON. `none` would be the obvious way to disable it, but it also kills
+      :hover -- and the hover tooltip is the entire point of showing a locked control. So the
+      control still receives the mouse, and the JS refuses to act on the click. */
+.dlv-pro-locked{opacity:.42;filter:grayscale(1);cursor:not-allowed;position:relative;}
+.dlv-pro-locked:hover{border-color:var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);}
+/* The lock glyph carries the meaning on its own for anyone who never hovers (touch, or a passing
+   glance). Kept as generated content so no call site has to remember to add it. */
+.dlv-pro-locked::before{content:'\1F512';margin-right:5px;font-size:.92em;filter:grayscale(1);}
+.dlv-pro-tip{position:absolute;bottom:calc(100% + 8px);left:0;transform:none;
+  white-space:normal;width:max-content;max-width:min(260px, 55vw);line-height:1.35;
+  background:rgba(18,18,22,.98);color:var(--text, #f2f2f4);
+  border:1px solid var(--amber, #f5a623);border-radius:7px;padding:7px 11px;
+  font-size:11.5px;font-weight:600;letter-spacing:.2px;text-align:left;
+  box-shadow:0 6px 20px rgba(0,0,0,.6);
+  opacity:0;pointer-events:none;transition:opacity .12s ease;z-index:30;
+  /* The tooltip must NOT inherit the greying it sits inside, or the upsell is the least readable
+     thing on screen. Both properties are re-set rather than unset -- `filter` doesn't inherit but
+     it DOES apply to descendants of the filtered element, so only a new filter escapes it. */
+  filter:none;}
+.dlv-pro-tip b{display:block;color:var(--amber, #f5a623);font-size:10px;letter-spacing:.8px;
+  text-transform:uppercase;margin-bottom:3px;}
+.dlv-pro-tip::after{content:'';position:absolute;top:100%;left:16px;
+  border:6px solid transparent;border-top-color:var(--amber, #f5a623);}
+.dlv-pro-locked:hover .dlv-pro-tip,
+.dlv-pro-locked:focus-visible .dlv-pro-tip{opacity:1;}
+/* Inside the right-click menu the item is full-width and the menu is already floating, so the
+   tooltip goes to the LEFT rather than above -- above would cover the coordinate header you just
+   right-clicked to get. */
+.dlv-ctxmenu .dlv-pro-tip{bottom:auto;top:50%;left:auto;right:calc(100% + 10px);
+  transform:translateY(-50%);}
+.dlv-ctxmenu .dlv-pro-tip::after{top:50%;left:100%;transform:translateY(-50%);
+  border-top-color:transparent;border-left-color:var(--amber, #f5a623);}
+/* ...unless the menu is itself near the left edge, in which case there is no room on that side and
+   the tooltip goes right instead. openGraphMenu() sets this after measuring. */
+.dlv-ctxmenu.dlv-tip-right .dlv-pro-tip{right:auto;left:calc(100% + 10px);}
+.dlv-ctxmenu.dlv-tip-right .dlv-pro-tip::after{left:auto;right:100%;
+  border-left-color:transparent;border-right-color:var(--amber, #f5a623);}
+
+/* ---- LOAD FAILURE ------------------------------------------------------------------------------
+   The overlay is already covering the page when this renders, so the box has to carry its own exit.
+   Centred and narrow because the useful failures are instructions ("export it as CSV from VCM
+   Scanner"), and an instruction that runs the full width of a 14" laptop is harder to read. */
+.dlv-errwrap{display:flex;align-items:center;justify-content:center;min-height:60vh;padding:24px;}
+.dlv-errbox{max-width:min(460px, 90vw);text-align:center;
+  background:var(--card, #17171b);border:1px solid var(--card-border, #26262c);border-radius:12px;
+  padding:22px 24px;box-shadow:0 14px 40px rgba(0,0,0,.5);}
+.dlv-err-title{font-size:15px;font-weight:800;color:var(--text, #f2f2f4);margin-bottom:8px;}
+.dlv-err-msg{font-size:12.5px;line-height:1.55;color:var(--text-dim, #9a9aa2);margin-bottom:18px;}
+.dlv-err-build{font-size:11px;opacity:.5;color:var(--text-dim, #9a9aa2);margin:-10px 0 16px;font-family:ui-monospace,monospace;}
+.dlv-err-back{padding:8px 18px;font-size:12.5px;font-weight:700;}
+.dlv-err-back:hover{border-color:var(--red, #e5484d);color:var(--text, #f2f2f4);}
+
+/* ---- COMPARE ----------------------------------------------------------------------------------
+   The alignment strip, directly under the graphs. Deliberately low-contrast: it is a control you
+   glance at while watching the traces, not something that should compete with them. */
+.dlv-cmp{display:flex;align-items:center;gap:6px;padding:4px 10px;
+  border-top:1px solid var(--card-border, #26262c);background:rgba(255,255,255,.02);
+  font-size:11px;color:var(--text-dim, #9a9aa2);flex-shrink:0;}
+/* A dashed swatch, matching how the second log is drawn -- so the legend needs no explaining. */
+.dlv-cmp-swatch{width:22px;height:0;border-top:2px dashed var(--text-dim, #9a9aa2);flex-shrink:0;}
+.dlv-cmp-name{font-weight:700;color:var(--text, #f2f2f4);max-width:220px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dlv-cmp-anchor{color:var(--text-faint, #5c5c66);font-style:italic;margin-right:auto;}
+.dlv-cmp-btn{background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);
+  color:var(--text-dim, #9a9aa2);border-radius:5px;min-width:24px;height:22px;padding:0 6px;
+  font-size:12px;line-height:1;cursor:pointer;}
+.dlv-cmp-btn:hover{border-color:var(--red, #e5484d);color:var(--text, #f2f2f4);}
+/* Tabular figures so the offset doesn't jitter sideways while you nudge it. */
+.dlv-cmp-off{min-width:56px;text-align:center;font-weight:700;color:var(--text, #f2f2f4);
+  font-variant-numeric:tabular-nums;}
+.dlv-cmp-close{margin-left:4px;font-size:14px;}
+/* The B entry in the right-click menu gets a dashed marker, matching how B is drawn, so the two
+   "set zero" rows are told apart by the same cue used on the graph itself. */
+.dlv-ctx-dot-b{border-radius:0 !important;background:none !important;
+  border-top:2px dashed var(--amber, #f5a623) !important;height:0 !important;}
+
+/* ---- TIME SLIP -------------------------------------------------------------------------------
+   A plain centred form. Two columns because a slip is read down in pairs, and eight single-column
+   fields would run taller than the viewer window on a 14" laptop. */
+/* z-index MUST beat #viewerOverlay (900) and the menus (1000) -- the SAME trap already documented
+   on .dlv-gmenu below. This is appended to <body>, so at z-index:60 the dialog opened, laid out at
+   full size, and painted entirely behind the viewer: every DOM assertion passed and the button
+   looked completely dead (Ken, 2026-07-22). Presence in the DOM is not visibility. */
+.dlv-slip-back{position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.6);
+  display:flex;align-items:center;justify-content:center;}
+.dlv-slip-modal{width:min(420px, 92vw);max-height:90vh;overflow:auto;
+  background:var(--card, #17171b);border:1px solid var(--card-border, #26262c);border-radius:12px;
+  box-shadow:0 18px 50px rgba(0,0,0,.65);padding:16px 18px;}
+.dlv-slip-head{font-size:14px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--text, #f2f2f4);margin-bottom:4px;}
+.dlv-slip-note{font-size:11px;line-height:1.45;color:var(--text-faint, #5c5c66);margin-bottom:12px;}
+.dlv-slip-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;}
+.dlv-slip-field{display:flex;flex-direction:column;gap:3px;}
+.dlv-slip-field > span{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--text-dim, #9a9aa2);}
+.dlv-slip-field input{padding:7px 9px;border-radius:7px;font-size:13px;
+  border:1px solid var(--card-border, #26262c);background:var(--bg-elev, #111114);
+  color:var(--text, #f2f2f4);min-width:0;
+  /* Tabular figures so the eight numbers line up while you type -- proportional digits make a
+     stack of times look ragged and easy to misread. */
+  font-variant-numeric:tabular-nums;}
+.dlv-slip-field input:focus{outline:none;border-color:var(--amber, #f5a623);}
+.dlv-slip-actions{display:flex;align-items:center;gap:8px;margin-top:14px;}
+.dlv-slip-save{border-color:var(--amber, #f5a623) !important;color:var(--text, #f2f2f4) !important;}
+.dlv-slip-note b{color:var(--amber, #f5a623);font-weight:800;}
+
+/* Laps stack in ONE column, unlike the slip's two. A slip is a fixed set of named fields you read
+   down in pairs; laps are an ordered sequence where "lap 4 comes after lap 3" is the whole point,
+   and two columns break that reading order. Capped so twenty laps scroll instead of running off. */
+.dlv-lap-list{display:flex;flex-direction:column;gap:7px;max-height:46vh;overflow-y:auto;}
+.dlv-lap-list .dlv-slip-field{flex-direction:row;align-items:center;gap:10px;}
+.dlv-lap-list .dlv-slip-field > span{width:52px;flex-shrink:0;}
+.dlv-lap-list .dlv-slip-field input{flex:1;}
+.dlv-lap-add{margin-top:9px;width:100%;}
+
+/* Test picker: Dragy runs one test at a time, so this is a choice, not a form. */
+.dlv-dragy-picks{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.dlv-dragy-pick{padding:11px 8px;font-size:12.5px;font-weight:700;}
+.dlv-dragy-pick:hover{border-color:var(--amber, #f5a623);color:var(--text, #f2f2f4);}
+.dlv-perf-menu{min-width:180px;}
+
+/* Where zero actually is, marked on the overview bar so the reference stays findable after you
+   zoom or pan away from it. */
+.dlv-race-mark{position:absolute;top:0;bottom:0;width:2px;background:var(--amber, #f5a623);
+  box-shadow:0 0 4px rgba(245,166,35,.8);pointer-events:none;z-index:2;}
+
+/* (the 36px floor that keeps a pannable body between the handles is applied in
+   updateScrubberWindow() -- as CSS min-width it overflowed the wrap and got clipped) */
+.dlv-scrub-handle{position:absolute;top:0;bottom:0;width:10px;cursor:ew-resize;touch-action:none;}
+.dlv-scrub-handle-l{left:-5px;}
+.dlv-scrub-handle-r{right:-5px;}
+.dlv-scrub-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:4px;height:56%;min-height:8px;border-radius:2px;background:var(--red, #d1132e);
+  box-shadow:0 0 0 1px rgba(0,0,0,.45);opacity:.9;}
+.dlv-scrub-handle:hover::after,.dlv-scrub-handle.dragging::after{opacity:1;width:5px;background:#f0324b;}
+/* Hidden on mobile: the window can shrink to a 30px minimum there, and two 14px handles would
+   swallow it -- panning by dragging the body stays the gesture, pinch does the zooming. */
+.dlv-mobile .dlv-scrub-handle{display:none;}
+.dlv-scrubber-playhead{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,0.7);pointer-events:none;}
+.dlv-scrubber-controls{display:flex;gap:6px;flex-shrink:0;}
+
+/* ---- Gauges (2026-07-21 rewrite -- see datalog-gauges.js and docs/redesign-requirements.md) ---
+   Fascia = the fixed V8/V6 layout from the 8cyl.png mockup: two rows of four regions keyed off
+   each gauge def's `group`. renderGaugeGrid()'s generic sections are kept as a fallback. --------- */
+/* The cluster is a content-sized band at the top (like the mockup), NOT a 50/50 split with the
+   graphs. With flex:1 it was pinned to half the height and anything taller silently clipped row 2;
+   sizing to content means the fascia always fits and the graphs simply take whatever is left. */
+/* Content-sized, so the splitter below always sits flush against the gauges (a fixed height here
+   would let the box grow past its contents and strand the splitter under a gap). The cap is only a
+   safety net -- the splitter's own clamp governs how large gauges can get. */
+.dlv-gauge-view{flex:0 0 auto;max-height:80%;overflow-y:auto;min-height:0;}
+/* Draggable divider between the gauge cluster and the graphs. The auto-sized cluster is only a
+   sensible default -- how much room gauges deserve versus graphs is a per-user, per-log judgement,
+   so let them set it. Double-click returns to auto. */
+.dlv-splitter{height:9px;flex-shrink:0;cursor:ns-resize;position:relative;background:transparent;}
+.dlv-splitter::after{content:'';position:absolute;left:50%;top:3px;transform:translateX(-50%);
+  width:52px;height:3px;border-radius:2px;background:var(--card-border, #26262c);transition:background .12s;}
+.dlv-splitter:hover::after{background:var(--text-faint, #5c5c66);}
+.dlv-splitter.dragging::after{background:var(--red, #d1132e);}
+.pbd-fascia{display:flex;flex-direction:column;gap:8px;}
+.pbd-fascia-row{display:flex;gap:8px;align-items:stretch;}
+/* Zones size to content and grow in proportion to how many gauges they hold -- renderGaugeFascia
+   sets flex-grow per zone. Previously the bar zones were the only ones allowed to grow, so a single
+   zone swallowed every spare pixel in its row and left 9 knock bars stranded in a sea of dead
+   space. All-dial zones don't grow at all (stretching them just pads fixed-size SVGs). */
+.pbd-fascia-zone{display:flex;flex-wrap:nowrap;gap:4px;align-items:flex-end;justify-content:center;
+  flex:0 1 auto;min-width:0;
+  padding:6px;background:var(--card, #16161a);border:1px solid var(--card-border, #26262c);border-radius:var(--dlv-radius);}
+/* ECT/MCT stay a stacked column (small dials, big readouts). Cams are side-by-side so row 2 is
+   short. Boost/Speed stack inside the knock panel via .pbd-fascia-substack. */
+.pbd-fascia-zone-temps-right,.pbd-fascia-zone-cams{flex-direction:column;align-items:center;justify-content:flex-start;gap:2px;}
+/* order:-1 puts the stacked pair (Boost/Speed) at the LEFT of its zone, ahead of the knock bars,
+   even though the defs are declared after them. */
+.pbd-fascia-substack{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+  gap:2px;flex:0 0 auto;order:-1;margin-right:8px;}
+/* Bars spread to fill their zone rather than clustering in the middle -- this is what actually
+   removes the dead space, and matches the evenly-distributed bars in the mockup. */
+/* The max-width only bites when there's slack (i.e. on wide screens); at narrow widths the bars are
+   limited by available space long before the cap, so a generous cap removes the dead space on big
+   displays without loosening the tight packing on small ones. */
+.pbd-fascia-zone-knock-bars > .pbd-gauge,
+.pbd-fascia-zone-lower-bars > .pbd-gauge,
+.pbd-fascia-zone-trims > .pbd-gauge,
+.pbd-fascia-zone-lambda > .pbd-gauge{flex:1 1 0;
+  /* The FLOOR must stop growing with the scale. When min-width scaled with --dlv-gauge-u, dragging
+     the fascia larger raised every bar's minimum faster than the row could supply width, so the
+     bars stopped shrinking and spilled out of their zone instead. min() keeps the floor shrinking
+     on small screens but caps it once the gauges are being scaled up, so they pack instead of
+     overflow -- the visible track still grows, since that's sized separately. */
+  min-width:min(calc(44 * var(--dlv-gauge-u, 1px)), 44px);
+  max-width:calc(132 * var(--dlv-gauge-u, 1px));}
+/* Knock bars are 9-across with short one-line "KR n" labels, so they pack much tighter than the
+   other bar clusters -- this is what keeps the knock zone from dominating row 1. */
+.pbd-fascia-zone-knock-bars{gap:1px;}
+.pbd-fascia-zone-knock-bars > .pbd-gauge{min-width:min(calc(30 * var(--dlv-gauge-u, 1px)), 30px);
+  max-width:calc(120 * var(--dlv-gauge-u, 1px));}
+/* wider track so a knock bar reads as solid rather than a thin line in a wide box */
+.pbd-fascia-zone-knock-bars .pbd-bar-track{width:calc(24 * var(--dlv-gauge-u, 1px));}
+.pbd-fascia-zone-knock-bars .pbd-bar-label{min-height:0;white-space:nowrap;padding:0;letter-spacing:.4px;}
+/* All 9 knock bars share one identical -3..3 scale, and each already prints its own value beneath,
+   so the repeated tick columns are pure noise AND the widest thing in each box. Dropping them is
+   most of what lets the cluster get tight. (Easy to restore: delete this rule.) */
+.pbd-fascia-zone-knock-bars .pbd-bar-tick{display:none;}
+.pbd-fascia-zone-knock-bars > .pbd-gauge .pbd-bar-box,
+.pbd-fascia-zone-lower-bars > .pbd-gauge .pbd-bar-box,
+.pbd-fascia-zone-trims > .pbd-gauge .pbd-bar-box,
+.pbd-fascia-zone-lambda > .pbd-gauge .pbd-bar-box{width:100%;}
+.pbd-gauge-grid{display:flex;flex-direction:column;gap:12px;}
+.pbd-gauge-section{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:10px;background:var(--card, #16161a);border:1px solid var(--card-border, #26262c);border-radius:var(--dlv-radius);}
+
+.pbd-gauge{position:relative;display:flex;flex-direction:column;align-items:center;border-radius:9px;padding:1px;
+  transition:background-image .12s,box-shadow .12s;}
+.pbd-gauge-missing{opacity:.35;}
+/* User warning: tints the whole tile + badge. Deliberately a separate visual channel from the zone
+   colours, which live on the needle/readout -- low-alpha washes keep every number readable. */
+.pbd-gauge-warned{background-image:linear-gradient(rgba(245,166,35,.15),rgba(245,166,35,.15));box-shadow:0 0 0 1px rgba(245,166,35,.55);}
+.pbd-gauge-warned-crit{background-image:linear-gradient(rgba(209,19,46,.17),rgba(209,19,46,.17));box-shadow:0 0 0 1px rgba(209,19,46,.6);}
+/* Badge sits top-LEFT, not top-right: the edit button owns the top-right corner at z-index 6, so a
+   badge there was painted behind it and the one thing you most need to see when a limit trips was
+   the one thing hidden. Swapping corners beats raising z-index, which would just hide the button
+   instead. Scaled like the edit button so it stays proportional on a small dial. */
+.pbd-gauge-badge{position:absolute;top:-5px;left:-5px;
+  width:clamp(12px, calc(17 * var(--dlv-gauge-u, 1px)), 22px);
+  height:clamp(12px, calc(17 * var(--dlv-gauge-u, 1px)), 22px);
+  font-size:clamp(8px, calc(11 * var(--dlv-gauge-u, 1px)), 14px);
+  border-radius:50%;
+  background:var(--dlv-amber,#f5a623);color:#12120f;font-weight:900;display:none;
+  align-items:center;justify-content:center;z-index:7;box-shadow:0 2px 8px rgba(0,0,0,.5);}
+.pbd-gauge-warned .pbd-gauge-badge,.pbd-gauge-warned-crit .pbd-gauge-badge{display:flex;}
+.pbd-gauge-warned-crit .pbd-gauge-badge{background:var(--red,#d1132e);color:#fff;}
+/* "a warning rule is set on this gauge" -- quiet, always-on marker, distinct from the badge above
+   which only appears while the rule is actually tripped. */
+.pbd-gauge-flag{position:absolute;top:2px;left:3px;font-size:9px;color:#f5a623;z-index:2;}
+/* While tripped the badge takes this corner and says everything the flag did: a firing rule is
+   self-evidently a configured rule, so showing both is noise on top of a collision. */
+.pbd-gauge-warned .pbd-gauge-flag,.pbd-gauge-warned-crit .pbd-gauge-flag{display:none;}
+
+/* ---- Responsive gauge scaling ----------------------------------------------------------------
+   Every gauge dimension is expressed as a base size times --dlv-gauge-u. Without this the
+   fascia stayed a fixed pixel size while the screen grew, so on a wide display the knock bars
+   floated in a void and the graphs swallowed most of the height. Scaling the cluster up also makes
+   the graphs shorter for free, since the cluster is content-sized and the graphs take the rest.
+
+   Continuous rather than stepped: fixed breakpoints under-scaled badly at 4K (the cluster still
+   only took 41% of the height while the graphs sprawled). Bounded by BOTH axes via min() so a wide
+   but short screen doesn't scale the fascia taller than the space it has.
+
+   NOTE it is a LENGTH, not a number: clamp() can't mix a unitless bound with vw/vh, so a numeric
+   scale silently invalidated every calc() that used it (bar tracks collapsed to 2px). Sizes are
+   therefore written as `calc(<number> * var(--dlv-gauge-u))`, where 1px of the unit == scale 1. */
+.dlv-fullscreen{--dlv-gauge-u:clamp(1px, min(0.064vw, 0.135vh), 2.5px);}
+
+/* dials */
+/* max-width is load-bearing, not tidiness. --dial-w is a FIXED size in gauge units, so as the
+   splitter scales the fascia up the dial keeps growing while its flex item gets squeezed by the
+   row -- and because the box is centred it spilled out of both sides of its zone (Speed, dragged
+   large: a 356px dial inside a 123px slot, hanging 282px past the left border. Ken, 2026-07-22).
+   Bars never showed this because their box is width:100%.
+   Capping at the container turns "overflow" into "shrink", which is the correct behaviour when
+   there genuinely isn't room -- the SVG inside is width:100% and follows. min-width:0 is required
+   alongside it: a flex item defaults to min-width:auto and refuses to shrink below its content. */
+.pbd-dial-box{width:calc(var(--dial-w, 118) * var(--dlv-gauge-u, 1px));max-width:100%;text-align:center;}
+.pbd-gauge{min-width:0;}
+/* Full-size dials set each fascia row's height (RPM sets row 1, Fuel Pressure sets row 2), so this
+   width is really a vertical budget: at 200px the two rows overflowed the cluster and row 2 got
+   clipped. 172px fits both rows and pulls row 2 up. */
+.pbd-gauge-round .pbd-dial-box{width:calc(var(--dial-w, 172) * var(--dlv-gauge-u, 1px));}
+.pbd-dial-label{letter-spacing:1.2px;color:var(--text-dim, #9a9aa2);text-transform:uppercase;margin-bottom:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pbd-dial-svg{width:100%;display:block;}
+.pbd-dial-groove{fill:none;stroke:#1c1c22;}
+.pbd-dial-tick{stroke:#c9c9cf;}
+.pbd-dial-tick-minor{stroke:#4a4a52;}
+.pbd-dial-ticklabel{fill:var(--text-dim, #9a9aa2);text-anchor:middle;dominant-baseline:middle;}
+/* baseline-positioned, unlike the radial tick labels -- that difference kept it off the readout */
+.pbd-dial-scalenote{fill:var(--text-faint, #5c5c66);text-anchor:middle;}
+.pbd-dial-needle{stroke-linecap:round;}
+.pbd-dial-value{font-weight:800;text-anchor:middle;font-variant-numeric:tabular-nums;}
+.pbd-dial-unit{fill:var(--text-dim, #9a9aa2);text-anchor:middle;letter-spacing:1px;text-transform:uppercase;}
+
+/* bars */
+/* ---- BARS AT 75% (Ken, 2026-07-21) ----------------------------------------------------------
+   19 bars are on screen at once, so they set the fascia's height and eat most of the width. Taking
+   them to three-quarters is where nearly all the reclaimed space comes from, and it costs nothing
+   legible -- a bar is a proportion, not a number you read off the track. The freed space goes to
+   Boost/Speed (see dialWidth in datalog-presets.js) and to the graphs.
+   Track 120 -> 90, box 56 -> 42, knock track 32 -> 24. */
+.pbd-bar-box{width:calc(42 * var(--dlv-gauge-u, 1px));text-align:center;}
+.pbd-bar-label{letter-spacing:.8px;color:var(--text-dim, #9a9aa2);text-transform:uppercase;margin-bottom:5px;
+  min-height:22px;line-height:1.15;padding:0 2px;}
+/* wrapper exists so the scale numbers can sit OUTSIDE the track -- the track clips its contents */
+/* Track height is the other lever on fascia row height (bars set it once the round dials shrank).
+   120px keeps both rows inside the cluster instead of clipping row 2. */
+.pbd-bar-trackwrap{position:relative;width:100%;height:calc(90 * var(--dlv-gauge-u, 1px));}
+.pbd-bar-track{position:absolute;left:50%;transform:translateX(-50%);
+  width:calc(17 * var(--dlv-gauge-u, 1px));max-width:100%;height:100%;
+  background:#141419;border:1px solid var(--card-border, #26262c);border-radius:2px;overflow:hidden;}
+.pbd-bar-zone{position:absolute;left:0;right:0;opacity:.22;}
+.pbd-bar-zero{position:absolute;left:0;right:0;height:1px;background:#3a3a44;}
+.pbd-bar-fill{position:absolute;left:0;right:0;border-radius:1px;transition:height .08s linear,bottom .08s linear;}
+.pbd-bar-ticks{position:absolute;inset:0;pointer-events:none;}
+/* right-aligned just left of the centred track: half the track (11px) + a 4px gap */
+.pbd-bar-tick{position:absolute;right:calc(50% + 15px);color:var(--text-faint, #5c5c66);
+  font-variant-numeric:tabular-nums;transform:translateY(-50%);white-space:nowrap;}
+.pbd-bar-value{margin-top:6px;font-weight:800;font-variant-numeric:tabular-nums;}
+
+/* ---- Gauge edit mode + right-click editor ---------------------------------------------------- */
+/* Quiet by design, in three steps of lightness: the tile is darkest, the button body is a subtle
+   gray chip on top of it, and the glyph is lighter than both so it reads against the chip. Present
+   enough to find when you go looking, never bright enough to compete with the gauge reading.
+   Hover lifts it; edit mode tints the glyph amber but keeps the chip flat, since the dashed outline
+   on the gauge is the real "you are editing" signal. */
+/* Scales with the gauges: at a small viewer size a fixed 22px button was visually larger than the
+   dial it sits on. Clamped so it stays hittable when tiny and doesn't bloat when the gauges are
+   scaled way up.
+   The base is deliberately sized off the SMALL dials, not the hero ones: one button size serves a
+   76-unit compact dial and a 172-unit RPM dial, so anything that looks right on RPM is a lump on
+   Boost. Erring small costs the hero gauges nothing -- there is plenty of empty corner there. */
+/* HIDDEN AT REST (Ken, 2026-07-22). Right-click already opens the same menu, gauges only render on
+   desktop (mobile hides the fascia entirely), so a permanently visible pencil on all 29 gauges was
+   pure clutter -- 19 of them crowding the small bar readouts. It costs no layout either way: the
+   button is absolutely positioned, so hiding it reclaims exactly 0px. This is about noise.
+   Kept on hover rather than deleted outright, because right-click with no visible affordance is
+   undiscoverable -- and stays visible while a gauge is actually in edit mode. */
+.dlv-gauge-editbtn{opacity:0;pointer-events:none;transition:opacity .12s;}
+.pbd-gauge:hover > .dlv-gauge-editbtn,
+.dlv-gauge-editbtn.on,
+.dlv-gauge-editing > .dlv-gauge-editbtn{opacity:1;pointer-events:auto;}
+.dlv-gauge-editbtn{position:absolute;top:2px;right:2px;z-index:6;
+  width:clamp(11px, calc(16 * var(--dlv-gauge-u, 1px)), 22px);
+  height:clamp(11px, calc(16 * var(--dlv-gauge-u, 1px)), 22px);
+  font-size:clamp(7px, calc(9 * var(--dlv-gauge-u, 1px)), 12px);
+  border-radius:5px;background:#3d3d45;border:none;color:#8f8f9b;line-height:1;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;
+  transition:background .12s,color .12s;}
+.pbd-gauge:hover .dlv-gauge-editbtn{background:#4a4a54;color:#b6b6c2;}
+.dlv-gauge-editbtn:hover{background:#565662;color:var(--text, #f2f2f4);}
+.dlv-gauge-editbtn.on{color:var(--amber, #f5a623);}
+/* bars are narrow with centred labels, so their button is small and sits in the empty bottom-right */
+.dlv-gauge-editbtn.sm{border-radius:3px;top:auto;bottom:0;right:0;
+  width:clamp(9px, calc(10 * var(--dlv-gauge-u, 1px)), 14px);
+  height:clamp(9px, calc(10 * var(--dlv-gauge-u, 1px)), 14px);
+  font-size:clamp(6px, calc(6.5 * var(--dlv-gauge-u, 1px)), 9px);}
+.dlv-gauge-editing{outline:1px dashed var(--amber, #f5a623);outline-offset:2px;}
+.dlv-gauge-endnum{cursor:ew-resize;fill:var(--amber, #f5a623);color:var(--amber, #f5a623);font-weight:700;}
+/* warn/redline grab handles -- only rendered while the gauge is in edit mode */
+.dlv-zone-handle{transition:r .1s,stroke-width .1s;}
+.dlv-zone-handle:hover{r:9.5;stroke-width:4;}
+
+/* z-index MUST beat #viewerOverlay.dlv-fullscreen (z-index:900). The menu is appended to <body>,
+   so at a lower z-index it opened correctly but painted behind the viewer -- invisible, and
+   indistinguishable from "right-click does nothing". */
+/* FIXED width, not min/max. With shrink-to-fit the width was set by whichever pane was active: the
+   Mapping pane's <select> is sized by its longest channel name and hit the 300px cap, while
+   Warnings and Scale settled at 271px. Switching tabs therefore resized the whole panel -- and the
+   tab row with it, so the buttons you were aiming at moved under the cursor. One width for every
+   pane; height still varies with content, which is fine because the top edge stays put. */
+.dlv-gmenu{position:fixed;z-index:1000;background:#141419;border:1px solid var(--card-border, #26262c);border-radius:10px;
+  padding:10px;width:300px;max-width:calc(100vw - 16px);box-shadow:0 12px 34px rgba(0,0,0,.65);}
+/* The Mapping <select> must not be allowed to size the menu -- it holds every channel in the log,
+   and names like "Load Maximum Achievable (Current Conditions)" are far wider than the panel. */
+.dlv-gmenu select{max-width:100%;}
+.dlv-gmenu h4{font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-dim, #9a9aa2);margin-bottom:9px;}
+/* guidance block: leads the menu when a gauge has nothing to show */
+.dlv-gmenu-help{background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.35);border-radius:7px;
+  padding:8px 9px;font-size:11.5px;line-height:1.5;color:var(--text-dim, #9a9aa2);margin-bottom:9px;}
+.dlv-gmenu-help b{display:block;color:var(--amber, #f5a623);font-size:11px;margin-bottom:3px;}
+.dlv-gmenu-sugg{margin-bottom:9px;display:flex;flex-wrap:wrap;gap:5px;align-items:center;}
+.dlv-gmenu-sugg span{font-size:10.5px;color:var(--text-faint, #5c5c66);width:100%;}
+.dlv-gmenu-map{background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);border-radius:6px;
+  padding:5px 8px;font-size:11px;cursor:pointer;}
+.dlv-gmenu-map:hover{border-color:var(--amber, #f5a623);}
+.dlv-gmenu-edit{width:100%;background:var(--amber, #f5a623);color:#12120f;border:none;border-radius:7px;padding:9px;
+  font-size:12px;font-weight:800;cursor:pointer;}
+.dlv-gmenu-hint{font-size:10.5px;color:var(--text-faint, #5c5c66);margin-top:7px;line-height:1.5;}
+.dlv-gtabs{display:flex;gap:4px;margin-bottom:9px;}
+.dlv-gtabs button{flex:1;background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);
+  border-radius:6px;padding:6px 2px;font-size:11px;font-weight:700;cursor:pointer;}
+.dlv-gtabs button.active{background:var(--amber, #f5a623);border-color:var(--amber, #f5a623);color:#12120f;}
+.dlv-gpane{display:none;} .dlv-gpane.active{display:block;}
+.dlv-gmenu .fld{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+.dlv-gmenu .fld label{font-size:11px;color:var(--text-dim, #9a9aa2);width:78px;flex-shrink:0;}
+.dlv-gmenu input,.dlv-gmenu select{flex:1;min-width:0;background:#0b0b0e;border:1px solid var(--card-border, #26262c);
+  color:var(--text, #f2f2f4);border-radius:6px;padding:6px 8px;font-size:12px;}
+.dlv-gmenu .acts{display:flex;gap:8px;margin-top:9px;}
+.dlv-gmenu .act{flex:1;border:none;border-radius:7px;padding:7px;font-size:12px;font-weight:700;cursor:pointer;}
+.dlv-gmenu .save{background:var(--red, #d1132e);color:#fff;}
+.dlv-gmenu .clear{background:#26262c;color:var(--text-dim, #9a9aa2);}
+
+/* Header dropdowns (Analyze / Layout) -- a vertical list of actions reusing the .dlv-gmenu shell.
+   Overrides the horizontal .act layout above (comes later in the file, so wins at equal specificity). */
+.dlv-btn-menu{gap:5px;}
+.dlv-actions-primary{flex-wrap:nowrap;}
+.dlv-hdr-menu{min-width:212px;}
+.dlv-hdr-menu .act{display:block;width:100%;text-align:left;background:transparent;
+  color:var(--text, #f2f2f4);padding:8px 10px;border-radius:6px;font-weight:600;font-size:12.5px;margin:0;}
+.dlv-hdr-menu a.act{text-decoration:none;}
+.dlv-hdr-menu .act + .act{margin-top:1px;}
+.dlv-hdr-menu .act:hover{background:#20202a;}
+/* Locked items stay greyed (see .dlv-pro-locked) and don't light up on hover -- the footer explains
+   Pro once, so no per-item hover tooltip is needed (that tooltip is what used to float off the top). */
+.dlv-hdr-menu .act.dlv-pro-locked{cursor:not-allowed;}
+.dlv-hdr-menu .act.dlv-pro-locked:hover{background:transparent;}
+.dlv-menu-sep{height:1px;background:var(--card-border, #26262c);margin:6px 4px;}
+.dlv-menu-pro{margin-top:8px;border-top:1px solid var(--card-border, #26262c);padding-top:8px;}
+.dlv-menu-pro b{color:var(--amber, #f5a623);}
+
+/* ---- Custom Dash designer ---- */
+/* Sizes to a share of the main area (like .dlv-gauge-view is flex:0 0 auto) so the GRAPHS keep the
+   rest below; the canvas can't size to content (its gauges are absolutely positioned), so it takes an
+   explicit height -- the CSS default share here, or an inline px height once the splitter is dragged. */
+/* ---- Histograms view: the host pane datalog-histogram-ui.js mounts into (its own rules live in
+   datalog-histogram.css). Explicit colour: the staff host paints body text near-black. ------------ */
+.dlv-hist-view{flex:0 0 auto;height:52%;min-height:160px;display:flex;flex-direction:column;overflow:hidden;position:relative;color:var(--text, #f2f2f4);}
+.dlv-hist-unavailable{padding:14px;font-size:13px;color:var(--text-dim, #a8a8b3);}
+/* "show samples" marks on the overview bar -- under the zoom window, above the trace */
+.dlv-scrub-hl{position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;}
+.dlv-scrub-hl-mark{position:absolute;top:0;bottom:0;background:rgba(245,166,35,.35);}
+.dlv-dash-view{flex:0 0 auto;height:55%;min-height:150px;display:flex;flex-direction:column;overflow:hidden;}
+/* Finalized: hug the gauges (width set inline to the content bounds) and centre in the pane; the
+   canvas takes its content height (also inline), so the whole thing sizes to what you built. */
+/* Finalized = same full-width canvas, only shorter (canvas height set inline to hug the gauges).
+   No centring: gauges stay exactly where they were placed. */
+/* Finalized hugs its gauges (height set inline to hug × zoom). overflow:hidden clips the canvas' unscaled
+   layout box when the gauges are zoomed down, so nothing shows below the scaled cluster. */
+.dlv-dash-view.finalized{height:auto;overflow:hidden;}
+.dlv-dash-view.finalized .dlv-dash-body{flex:0 0 auto;}
+.dlv-btn-accent{border-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
+.dlv-btn-accent:hover{background:rgba(209,19,46,.15);}
+.dlv-dash-body{position:relative;display:flex;flex:1;min-height:0;}
+/* The dash's only chrome: a small ⋯ button in the top-right corner (no full-width bar, so the dash
+   keeps its vertical room). Out of flow, floats over the canvas corner; opens the lifecycle pop-out. */
+.dlv-dash-menu-btn{position:absolute;top:6px;right:6px;z-index:38;width:30px;height:26px;padding:0;
+  display:flex;align-items:center;justify-content:center;line-height:1;font-size:17px;cursor:pointer;
+  background:rgba(17,17,20,.9);border:1px solid var(--card-border, #26262c);border-radius:7px;color:var(--text-dim, #9a9aa2);}
+.dlv-dash-menu-btn:hover{border-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
+.dlv-dash-ctrl-menu{min-width:160px;}
+/* While editing: visible Finalize / Delete buttons in the top-right corner (out of flow). */
+.dlv-dash-editbtns{position:absolute;top:6px;right:6px;z-index:38;display:flex;gap:6px;}
+.dlv-dash-editbtns .dlv-btn{padding:6px 11px;font-size:12px;}
+/* Floating overlay (out of flow) so the canvas is FULL WIDTH in both edit and finalized -- one
+   coordinate system, so gauges never shift horizontally when you finalize (Ken). */
+.dlv-dash-palette{position:fixed;z-index:40;width:126px;max-height:70vh;overflow:auto;
+  display:flex;flex-direction:column;gap:8px;padding:9px;
+  background:rgba(17,17,20,.96);border:1px solid var(--card-border, #26262c);border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,.6);}
+.dlv-dash-palette-drag{display:flex;align-items:center;gap:6px;cursor:move;user-select:none;
+  font-size:11px;font-weight:800;letter-spacing:.6px;color:var(--text, #f2f2f4);
+  margin:-2px -2px 2px;padding:3px 2px;}
+.dlv-dash-palette-drag span{margin-left:auto;font-size:8.5px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--text-faint, #5c5c66);}
+.dlv-dash-snap{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--text-dim, #9a9aa2);cursor:pointer;user-select:none;margin:0 0 2px;}
+.dlv-dash-snap input{cursor:pointer;margin:0;}
+.dlv-dash-chip{display:flex;align-items:center;gap:9px;padding:9px;border-radius:8px;background:#16161a;
+  border:1px solid var(--card-border, #26262c);cursor:grab;font-size:12px;font-weight:700;color:var(--text, #f2f2f4);user-select:none;}
+.dlv-dash-chip:hover{border-color:var(--red, #d1132e);}
+.dlv-dash-chip:active{cursor:grabbing;}
+.dlv-dash-chip-ico{width:18px;height:18px;flex-shrink:0;border:2px solid currentColor;color:var(--text-dim, #9a9aa2);}
+.dash-ico-round{border-radius:50%;}
+.dash-ico-tach{border-radius:50%;border-color:#d1132e;}
+.dash-ico-vertical-bar{width:9px;height:18px;}
+.dash-ico-horizontal-bar{width:18px;height:9px;}
+.dash-ico-digital{height:12px;border-radius:3px;}
+.dash-ico-light{border-radius:50%;background:#22c55e;border-color:rgba(255,255,255,.35);box-shadow:0 0 6px #22c55e;}
+/* Combo = round (red, tach-like) with a small inset ring at the bottom-right: a gauge-in-a-gauge. */
+.dash-ico-combo{border-radius:50%;border-color:#d1132e;position:relative;}
+.dash-ico-combo::after{content:'';position:absolute;bottom:-2px;right:-2px;width:8px;height:8px;border:2px solid currentColor;border-radius:50%;background:#16161a;}
+/* Threshold editor in the right-click menu (tach redline / warning-light triggers) */
+.dlv-dash-thr{display:flex;flex-direction:column;gap:6px;}
+.dlv-dash-thr-h{font-size:9.5px;letter-spacing:1px;text-transform:uppercase;color:var(--text-faint, #5c5c66);}
+.dlv-dash-thr label{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-dim, #9a9aa2);}
+.dlv-dash-thr b{font-weight:800;}
+.dlv-dash-thr .thr-y{color:#f5a623;}
+.dlv-dash-thr .thr-r{color:#d1132e;}
+.dlv-dash-thr-in{width:74px;margin-left:auto;background:#0b0b0e;border:1px solid var(--card-border, #26262c);
+  color:var(--text, #f2f2f4);border-radius:5px;padding:4px 6px;font-size:12px;}
+/* Wider text field (label / unit) in the Gauge-settings block of the right-click menu. */
+.dlv-dash-set-in{width:130px;margin-left:auto;background:#0b0b0e;border:1px solid var(--card-border, #26262c);
+  color:var(--text, #f2f2f4);border-radius:5px;padding:4px 6px;font-size:12px;font-family:inherit;}
+/* Colour + bar-park controls in the right-click menu */
+.dlv-dash-color{display:flex;align-items:center;gap:8px;}
+.dlv-dash-color label{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-dim, #9a9aa2);}
+/* A clear, filled square swatch (was a thin strip -- Ken). Pseudo-elements make the colour fill it. */
+.dlv-dash-color-in{width:40px;height:40px;padding:0;border:1px solid var(--card-border, #26262c);border-radius:6px;background:none;cursor:pointer;}
+.dlv-dash-color-in::-webkit-color-swatch-wrapper{padding:2px;}
+.dlv-dash-color-in::-webkit-color-swatch{border:none;border-radius:4px;}
+.dlv-dash-color-in::-moz-color-swatch{border:none;border-radius:4px;}
+.dlv-dash-color-all{width:auto !important;margin-left:auto;font-size:11px;padding:5px 9px;}
+.dlv-dash-parked{display:flex;gap:4px;}
+.dlv-dash-park-btn{flex:1;background:#16161a;border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);
+  border-radius:6px;padding:5px 6px;font-size:11.5px;font-weight:700;cursor:pointer;}
+.dlv-dash-park-btn:hover{border-color:var(--red, #d1132e);}
+.dlv-dash-park-btn.on{background:var(--red, #d1132e);border-color:var(--red, #d1132e);color:#fff;}
+.dlv-dash-palette-hint{font-size:10px;color:var(--text-faint, #5c5c66);line-height:1.55;margin-top:auto;}
+.dlv-dash-canvas{position:relative;flex:1;min-height:0;overflow:hidden;background:#0c0c0f;
+  border:1px solid var(--card-border, #26262c);border-radius:10px;}
+.dlv-dash-canvas.editing{background-image:radial-gradient(circle, #24242e 1.1px, transparent 1.2px);
+  background-size:20px 20px;background-position:10px 10px;}
+.dlv-dash-canvas.drop-hot{border-color:var(--red, #d1132e);box-shadow:inset 0 0 0 1px var(--red, #d1132e);}
+.dlv-dash-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:var(--text-faint, #5c5c66);font-size:13px;font-weight:600;pointer-events:none;}
+.dlv-dash-gauge{position:absolute;}
+/* Free-size bars: fill the wrapper's explicit W x H (the box's unit width is overridden). Vertical
+   bar -> track centred, scale numbers moved to the left edge; horizontal bar -> track fills height. */
+.dlv-dash-gauge.dash-free.pbd-gauge-vertical-bar .pbd-bar-box{width:100%;height:100%;display:flex;flex-direction:column;}
+.dlv-dash-gauge.dash-free.pbd-gauge-vertical-bar .pbd-bar-label{min-height:0;margin-bottom:4px;}
+.dlv-dash-gauge.dash-free.pbd-gauge-vertical-bar .pbd-bar-trackwrap{flex:1;height:auto;min-height:0;}
+.dlv-dash-gauge.dash-free.pbd-gauge-vertical-bar .pbd-bar-track{width:52%;max-width:70px;}
+.dlv-dash-gauge.dash-free.pbd-gauge-vertical-bar .pbd-bar-tick{right:auto;left:3px;}
+.dlv-dash-gauge.dash-free.pbd-gauge-horizontal-bar .pbd-hbar-box{width:100%;height:100%;}
+.dlv-dash-gauge.dash-free.pbd-gauge-horizontal-bar .pbd-hbar-track{flex:1;height:auto;min-height:14px;}
+.dlv-dash-gauge.dash-free.pbd-gauge-horizontal-bar .pbd-hbar-ticks{flex:0 0 auto;}
+.dlv-dash-canvas.editing .dlv-dash-gauge{cursor:grab;outline:1px dashed transparent;outline-offset:2px;border-radius:8px;}
+.dlv-dash-canvas.editing .dlv-dash-gauge:hover{outline-color:rgba(209,19,46,.55);}
+.dlv-dash-gauge.dragging{cursor:grabbing;outline:1px dashed var(--red, #d1132e) !important;z-index:5;}
+.dlv-dash-gauge.resizing{outline:1px dashed var(--red, #d1132e) !important;z-index:5;}
+.dlv-dash-resize{position:absolute;right:-2px;bottom:-2px;width:14px;height:14px;cursor:nwse-resize;
+  border-right:3px solid var(--red, #d1132e);border-bottom:3px solid var(--red, #d1132e);
+  border-bottom-right-radius:4px;opacity:0;transition:opacity .12s;z-index:6;}
+.dlv-dash-canvas.editing .dlv-dash-gauge:hover .dlv-dash-resize,
+.dlv-dash-gauge.resizing .dlv-dash-resize{opacity:.9;}
+/* Two columns so the menu isn't a tall stack (Ken): channel picker left, all gauge settings right. */
+.dlv-dash-assign{width:auto;min-width:auto;max-height:calc(100vh - 16px);overflow-y:auto;}
+.dlv-dash-assign-cols{display:flex;gap:12px;align-items:flex-start;}
+.dlv-dash-assign-chan{width:206px;flex:0 0 auto;}
+.dlv-dash-assign-set{width:200px;flex:0 0 auto;border-left:1px solid var(--card-border, #26262c);padding-left:12px;}
+.dlv-dash-assign-set h4{margin-bottom:9px;}
+.dlv-dash-assign-set .dlv-dash-thr .dlv-dash-thr-h{margin-bottom:4px;}
+.dlv-dash-assign .dlv-dash-search{width:100%;margin-bottom:7px;background:#0b0b0e;
+  border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);border-radius:6px;padding:6px 8px;font-size:12px;}
+.dlv-dash-chanlist{max-height:244px;overflow:auto;display:flex;flex-direction:column;gap:1px;}
+.dlv-dash-assign .act{display:block;width:100%;text-align:left;background:transparent;color:var(--text, #f2f2f4);
+  padding:6px 8px;border-radius:6px;font-weight:600;font-size:12px;margin:0;}
+.dlv-dash-assign .act:hover{background:#20202a;}
+.dlv-dash-chan.on{color:var(--amber, #f5a623);}
+.dlv-dash-del{color:#e0576b !important;}
+
+/* number cards */
+.pbd-number-box{border-left:3px solid;border-radius:7px;background:var(--bg-elev, #111114);padding:6px 10px;min-width:100px;}
+.pbd-number-label{color:var(--text-dim, #9a9aa2);text-transform:uppercase;}
+.pbd-number-value{font-weight:800;font-variant-numeric:tabular-nums;}
+/* 'digital' gauges (ECT / MCT): square, big number, no needle. Sized in gauge units like the dials
+   so they scale with the rest of the fascia rather than sitting at a fixed size among things that
+   grow. Centred and border-boxed rather than the left-accent card treatment, so it reads as a
+   gauge in the cluster, not as a numeric card from Default View. */
+.pbd-gauge-digital .pbd-number-box{
+  border-left:none;border:1px solid var(--card-border, #26262c);
+  background:#101014;border-radius:8px;padding:calc(6 * var(--dlv-gauge-u, 1px)) 0;
+  /* ECT and MCT stack two-high in row 1. At 66 units each the pair left a large gap under them --
+     grown so the stack fills the row beside the bars, which is most of the point of dropping the
+     needle in the first place: all that space becomes digits. */
+  width:calc(96 * var(--dlv-gauge-u, 1px));
+  min-height:calc(90 * var(--dlv-gauge-u, 1px));
+  display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;
+}
+/* EVERY dimension here is in gauge units, type included -- see the note in buildNumberCard. Height
+   is min-height, not height, so a longer value can never be clipped by a fixed box. */
+.pbd-gauge-digital .pbd-number-label{letter-spacing:1px;line-height:1.1;
+  font-size:calc(10 * var(--dlv-gauge-u, 1px));}
+.pbd-gauge-digital .pbd-number-value{line-height:1;margin-top:calc(4 * var(--dlv-gauge-u, 1px));
+  font-size:calc(42 * var(--dlv-gauge-u, 1px));}
+.pbd-number-unit{color:var(--text-faint, #5c5c66);text-transform:uppercase;letter-spacing:1px;
+  line-height:1.1;font-size:calc(10 * var(--dlv-gauge-u, 1px));
+  margin-top:calc(2 * var(--dlv-gauge-u, 1px));}
+
+/* ---- Horizontal bar (sized in gauge units like the others; fill/zones are % of track width) ---- */
+.pbd-hbar-box{width:calc(196 * var(--dlv-gauge-u, 1px));display:flex;flex-direction:column;
+  gap:calc(5 * var(--dlv-gauge-u, 1px));}
+.pbd-hbar-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;min-width:0;}
+.pbd-hbar-label{color:var(--text-dim, #9a9aa2);font-weight:700;letter-spacing:.4px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pbd-hbar-value{font-weight:800;font-variant-numeric:tabular-nums;flex-shrink:0;}
+.pbd-hbar-track{position:relative;width:100%;height:calc(20 * var(--dlv-gauge-u, 1px));min-height:12px;
+  background:#0b0b0e;border:1px solid var(--card-border, #26262c);border-radius:5px;overflow:hidden;}
+.pbd-hbar-zone{position:absolute;top:0;bottom:0;}
+.pbd-hbar-zero{position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,.4);}
+.pbd-hbar-fill{position:absolute;top:0;bottom:0;left:0;width:0;border-radius:4px;
+  transition:width .08s linear,left .08s linear;}
+/* Scale increments below the h-bar track (min at left, max at right; end labels anchor to their edges). */
+.pbd-hbar-ticks{position:relative;width:100%;height:calc(11 * var(--dlv-gauge-u, 1px));min-height:10px;margin-top:1px;}
+.pbd-hbar-tick{position:absolute;top:0;transform:translateX(-50%);line-height:1;white-space:nowrap;
+  color:var(--text-faint, #5c5c66);font-variant-numeric:tabular-nums;}
+
+/* ---- Warning light (glows green/amber/red by threshold) ---- */
+.pbd-light-box{width:calc(96 * var(--dlv-gauge-u, 1px));display:flex;flex-direction:column;align-items:center;
+  gap:calc(6 * var(--dlv-gauge-u, 1px));}
+.pbd-light-label{color:var(--text-dim, #9a9aa2);font-weight:700;letter-spacing:.4px;text-align:center;
+  max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pbd-light-lamp{width:calc(46 * var(--dlv-gauge-u, 1px));height:calc(46 * var(--dlv-gauge-u, 1px));
+  border-radius:50%;background:#16161b;border:2px solid #2c2c34;}
+.pbd-light-lamp.lit{border-color:rgba(255,255,255,.3);}
+.pbd-light-value{font-weight:800;font-variant-numeric:tabular-nums;color:var(--text-faint, #5c5c66);}
+
+.dlv-loading{padding:80px 0;text-align:center;color:var(--text-dim, #9a9aa2);font-size:13px;}
+
+@media(max-width:1080px){
+  .dlv-channel-panel{width:240px;}
+  .dlv-header-info .fname{max-width:160px;}
+  .dlv-cards-row{grid-template-columns:repeat(auto-fill,minmax(120px,1fr));}
+}
+
+/* =============================================================================================
+   MOBILE  --  LANDSCAPE ONLY
+   =============================================================================================
+   A stripped-back build, not a shrunk desktop one (Ken, 2026-07-21). The brief: one graph, numeric
+   cards on top, no gauges, no header, a very short scrubber, and the channel list as a large-type
+   drawer -- "start at the most basic level, hide everything else, then add back what we need after
+   testing on a real phone."
+
+   THE QUERY IS HEIGHT-FIRST, AND THAT IS THE WHOLE TRICK. A landscape iPhone is 844x390 or
+   932x430 -- WIDER than any plausible "mobile" width breakpoint, so a max-width query would miss
+   the one orientation this build exists for. A short viewport is the reliable signal; desktop
+   windows are almost never under ~520px tall. The max-width arm catches portrait phones, which
+   exist here only to be shown the rotate prompt (see .dlv-rotate). iPad trips neither arm and
+   stays on the desktop layout in both orientations, which is correct -- it has room for it.
+
+   So everything absent here is HIDDEN, not deleted. Each block below is one rule away from coming
+   back, and the JS side (isMobileViewer / activeGraphSlots) only forces the graph count and the
+   cards layout -- it never overwrites the user's saved view mode, which returns intact on desktop.
+
+   Sizes are in px on purpose: the gauge cluster's --dlv-gauge-u scaling doesn't apply here because
+   there are no gauges, and touch targets want real minimums, not proportions. ============== */
+/* Portrait phone: the viewer isn't rendered at all (renderViewerBody returns early), just this. */
+/* Sized for arm's length on a phone, not for a desktop window. The previous 17px title and 44px
+   icon were desktop-ish numbers on a screen that is physically small and often being read in a
+   garage or at a dyno -- Ken couldn't read it on a Pixel 9. Scales with viewport width so it stays
+   proportionate from a small phone to a tablet, with floors and caps so it can't get silly. */
+.dlv-rotate{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  flex:1;gap:18px;padding:28px 24px;text-align:center;color:var(--text-dim, #9a9aa2);}
+.dlv-rotate-icon{font-size:clamp(88px, 30vw, 150px);line-height:1;transform:rotate(90deg);opacity:.9;}
+.dlv-rotate-title{font-size:clamp(28px, 8vw, 44px);font-weight:800;line-height:1.15;
+  color:var(--text, #f2f2f4);}
+.dlv-rotate-sub{font-size:clamp(16px, 4.4vw, 22px);line-height:1.4;max-width:22ch;}
+/* Sits ABOVE the rotate message (per Ken) and is the only control on this screen -- generously
+   sized because it's the sole way out if the user can't or won't rotate. */
+.dlv-rotate-back{order:-1;margin-bottom:20px;
+  padding:16px 26px;border-radius:12px;font-size:clamp(17px, 4.8vw, 22px);font-weight:700;cursor:pointer;
+  background:var(--bg-elev, #111114);color:var(--text, #f2f2f4);
+  border:1px solid var(--card-border, #26262c);}
+.dlv-rotate-back:active{background:var(--card, #16161a);}
+
+@media(max-height:520px),(max-width:620px){
+
+  /* ---- gone for now ---------------------------------------------------------------------- */
+  /* Header carries the filename, view picker, Save and Close. Ken asked for no header at all; the
+     obvious casualty is that there is currently NO WAY TO CLOSE THE VIEWER on a phone, which is
+     the first thing likely to come back. Delete this rule to restore the whole bar. */
+  .dlv-mobile .dlv-header{display:none;}
+  /* The mode tabs live outside the collapsing header (see .dlv-mode-tabs) and its picker lives in the
+     header, so there'd be no way back to Graph/Default anyway -- same reasoning as the header itself. */
+  .dlv-mobile .dlv-mode-tabs{display:none;}
+  /* No gauge fascia on a phone -- and with it goes the splitter that resizes it. */
+  .dlv-mobile .dlv-gauge-view,
+  .dlv-mobile .dlv-splitter{display:none;}
+  /* Pinch replaces the +/- buttons. FULLSCREEN STAYS: Chrome's address bar eats a serious slice of
+     an already-412px-tall landscape phone, and the Fullscreen API can only be entered from a real
+     user gesture -- a browser will refuse a requestFullscreen() fired from an orientationchange
+     handler, so this cannot be automatic. One tap here is the whole mechanism. It lives inline
+     beside the scrubber rather than floating, so it can't cover a card or the drawer toggle. */
+  .dlv-mobile #dlvZoomInBtn,
+  .dlv-mobile #dlvZoomOutBtn{display:none;}
+  .dlv-mobile .dlv-scrubber-controls{gap:0;}
+  .dlv-mobile #dlvFullscreenBtn{width:38px;height:26px;font-size:15px;border-radius:6px;}
+  /* Gone once fullscreen: it has nothing left to do (the system swipe/back gesture is the way out)
+     and every pixel of a 412px-tall screen belongs to the graph. Also hidden where the Fullscreen
+     API doesn't exist (iOS Safari on non-video elements) rather than sitting there doing nothing. */
+  .dlv-mobile.dlv-fs-on #dlvFullscreenBtn,
+  .dlv-mobile.dlv-fs-unsupported #dlvFullscreenBtn{display:none;}
+  /* Native host (BigData phone apps): the fullscreen slot holds the close button instead -- the
+     header X is hidden on phones and an app has no browser back gesture to fall back on. */
+  .dlv-mobile #dlvHostCloseBtn{width:38px;height:26px;font-size:14px;border-radius:6px;}
+  /* One graph means "which graph?" has no answer -- the U/L/M assignment column is noise, and the
+     Gauge column refers to a cluster that isn't rendered. The checkbox alone decides membership
+     (channelsForSlot folds every assignment into the only visible panel). */
+  .dlv-mobile .dlv-channel-table col:nth-child(3),
+  .dlv-mobile .dlv-channel-table col:nth-child(4),
+  .dlv-mobile .dlv-channel-table th:nth-child(3),
+  .dlv-mobile .dlv-channel-table th:nth-child(4),
+  .dlv-mobile .dlv-channel-table td:nth-child(3),
+  .dlv-mobile .dlv-channel-table td:nth-child(4){display:none;}
+  /* Per-graph chips/controls belong to a multi-panel layout. */
+  .dlv-mobile .dlv-graph-head{display:none;}
+  /* In-graph legend is desktop-only: on a phone the numeric cards along the top already show every
+     selected channel's live value, so repeating the names over the plot was duplicate information
+     costing plot area on the smallest screen (Ken, 2026-07-22). */
+  .dlv-mobile .dlv-graph-legend{display:none;}
+
+  /* ---- channel drawer -------------------------------------------------------------------- */
+  /* On desktop the panel sits BESIDE the content; at this width there is no beside, so it becomes
+     an overlay. Anchored to the left edge, nearly full width, and slid off-canvas when collapsed
+     rather than shrunk -- a 40px stub would eat screen while showing nothing readable. */
+  /* One variable so the panel, its off-canvas offset and the toggle's counter-offset can never
+     drift apart -- they have to agree exactly or the button lands in the wrong place.
+     300px, down from 420: in landscape the drawer only has to be wide enough to READ a channel
+     name, and 420 covered nearly half a 916px-wide phone (Ken, 2026-07-21). */
+  .dlv-mobile{--dlv-drawer-w:min(72vw, 300px);}
+  .dlv-mobile .dlv-channel-panel{
+    position:absolute;top:0;left:0;bottom:0;z-index:40;
+    width:var(--dlv-drawer-w);
+    border-right:1px solid var(--card-border, #26262c);
+    box-shadow:8px 0 28px rgba(0,0,0,.6);
+    transition:transform .18s ease;
+  }
+  .dlv-mobile .dlv-channel-panel.dlv-collapsed{
+    width:var(--dlv-drawer-w);       /* keep its size so the slide-out doesn't also resize */
+    transform:translateX(calc(-1 * var(--dlv-drawer-w)));
+    box-shadow:none;border-right:none;
+  }
+  /* The toggle has to stay reachable while the drawer is off-canvas, so it rides outside the
+     panel's own transform. Big, per Ken -- comfortably past the ~44px touch-target floor. */
+  .dlv-mobile .dlv-channel-panel.dlv-collapsed .dlv-channel-toolbar{
+    transform:translateX(var(--dlv-drawer-w));
+    background:transparent;border-bottom:none;padding:8px;
+  }
+  /* RED, per Ken: this is the only way to reach the channel list, and as a grey chip on a dark
+     graph it read as decoration. The one saturated control on the screen should be the one thing
+     you must find. */
+  .dlv-mobile .dlv-channel-collapse-btn{
+    width:42px;height:42px;border-radius:10px;font-size:18px;   /* 80% (Ken, 2026-07-22) */
+    background:var(--red, #d1132e);border:1px solid var(--red, #d1132e);color:#fff;
+    box-shadow:0 3px 12px rgba(0,0,0,.5);
+  }
+  .dlv-mobile .dlv-channel-collapse-btn:active{background:#a50f24;}
+  .dlv-mobile .dlv-channel-search{font-size:16px;padding:11px 12px;}  /* 16px: iOS zooms <16px inputs on focus */
+  /* Large type, per Ken -- and rows tall enough to hit without aiming. */
+  .dlv-mobile table.dlv-channel-table{font-size:15px;}
+  .dlv-mobile table.dlv-channel-table tbody td{padding:11px 8px;}
+  .dlv-mobile .dlv-ch-name{font-size:16px;}
+  .dlv-mobile .dlv-ch-value-num{font-size:17px;}
+  .dlv-mobile .dlv-ch-value-text{font-size:13px;}
+  .dlv-mobile table.dlv-channel-table thead th{font-size:11px;padding:10px 8px;}
+  .dlv-mobile .dlv-channel-table input[type=checkbox]{width:22px;height:22px;}
+  .dlv-mobile .dlv-channel-footer{font-size:13px;padding:12px 10px;}
+
+  /* ---- "View channels" hint (fades itself out) -------------------------------------------- */
+  /* A whisper, not a button. It was solid red, which made it compete with the (also red) button it
+     points at and read as something to press -- but it's pointer-events:none and always was. Muted
+     panel colours say "label" instead (Ken, 2026-07-21). */
+  .dlv-mobile .dlv-channel-hint{
+    position:absolute;left:68px;top:20px;z-index:45;
+    display:flex;align-items:center;gap:7px;
+    padding:8px 13px;border-radius:9px;font-size:14px;font-weight:600;letter-spacing:.2px;
+    background:rgba(22,22,26,.94);color:var(--text, #f2f2f4);
+    border:1px solid var(--card-border, #26262c);box-shadow:0 4px 16px rgba(0,0,0,.5);
+    pointer-events:none;                     /* never intercepts the tap it is advertising */
+    /* Opacity only -- deliberately NOT a slide. A transform-based entry with fill-mode:both pins
+       the element at its *start* offset whenever the animation doesn't actually run (a backgrounded
+       or throttled tab), which left the hint sitting 10px left, on top of the button it points at.
+       Resting position must come from `left` alone and never depend on an animation completing. */
+    animation:dlvHintIn .25s ease both;      /* quick in, so the short hold is all readable time */
+  }
+  .dlv-mobile .dlv-channel-hint-arrow{font-size:16px;line-height:1;color:var(--red, #d1132e);}
+  /* Still slower out than in -- a fade that drifts reads as intentional, a snap reads as a glitch. */
+  .dlv-mobile .dlv-channel-hint.dlv-hint-out{opacity:0;transition:opacity .4s ease;}
+  @keyframes dlvHintIn{from{opacity:0;}to{opacity:1;}}
+
+  /* ---- first-run walkthrough --------------------------------------------------------------- */
+  /* The dimming is done with a giant box-shadow SPREAD on the spotlight rather than an SVG mask or
+     four separate scrim panels: one element, one paint, and the "hole" is always exactly the
+     target's measured rect. .dlv-body clips the shadow, which is fine -- it covers the screen. */
+  .dlv-tour{position:absolute;inset:0;z-index:200;}
+  /* The spotlight PULSES so the eye lands on it before reading the card -- on a 52px corner button
+     a static outline was easy to skip past (Ken, 2026-07-22). Animating box-shadow spread rather
+     than transform keeps the dimming hole exactly on the target. */
+  .dlv-tour-spot{position:absolute;border-radius:10px;
+    box-shadow:0 0 0 9999px rgba(0,0,0,.74), 0 0 0 2px var(--red, #d1132e) inset;
+    outline:2px solid var(--red, #d1132e);outline-offset:0;
+    transition:top .22s ease,left .22s ease,width .22s ease,height .22s ease;
+    pointer-events:none;animation:dlvSpotPulse 1.4s ease-in-out infinite;}
+  @keyframes dlvSpotPulse{
+    0%,100%{outline-color:rgba(209,19,46,1);outline-offset:0;}
+    50%    {outline-color:rgba(209,19,46,.35);outline-offset:5px;}
+  }
+  /* Arrow on the card, pointing back at the spotlight. Direction class is set from JS once the card
+     has been placed, so it always agrees with where the card actually ended up. */
+  .dlv-tour-card::after{content:'';position:absolute;width:0;height:0;
+    animation:dlvArrowNudge 1.1s ease-in-out infinite;}
+  .dlv-tour-card.dlv-arrow-up::after{bottom:100%;left:50%;margin-left:-9px;
+    border-left:9px solid transparent;border-right:9px solid transparent;
+    border-bottom:9px solid var(--red, #d1132e);}
+  .dlv-tour-card.dlv-arrow-down::after{top:100%;left:50%;margin-left:-9px;
+    border-left:9px solid transparent;border-right:9px solid transparent;
+    border-top:9px solid var(--red, #d1132e);}
+  .dlv-tour-card.dlv-arrow-left::after{right:100%;top:50%;margin-top:-9px;
+    border-top:9px solid transparent;border-bottom:9px solid transparent;
+    border-right:9px solid var(--red, #d1132e);}
+  .dlv-tour-card.dlv-arrow-right::after{left:100%;top:50%;margin-top:-9px;
+    border-top:9px solid transparent;border-bottom:9px solid transparent;
+    border-left:9px solid var(--red, #d1132e);}
+  @keyframes dlvArrowNudge{0%,100%{opacity:1;}50%{opacity:.35;}}
+  .dlv-tour-card{position:absolute;max-width:min(64vw, 340px);
+    background:rgba(18,18,22,.97);border:1px solid var(--card-border, #26262c);
+    border-radius:12px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.7);}
+  .dlv-tour-step{font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;
+    color:var(--text-faint, #5c5c66);font-weight:700;}
+  .dlv-tour-title{font-size:18px;font-weight:800;color:var(--text, #f2f2f4);margin-top:3px;}
+  .dlv-tour-body{font-size:13.5px;line-height:1.45;color:var(--text-dim, #9a9aa2);margin-top:5px;}
+  .dlv-tour-acts{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:11px;}
+  .dlv-tour-skip{background:none;border:none;color:var(--text-faint, #5c5c66);
+    font-size:13px;font-weight:600;cursor:pointer;padding:8px 4px;}
+  .dlv-tour-next{background:var(--red, #d1132e);border:none;color:#fff;
+    font-size:14px;font-weight:800;border-radius:9px;padding:10px 22px;cursor:pointer;
+    touch-action:manipulation;}
+  .dlv-tour-next:active{background:#a50f24;}
+
+  /* ---- first-run fullscreen reminder ------------------------------------------------------- */
+  /* Deliberately loud, unlike the channels hint: it appears once ever, and the thing it points at
+     is a 38x26 glyph in a corner that Ken looked straight past. Anchored bottom-right, above the
+     scrubber row, with an arrow aimed down at the button. */
+  .dlv-mobile .dlv-fs-hint{
+    position:absolute;right:10px;bottom:46px;z-index:46;   /* clears the scrubber row + the button */
+    padding:12px 16px 10px;border-radius:12px;text-align:right;
+    background:rgba(22,22,26,.96);border:1px solid var(--red, #d1132e);
+    box-shadow:0 6px 22px rgba(0,0,0,.6);
+    pointer-events:none;                     /* must never block the button it advertises */
+    animation:dlvHintIn .3s ease both;
+  }
+  .dlv-mobile .dlv-fs-hint-text{font-size:19px;font-weight:800;color:var(--text, #f2f2f4);
+    line-height:1.2;white-space:nowrap;}
+  .dlv-mobile .dlv-fs-hint-sub{font-size:12.5px;color:var(--text-dim, #9a9aa2);margin-top:2px;
+    white-space:nowrap;}
+  .dlv-mobile .dlv-fs-hint-arrow{font-size:26px;line-height:1;color:var(--red, #d1132e);
+    margin-top:2px;}
+  .dlv-mobile .dlv-fs-hint.dlv-hint-out{opacity:0;transition:opacity .45s ease;}
+  /* .dlv-main is the positioning context for both mobile hints */
+  .dlv-mobile .dlv-main{position:relative;}
+
+  /* ---- compact keypad --------------------------------------------------------------------- */
+  /* Hidden until the search field is tapped, so the channel list keeps the height by default. */
+  /* 7 x 4 = 28 cells for A-Z + backspace + Done, at ~130px total. Height is the whole point: a
+     199px pad was no better than the native keyboard it replaces, and the graph/list space it
+     frees is the reason this exists at all. */
+  .dlv-mobile .dlv-keypad{display:none;}
+  .dlv-mobile .dlv-channel-panel.dlv-keypad-open .dlv-keypad{
+    display:grid;grid-template-columns:repeat(7,1fr);gap:3px;
+    padding:4px;border-bottom:1px solid var(--card-border, #26262c);
+    background:var(--bg-elev, #111114);flex-shrink:0;
+  }
+  .dlv-mobile .dlv-key{
+    height:28px;border-radius:5px;font-size:14px;font-weight:700;cursor:pointer;
+    background:var(--card, #16161a);color:var(--text, #f2f2f4);
+    border:1px solid var(--card-border, #26262c);padding:0;
+    touch-action:manipulation;               /* kills the 300ms double-tap-zoom delay */
+  }
+  .dlv-mobile .dlv-key:active{background:var(--card-border, #26262c);}
+  .dlv-mobile .dlv-key-done{background:var(--red, #d1132e);border-color:var(--red, #d1132e);
+    color:#fff;font-size:11px;}
+  /* While the pad is up, rows go compact so the filtering actually shows you results -- the point
+     of the exercise. Reverts the moment the pad closes. */
+  .dlv-mobile .dlv-keypad-open table.dlv-channel-table tbody td{padding:5px 8px;}
+  .dlv-mobile .dlv-keypad-open .dlv-ch-name{font-size:14px;}
+  .dlv-mobile .dlv-keypad-open .dlv-ch-value{display:none;}
+  .dlv-mobile .dlv-keypad-open .dlv-channel-footer{display:none;}
+
+  /* ---- body / cards / graph -------------------------------------------------------------- */
+  .dlv-mobile .dlv-body{position:relative;}   /* containing block for the drawer overlay */
+  .dlv-mobile .dlv-main{min-width:0;width:100%;}
+  /* Cards scroll sideways as one row rather than reflowing into a grid that pushes the graph off
+     screen -- the graph is the thing that must keep its height. */
+  /* padding-left clears the 52px drawer toggle, which floats at left:8px OVER this row -- without
+     it the first card or two sit underneath the button and can't be read (Ken, 2026-07-21). */
+  /* WRAPS rather than scrolls. Scrolling sideways meant that once you selected enough channels the
+     leading cards slid under the channels button and were simply unreadable (Ken, 2026-07-21).
+     Wrapping keeps every card on screen; the density tiers below shrink them instead of hiding
+     them. justify-content:flex-end is safe here precisely BECAUSE it wraps -- in the old scrolling
+     row it would have pushed the first cards off the start edge, unreachable, which is why that
+     version used an auto margin instead. */
+  .dlv-mobile .dlv-cards-row{
+    display:flex;flex-wrap:wrap;justify-content:flex-end;align-content:flex-start;
+    gap:5px;padding:5px 8px 5px 68px;   /* 68px keeps row 1 clear of the channels button */
+  }
+  /* FIXED width, not min-width (Ken, 2026-07-22). A card sized to its content resizes every time
+     the value's character count changes -- crossing zero adds a minus sign, 9.9 -> 10.0 adds a
+     digit -- so scrubbing made the whole row twitch and reflow. A locked width means the number
+     changes and nothing else moves. Values are tabular-nums already, so digits don't jitter either.
+     Sized at 80% of the previous cards. */
+  .dlv-mobile .dlv-card{flex:0 0 auto;width:62px;padding:4px 6px;overflow:hidden;}
+  .dlv-mobile .dlv-card-label{font-size:7.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dlv-mobile .dlv-card-value{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dlv-mobile .dlv-card-value-text{font-size:9px;}
+  .dlv-mobile .dlv-card-unit{font-size:7px;}
+
+  /* Density tiers: more channels selected -> smaller cards, so a second row appears before
+     anything is pushed out of view. Set from JS (renderCardsHtml) off the card count. */
+  .dlv-mobile .dlv-cards-d2 .dlv-card{width:53px;padding:3px 5px;}
+  .dlv-mobile .dlv-cards-d2 .dlv-card-value{font-size:12px;}
+  .dlv-mobile .dlv-cards-d2 .dlv-card-label{font-size:7px;}
+  .dlv-mobile .dlv-cards-d3 .dlv-card{width:45px;padding:2px 4px;border-left-width:2px;}
+  .dlv-mobile .dlv-cards-d3 .dlv-card-value{font-size:10.5px;}
+  .dlv-mobile .dlv-cards-d3 .dlv-card-label{font-size:6.5px;}
+  .dlv-mobile .dlv-cards-d3 .dlv-card-value-text{font-size:8px;}
+  .dlv-mobile .dlv-card-stats{display:none;}   /* min/max/avg is desk work, not glance work */
+  .dlv-mobile .dlv-cards-more{align-self:center;}
+  .dlv-mobile .dlv-graphs{flex:1;min-height:0;}
+  .dlv-mobile .dlv-graph-panel{padding:0 4px 4px;}
+
+  /* ---- scrubber -------------------------------------------------------------------------- */
+  /* "Extremely small" per Ken: an orientation strip, not a control. Still drag-scrubbable, but the
+     real navigation on a phone is pinch and drag on the graph itself. */
+  .dlv-mobile .dlv-scrubber-row{padding:2px 6px 4px;}
+  .dlv-mobile .dlv-scrubber-wrap{height:16px;}
+  .dlv-mobile .dlv-scrubber-playhead{width:2px;}
+  /* touch-action:none is required, not cosmetic -- without it the browser claims a horizontal drag
+     as a scroll/pan gesture and cancels the pointer stream mid-drag, so the window jumps once and
+     then stops following the finger. */
+  .dlv-mobile .dlv-scrubber-wrap,
+  .dlv-mobile .dlv-scrubber-window{touch-action:none;}
+  /* The window's width IS the zoom level, so zooming in shrinks it -- at high zoom it became a
+     few pixels wide and impossible to hit with a fingertip, which is exactly when you most want to
+     drag it. A floor keeps it grabbable; it slightly over-states the window at extreme zoom, which
+     is the right trade against "cannot be moved at all". */
+  .dlv-mobile .dlv-scrubber-window{min-width:30px;}
+}
+
+/* ===== Scorecard custom-dash component (datalog-scorecard.js) ==================================
+   Host-token-independent (per-property var() fallbacks), matching the dark viewer surface. Renders
+   as a polished table, never a bare HTML grid. */
+.pbd-gauge-scorecard{min-width:230px;min-height:150px;}
+.dlv-sc-card{width:100%;height:100%;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;
+  background:var(--card, #16161a);border:1px solid var(--card-border, #26262c);border-radius:10px;
+  color:var(--text, #f2f2f4);font-size:12px;line-height:1.3;}
+/* Header = ONE row: title/subtitle left, Overall Score right (no wasted vertical rows). */
+.dlv-sc-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;
+  border-bottom:1px solid var(--card-border, #26262c);flex-shrink:0;}
+.dlv-sc-head-l{min-width:0;}
+.dlv-sc-title{font-size:12.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;}
+.dlv-sc-sub{font-size:10px;color:var(--text-dim, #9a9aa2);margin-top:1px;}
+.dlv-sc-head-r{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.dlv-sc-ov-score{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;}
+.dlv-sc-ov-max{font-size:10px;font-weight:600;color:var(--text-faint, #5c5c66);margin-left:1px;}
+.dlv-sc-ov-meta{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;}
+.dlv-sc-ov-status{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.3px;}
+.dlv-sc-ov-count{font-size:9px;color:var(--text-dim, #9a9aa2);}
+.dlv-sc-state{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:18px 12px;
+  color:var(--text-dim, #9a9aa2);font-size:12px;}
+.dlv-sc-rows{flex:1;overflow-y:auto;overflow-x:hidden;padding:2px 6px 4px;}
+.dlv-sc-rowhead{display:grid;grid-template-columns:1fr auto auto;gap:10px;padding:4px 6px 3px;
+  font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text-faint, #5c5c66);position:sticky;top:0;background:var(--card, #16161a);}
+.dlv-sc-rowhead .dlv-sc-c-score{text-align:right;}
+.dlv-sc-row{display:grid;grid-template-columns:1fr auto auto;grid-template-areas:"cat score status";gap:10px;align-items:center;
+  padding:6px;border-radius:6px;border:1px solid transparent;}
+.dlv-sc-row + .dlv-sc-row{margin-top:1px;}
+.dlv-sc-row:hover{background:rgba(255,255,255,.04);}
+.dlv-sc-expandable{cursor:pointer;}
+.dlv-sc-expandable:focus-visible{outline:2px solid var(--amber, #f5a623);outline-offset:1px;}
+.dlv-sc-cat{grid-area:cat;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.dlv-sc-desc{display:block;font-size:10px;font-weight:400;color:var(--text-dim, #9a9aa2);white-space:normal;margin-top:1px;}
+.dlv-sc-score{grid-area:score;display:flex;align-items:center;gap:7px;justify-self:end;}
+.dlv-sc-score b{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;min-width:26px;text-align:right;}
+.dlv-sc-max{font-size:9.5px;color:var(--text-faint, #5c5c66);}
+.dlv-sc-bar{display:inline-block;width:44px;height:5px;border-radius:3px;background:rgba(255,255,255,.09);overflow:hidden;}
+.dlv-sc-bar-fill{display:block;height:100%;border-radius:3px;}
+.dlv-sc-status{grid-area:status;display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;justify-self:end;white-space:nowrap;}
+.dlv-sc-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.dlv-sc-caret{color:var(--text-faint, #5c5c66);transition:transform .12s;font-size:13px;}
+.dlv-sc-row.open .dlv-sc-caret{transform:rotate(90deg);}
+.dlv-sc-detail{grid-column:1 / -1;margin-top:5px;padding:8px 8px 3px;border-top:1px dashed var(--card-border, #26262c);font-size:11px;color:var(--text-dim, #9a9aa2);}
+.dlv-sc-detail[hidden]{display:none;}
+.dlv-sc-d-summary{color:var(--text, #f2f2f4);margin-bottom:5px;}
+.dlv-sc-d-reason{color:var(--amber, #f5a623);margin-bottom:5px;}
+.dlv-sc-d-missing{color:var(--amber, #f5a623);margin-bottom:5px;font-size:10.5px;}
+.dlv-sc-d-grid{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin-bottom:5px;}
+.dlv-sc-d-k{color:var(--text-faint, #5c5c66);} .dlv-sc-d-v{font-variant-numeric:tabular-nums;color:var(--text, #f2f2f4);}
+.dlv-sc-ev{padding:3px 6px;border-left:2px solid var(--card-border, #26262c);margin-bottom:3px;font-size:10.5px;}
+.dlv-sc-ev.sev-warning{border-left-color:var(--amber, #f5a623);} .dlv-sc-ev.sev-critical{border-left-color:var(--red, #d1132e);}
+.dlv-sc-ev-t{color:var(--text-faint, #5c5c66);font-variant-numeric:tabular-nums;}
+.dlv-sc-d-conf,.dlv-sc-d-warn{font-size:10px;color:var(--text-faint, #5c5c66);margin-top:3px;}
+.dlv-sc-foot{padding:5px 12px;border-top:1px solid var(--card-border, #26262c);font-size:10px;color:var(--text-faint, #5c5c66);flex-shrink:0;text-align:right;}
+.dlv-sc-compact .dlv-sc-row{padding:3px 6px;} .dlv-sc-compact .dlv-sc-score b{font-size:14px;}
+.dlv-sc-compact .dlv-sc-desc,.dlv-sc-compact .dlv-sc-bar{display:none;}
+.dlv-sc-compact .dlv-sc-head{padding:5px 12px;} .dlv-sc-compact .dlv-sc-ov-score{font-size:20px;} .dlv-sc-compact .dlv-sc-sub{display:none;}
+
+/* Config modal */
+.dlv-sc-cfg-ovl{position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;}
+.dlv-sc-cfg{width:min(560px,94vw);max-height:88vh;display:flex;flex-direction:column;background:var(--card, #16161a);
+  border:1px solid var(--card-border, #26262c);border-radius:12px;color:var(--text, #f2f2f4);overflow:hidden;font-size:13px;}
+.dlv-sc-cfg-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--card-border, #26262c);font-size:14px;}
+.dlv-sc-cfg-x{background:none;border:none;color:var(--text-dim, #9a9aa2);font-size:20px;cursor:pointer;line-height:1;}
+.dlv-sc-cfg-tabs{display:flex;gap:2px;padding:8px 14px 0;border-bottom:1px solid var(--card-border, #26262c);}
+.dlv-sc-cfg-tabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim, #9a9aa2);font-size:12px;font-weight:700;padding:6px 10px;cursor:pointer;}
+.dlv-sc-cfg-tabs button.on{color:var(--text, #f2f2f4);border-bottom-color:var(--red, #d1132e);}
+.dlv-sc-cfg-body{padding:12px 14px;overflow-y:auto;}
+.dlv-sc-cfg-row{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:12.5px;color:var(--text, #f2f2f4);}
+.dlv-sc-cfg-row input[type=text],.dlv-sc-cfg-row select{flex:1;min-width:0;background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);border-radius:6px;padding:6px 8px;font-size:12px;}
+.dlv-sc-cfg-help,.dlv-sc-cfg-soon{font-size:11px;color:var(--text-dim, #9a9aa2);}
+.dlv-sc-cfg-soon{color:var(--text-faint, #5c5c66);}
+.dlv-sc-cfg-cat{display:flex;align-items:center;gap:6px;padding:5px 4px;border-bottom:1px solid var(--card-border, #26262c);}
+.dlv-sc-cfg-drag{cursor:grab;color:var(--text-faint, #5c5c66);}
+.dlv-sc-cfg-lbl{flex:1;min-width:40px;background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);border-radius:5px;padding:4px 6px;font-size:12px;}
+.dlv-sc-cfg-ev{background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);border-radius:5px;padding:4px;font-size:11px;max-width:150px;}
+.dlv-sc-cfg-w{width:52px;background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);border-radius:5px;padding:4px;font-size:12px;}
+.dlv-sc-cfg-catx{background:none;border:1px solid var(--card-border, #26262c);color:var(--red, #d1132e);width:24px;height:24px;border-radius:5px;cursor:pointer;}
+.dlv-sc-cfg-catbtns{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;}
+.dlv-sc-cfg-catbtns button{background:#26262c;border:none;color:var(--text, #f2f2f4);border-radius:6px;padding:7px 11px;font-size:12px;font-weight:700;cursor:pointer;}
+.dlv-sc-cfg-catbtns button[disabled]{opacity:.5;cursor:not-allowed;}
+.dlv-sc-cfg-count{margin-left:auto;font-size:11px;color:var(--text-dim, #9a9aa2);}
