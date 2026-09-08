@@ -1,0 +1,37 @@
+name: Android
+# Builds the Android app on every push to main (and by hand). Until the upload keystore exists this
+# produces a DEBUG APK as a downloadable artifact — enough to install on a phone and test (M1).
+# The release AAB + Play internal-track upload is added once the ANDROID_KEYSTORE_* secrets are set.
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', 'www/**', 'capacitor.config.ts', 'package.json', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci --ignore-scripts
+      - run: npm run payload:check
+      # Copies www/ into the Android project and wires the plugins (no network, no source folders needed).
+      - run: npx cap sync android
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BigData-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
