@@ -1030,6 +1030,12 @@ table.dlv-channel-table tbody tr.dlv-row-selected{background:rgba(209,19,46,0.06
 .dlv-dash-assign .act:hover{background:#20202a;}
 .dlv-dash-chan.on{color:var(--amber, #f5a623);}
 .dlv-dash-del{color:#e0576b !important;}
+/* Copy / Duplicate sit side by side above Delete in the gauge menu; the palette's Paste is a chip
+   that is a real button (no drag) so it reads like the gauge chips it sits under. */
+.dlv-dash-copyrow{display:flex;gap:6px;margin-bottom:4px;}
+.dlv-dash-copyrow .act{flex:1;text-align:center;}
+button.dlv-dash-paste{width:100%;font:inherit;color:inherit;border:1px dashed #3a3a42;cursor:pointer;justify-content:center;margin-top:2px;}
+button.dlv-dash-paste:hover{border-color:var(--amber, #f5a623);}
 
 /* number cards */
 .pbd-number-box{border-left:3px solid;border-radius:7px;background:var(--bg-elev, #111114);padding:6px 10px;min-width:100px;}

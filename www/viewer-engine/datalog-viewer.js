@@ -3064,7 +3064,8 @@ function renderCustomDashView(){
         '<div class="dlv-dash-palette-drag" title="Drag to move this panel">&#9776; Gauges<span>drag to move</span></div>' +
         '<label class="dlv-dash-snap" title="Snap moves and bar-resizes to the grid (hold Alt to invert)"><input type="checkbox" id="dlvDashSnap"' + (VIEWER_DASH_SNAP !== false ? ' checked' : '') + '> Snap to grid</label>' +
         DASH_PALETTE.filter(function(p){ return p.type !== 'scorecard' || scorecardEnabled(); }).map(function(p){ return '<div class="dlv-dash-chip" draggable="true" data-dash-type="' + p.type + '"><span class="dlv-dash-chip-ico dash-ico-' + p.type + '"></span>' + p.label + '</div>'; }).join('') +
-        '<div class="dlv-dash-palette-hint">Drag a gauge onto the grid. Right-click a gauge to assign its channel, set its range, warnings, label &amp; more, or delete it. <b>Snap to grid</b> also snaps bar resizes so two bars line up; Alt inverts it. Hit <b>&#10003; Finalize</b> (top-right) when you\'re done.</div>' +
+        '<button type="button" class="dlv-dash-chip dlv-dash-paste" id="dlvDashPaste" title="Paste the copied gauge (Ctrl+V also works)">&#10064; Paste gauge</button>' +
+        '<div class="dlv-dash-palette-hint">Drag a gauge onto the grid. Right-click a gauge to assign its channel, set its range, warnings, label &amp; more, copy or duplicate it, or delete it. <b>Snap to grid</b> also snaps bar resizes so two bars line up; Alt inverts it. Hit <b>&#10003; Finalize</b> (top-right) when you\'re done.</div>' +
       '</div>' : '') +
       '<div class="dlv-dash-canvas' + (edit ? ' editing' : '') + '" id="dlvDashCanvas">' +
         (edit && (!VIEWER_DASH || !VIEWER_DASH.gauges.length) ? '<div class="dlv-dash-empty">Drag a gauge here to start</div>' : '') +
@@ -3096,6 +3097,18 @@ function renderCustomDashView(){
     }
     var snapCb = document.getElementById('dlvDashSnap');
     if(snapCb) snapCb.addEventListener('change', function(){ VIEWER_DASH_SNAP = snapCb.checked; });
+    var pasteBtn = document.getElementById('dlvDashPaste');
+    if(pasteBtn) pasteBtn.addEventListener('click', function(){
+      // Ask the system clipboard first (a gauge copied in another window); fall back to ours.
+      var fromMem = function(){ dashPaste(null, null); };
+      try {
+        if(navigator.clipboard && navigator.clipboard.readText){
+          navigator.clipboard.readText().then(function(text){ var src = dashGaugeFromClipboardText(text); if(src) dashPaste(src, null); else fromMem(); }, fromMem);
+          return;
+        }
+      } catch(err){}
+      fromMem();
+    });
   } else {
     dashApplyHug(host, canvas);   // shrink the canvas to fit the gauges (unless a dragged height overrides)
   }
@@ -4100,6 +4113,11 @@ function dashAssignMenu(e, g){
           ['auto', 'end', 'center'].map(function(p){ return '<button type="button" class="dlv-dash-park-btn' + ((g.parked || 'auto') === p ? ' on' : '') + '" data-park="' + p + '">' + (p === 'auto' ? 'Auto' : p === 'end' ? 'End' : 'Center') + '</button>'; }).join('') +
         '</div>' : '') +
       '<div class="dlv-menu-sep"></div>' +
+      // Copy / Duplicate: the fastest way to build a cluster of similar gauges (Ken, 2026-09-08).
+      '<div class="dlv-dash-copyrow">' +
+        '<button type="button" class="act clear" data-dash-dup="1" title="Add an identical gauge next to this one">&#10697; Duplicate</button>' +
+        '<button type="button" class="act clear" data-dash-copy="1" title="Copy this gauge; paste with Ctrl+V or the palette\'s Paste">&#10064; Copy gauge</button>' +
+      '</div>' +
       '<button type="button" class="act clear dlv-dash-del" data-dash-del="1">&#128465; Delete gauge</button>' +
     '</div>';
   m.innerHTML = '<div class="dlv-dash-assign-cols">' + chanCol + setCol + '</div>';
@@ -4194,6 +4212,10 @@ function dashAssignMenu(e, g){
     });
   });
   m.querySelector('[data-dash-del]').addEventListener('click', function(){ dashDelete(g); closeDashMenu(); });
+  var dupBtn = m.querySelector('[data-dash-dup]');
+  if(dupBtn) dupBtn.addEventListener('click', function(){ dashDuplicate(g); closeDashMenu(); });
+  var copyBtn = m.querySelector('[data-dash-copy]');
+  if(copyBtn) copyBtn.addEventListener('click', function(){ dashCopy(g); closeDashMenu(); });
 }
 
 // Rebuild one gauge element in place (its ticks/labels/zones/redline are baked in at build time).
@@ -4235,6 +4257,73 @@ function dashDelete(g){
   if(el && el.parentNode) el.parentNode.removeChild(el);
   delete VIEWER_DASH_ELS[g.id];
 }
+
+// ---- Copy / paste / duplicate gauges (Ken, 2026-09-08: "make things quicker to setup") ------------
+// Right-click a gauge -> Copy gauge (or Duplicate). Paste with Ctrl+V while building, or the palette's
+// Paste button. The copy goes to the system clipboard as JSON too, so a gauge can be pasted into a
+// dash in another window/host; the in-memory copy is the fallback where the clipboard is off-limits.
+var VIEWER_DASH_CLIPBOARD = null;
+var DASH_CLIP_MARK = 'dlv-gauge/1';
+function dashGaugeSnapshot(g){
+  var copy = JSON.parse(JSON.stringify(g));
+  delete copy.id;
+  return copy;
+}
+function dashCopy(g){
+  if(!g) return;
+  VIEWER_DASH_CLIPBOARD = dashGaugeSnapshot(g);
+  var text = JSON.stringify({ kind: DASH_CLIP_MARK, gauge: VIEWER_DASH_CLIPBOARD });
+  try { if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(function(){}); } catch(err){}
+  if(window.showToast) showToast('Gauge copied — Ctrl+V (or the palette\'s Paste) adds it to the dash');
+}
+// Accepts a pasted TEXT (from the clipboard event) or falls back to the in-memory copy.
+function dashGaugeFromClipboardText(text){
+  if(typeof text !== 'string' || !text) return null;
+  try {
+    var o = JSON.parse(text);
+    if(o && o.kind === DASH_CLIP_MARK && o.gauge && typeof o.gauge === 'object') return o.gauge;
+  } catch(err){}
+  return null;
+}
+function dashPaste(src, at){
+  if(!VIEWER_DASH_EDIT || !VIEWER_DASH) return false;
+  src = src || VIEWER_DASH_CLIPBOARD;
+  if(!src){ if(window.showToast) showToast('Nothing to paste — right-click a gauge and choose Copy gauge first'); return false; }
+  if(src.type === 'scorecard' && !scorecardEnabled()) return false;
+  var canvas = document.getElementById('dlvDashCanvas');
+  if(!canvas) return false;
+  var g = JSON.parse(JSON.stringify(src));
+  g.id = 'dash-' + (DASH_ID++);
+  var free = dashIsFreeSize(g.type);
+  if(at){ g.x = dashSnap(at.x, free); g.y = dashSnap(at.y, free); }
+  else { g.x = dashSnap((g.x || 0) + DASH_GRID * 2, free); g.y = dashSnap((g.y || 0) + DASH_GRID * 2, free); }
+  // Keep the paste on the canvas when the source sat at the right/bottom edge.
+  var cw = canvas.clientWidth || 0, chh = canvas.clientHeight || 0;
+  if(cw && g.x > cw - 40) g.x = Math.max(0, cw - 120);
+  if(chh && g.y > chh - 40) g.y = Math.max(0, chh - 80);
+  VIEWER_DASH.gauges.push(g);
+  dashDropEmptyHint(canvas);
+  dashPlaceGauge(canvas, g);
+  if(VIEWER_DATA) updateDashGauges(VIEWER_DATA.time.length - 1);
+  if(g.type === 'scorecard') evaluateDashScorecards();
+  markGaugesDirty();
+  return true;
+}
+function dashDuplicate(g){
+  if(!g) return;
+  dashPaste(dashGaugeSnapshot(g), null);
+}
+// Ctrl+V while building: prefer the clipboard's text (works across windows), else the in-memory copy.
+document.addEventListener('paste', function(e){
+  if(!VIEWER_DASH_EDIT) return;
+  var t = e.target;
+  if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  var text = e.clipboardData ? e.clipboardData.getData('text') : '';
+  var src = dashGaugeFromClipboardText(text) || VIEWER_DASH_CLIPBOARD;
+  if(!src) return;
+  e.preventDefault();
+  dashPaste(src, null);
+});
 
 function updateDashGauges(idx, dataX){
   if(!VIEWER_DASH) return;
