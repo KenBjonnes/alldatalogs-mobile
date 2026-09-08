@@ -1003,7 +1003,7 @@ table.dlv-channel-table tbody tr.dlv-row-selected{background:rgba(209,19,46,0.06
 .dlv-dash-gauge.dash-free.pbd-gauge-vertical-bar .pbd-bar-trackwrap{flex:1;height:auto;min-height:0;}
 /* Scale numerals get their own gutter on the LEFT and the track sits to the RIGHT of it, so the two
    can never overlap however narrow the bar is resized (they did at 60px: the centred track ran under
-   the numerals -- Ken, 2026-09-08). Below ~48px there is no room for a gutter at all, so the numerals
+   the numerals -- Ken, 2026-09-08). Below 32px there is no room for a gutter at all, so the numerals
    go and the track takes the width (dashPlaceGauge / resize toggle .dlv-bar-narrow). */
 .dlv-dash-gauge.dash-free.pbd-gauge-vertical-bar .pbd-bar-track{left:auto;right:4%;transform:none;width:44%;max-width:70px;}
 .dlv-dash-gauge.dash-free.pbd-gauge-vertical-bar .pbd-bar-tick{left:0;right:auto;width:50%;text-align:right;padding-right:3px;box-sizing:border-box;overflow:hidden;}

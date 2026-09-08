@@ -3878,8 +3878,10 @@ function dashMigrateScorecards(gauges){
 // nearly untouched. The whole dash is zoomed as one block by the splitter, so text drawn at the
 // fascia's sizes grew with the bars until it dominated them (Ken, 2026-09-08).
 var DASH_TEXT_SCALE = { label: 0.72, tick: 0.75, value: 0.9 };
-// A vertical bar narrower than this has no room for a numeral gutter beside its track (see CSS).
-var DASH_BAR_NARROW_W = 48;
+// A vertical bar narrower than this has no room for a numeral gutter beside its track (see CSS). 32, not 48: at
+// 40px the gutter is 20px, which still fits a three-digit numeral at the dash text size (Ken, 2026-09-08:
+// APP / TP lost their scale at 48).
+var DASH_BAR_NARROW_W = 32;
 function dashPlaceGauge(canvas, g){
   // Internal-only: a scorecard is simply not placed for users without permission -- the rest of the
   // dash renders normally, and the scorecard's config stays in VIEWER_DASH.gauges (preserved on save).
