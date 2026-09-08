@@ -22885,6 +22885,7 @@ ${suffix}`;
   async function openFromPicker() {
     const p = await pickLog();
     if (!p) return null;
+    if (/\.hlg(zip)?$/i.test(p.name)) throw new Error("Haltech .hlg logs are encrypted by NSP. Export the log as CSV in NSP (File > Export) and open that.");
     if (!isLogName(p.name)) throw new Error(`"${p.name}" is not a datalog. BigData opens .hpl, .csv, .ld and .dl files.`);
     const blob = p.blob || (p.webPath ? await blobFromWebPath(p.webPath) : null);
     if (!blob) throw new Error("The picker returned no file data.");

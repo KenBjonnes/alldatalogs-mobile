@@ -41,14 +41,14 @@ var NORMALIZED_CHANNEL_ROLES = {
   engine_rpm:              { label: 'Engine RPM',        aliases: ['ENGINE_SPEED', 'Engine RPM', 'Engine Speed', 'RPM'] },
   vehicle_speed:           { label: 'Speed',              aliases: ['VSPD', 'Vehicle Speed', 'Speed', 'vehicle speed mph'] },
   boost_pressure:          { label: 'Boost',              aliases: ['BOOST', 'Boost Pressure', 'Boost PSIG'] },
-  manifold_absolute_pressure: { label: 'MAP',             aliases: ['MAP', 'Manifold Absolute Pressure'] },
+  manifold_absolute_pressure: { label: 'MAP',             aliases: ['MAP', 'Manifold Absolute Pressure', 'Manifold Pressure', 'Measured Manifold Pressure'] },
   barometric_pressure:     { label: 'Baro',               aliases: ['BARO', 'Barometric Pressure', 'Baro Pressure', 'Ambient Pressure'] },
   throttle_position:       { label: 'Throttle',           aliases: ['TPS_PCT', 'Throttle Position', 'Throttle Angle', 'TPS', 'throttle position absolute'] },
-  accelerator_pedal_position: { label: 'Pedal',           aliases: ['APP_PCT_PEDAL', 'Accelerator Pedal Position', 'Throttle Pedal', 'Pedal Position', 'accel pedal position relative'] },
-  spark_advance:           { label: 'Spark',              aliases: ['SPKSAF_SA', 'Timing Advance', 'Spark Advance', 'Ignition Timing'] },
-  trans_temp:              { label: 'Trans Temp',         aliases: ['TFT', 'Trans Fluid Temp', 'Trans Temp', 'Transmission Fluid Temp', 'Line Temp', 'Transmission temperature'] },
-  engine_coolant_temp:     { label: 'ECT',                aliases: ['ECT', 'Engine Coolant Temp', 'CTS', 'Engine temp.', 'engine coolant temp F'] },
-  manifold_charge_temp:    { label: 'MCT',                aliases: ['MCT', 'Manifold Charge Temp', 'Intake Air Temp', 'MAT'] },
+  accelerator_pedal_position: { label: 'Pedal',           aliases: ['APP_PCT_PEDAL', 'Accelerator Pedal Position', 'Throttle Pedal', 'Pedal Position', 'accel pedal position relative', 'Pedal Position Source'] },
+  spark_advance:           { label: 'Spark',              aliases: ['SPKSAF_SA', 'Timing Advance', 'Spark Advance', 'Ignition Timing', 'Ignition Angle'] },
+  trans_temp:              { label: 'Trans Temp',         aliases: ['TFT', 'Trans Fluid Temp', 'Trans Temp', 'Transmission Fluid Temp', 'Line Temp', 'Transmission temperature', 'Transmission Oil Temperature'] },
+  engine_coolant_temp:     { label: 'ECT',                aliases: ['ECT', 'Engine Coolant Temp', 'CTS', 'Engine temp.', 'engine coolant temp F', 'Coolant Temperature'] },
+  manifold_charge_temp:    { label: 'MCT',                aliases: ['MCT', 'Manifold Charge Temp', 'Intake Air Temp', 'MAT', 'Intake Air Temperature'] },
   // ORDER IS THE POINT HERE, not just membership. Aliases are tried in order and the first hit
   // wins, and the Fuel Pressure gauge is a 0-100 psi gauge -- a LOW-side reading.
   // On a direct-injection Ford both channels exist and mean very different things:
@@ -67,8 +67,8 @@ var NORMALIZED_CHANNEL_ROLES = {
   // The explicit "Bank N" alias is listed first so it wins when a log carries both.
   // SCT (Livewire/X4) LABELS its wideband "measured afr bank N" but LOGS it in lambda (~0.8-1.1), not
   // AFR (~10-18) -- so it belongs on the lambda roles, NOT afr_bank_N (which would mis-scale it).
-  lambda_bank_1:           { label: 'Lambda Bank 1',      aliases: ['LAMBSE[0]', 'WB EQ Ratio Bank 1', 'WB EQ Ratio 1', 'Equivalence Ratio Commanded - Bank 1', 'Equivalence Ratio Commanded Bank 1', 'measured afr bank 1'] },
-  lambda_bank_2:           { label: 'Lambda Bank 2',      aliases: ['LAMBSE[1]', 'WB EQ Ratio Bank 2', 'WB EQ Ratio 5', 'Equivalence Ratio Commanded - Bank 2', 'Equivalence Ratio Commanded Bank 2', 'measured afr bank 2'] },
+  lambda_bank_1:           { label: 'Lambda Bank 1',      aliases: ['LAMBSE[0]', 'WB EQ Ratio Bank 1', 'WB EQ Ratio 1', 'Equivalence Ratio Commanded - Bank 1', 'Equivalence Ratio Commanded Bank 1', 'measured afr bank 1', 'Wideband O2 Bank 1', 'Wideband O2 Overall', 'Wideband O2 1'] },
+  lambda_bank_2:           { label: 'Lambda Bank 2',      aliases: ['LAMBSE[1]', 'WB EQ Ratio Bank 2', 'WB EQ Ratio 5', 'Equivalence Ratio Commanded - Bank 2', 'Equivalence Ratio Commanded Bank 2', 'measured afr bank 2', 'Wideband O2 Bank 2', 'Wideband O2 2'] },
   // AFR (air/fuel ratio) roles. Holley and other standalones log wideband as AFR, not lambda -- so
   // the λ gauges resolve to nothing on those logs. These roles let the two lambda gauge slots fall
   // back to AFR (see the altRole/alt block on the lambda defs + applyAltRoles). 'AFR Average' backs
@@ -85,21 +85,21 @@ var NORMALIZED_CHANNEL_ROLES = {
   // Holley 'CL Comp' (closed-loop compensation, %) is Holley's short-term fuel trim -- the live
   // correction the ECU is applying to hit target AFR -- so it maps to STFT bank 1 (Ken, 2026-07-24).
   // Holley logs a single closed-loop comp, so bank 2 stays N/A.
-  stft_bank_1:             { label: 'STFT Bank 1',        aliases: ['STFT_B1', 'Short Term Fuel Trim Bank 1', 'STFT Bank 1', 'CL Comp', 'O2 Closed Loop'] },
-  stft_bank_2:             { label: 'STFT Bank 2',        aliases: ['STFT_B2', 'Short Term Fuel Trim Bank 2', 'STFT Bank 2'] },
+  stft_bank_1:             { label: 'STFT Bank 1',        aliases: ['STFT_B1', 'Short Term Fuel Trim Bank 1', 'STFT Bank 1', 'CL Comp', 'O2 Closed Loop', 'O2 Control Bank 1 Short Term Fuel Trim'] },
+  stft_bank_2:             { label: 'STFT Bank 2',        aliases: ['STFT_B2', 'Short Term Fuel Trim Bank 2', 'STFT Bank 2', 'O2 Control Bank 2 Short Term Fuel Trim'] },
   exhaust_cam:             { label: 'Exhaust Cam',        aliases: ['EX_CAM', 'Exhaust Cam', 'Exhaust Camshaft Position', 'VCT Exhaust Cam Phase Angle', 'Exhaust Cam Angle', 'VTC Exhaust Bank 1 Position', 'variable valve timing exhaust bank 1 actual'] },
   intake_cam:              { label: 'Intake Cam',         aliases: ['IN_CAM', 'Intake Cam', 'Intake Camshaft Position', 'VCT Intake Cam Phase Angle', 'Intake Cam Angle', 'VTC Intake Bank 1 Position', 'variable valve timing intake bank 1 actual'] },
   desired_load:            { label: 'Desired Load',       aliases: ['LOAD_DES', 'Desired Load'] },
   // "Absolute Load (SAE)" is the generic SAE load PID and sits LAST on purpose (Ken, 2026-07-22):
   // where a vehicle logs a real Air/Actual Load it should win, and the SAE PID is the fallback for
   // logs that have nothing else. Alias order IS priority -- see resolveChannelRoles.
-  actual_load:             { label: 'Load',               aliases: ['LOAD_ACT', 'Air Load', 'Actual Load', 'Absolute Load (SAE)', 'load'] },
+  actual_load:             { label: 'Load',               aliases: ['LOAD_ACT', 'Air Load', 'Actual Load', 'Absolute Load (SAE)', 'load', 'Load - Normalised Air Mass Flow'] },
   // ---- Scorecard roles (added 2026-07-27): concepts the Scorecard evaluators request that had no
   // role yet. APPENDED (never reordered) so dev/alias-check.js keeps passing. Aliases are best-effort
   // across HP Tuners / Holley / FuelTech naming; individual evaluators degrade to Not Evaluated when
   // a role stays unresolved on a given log.
-  commanded_lambda:        { label: 'Commanded Lambda',   aliases: ['LAMBSE_DES', 'Commanded Equivalence Ratio', 'Equivalence Ratio Commanded (SAE)', 'AFR Target', 'O2 Target', 'Lambda Target', 'Commanded Lambda'] },
-  desired_boost:           { label: 'Desired Boost',      aliases: ['BOOST_DES', 'Desired Boost', 'Boost Target', 'Target Boost', 'Wastegate Desired'] },
+  commanded_lambda:        { label: 'Commanded Lambda',   aliases: ['LAMBSE_DES', 'Commanded Equivalence Ratio', 'Equivalence Ratio Commanded (SAE)', 'AFR Target', 'O2 Target', 'Lambda Target', 'Commanded Lambda', 'Target Lambda'] },
+  desired_boost:           { label: 'Desired Boost',      aliases: ['BOOST_DES', 'Desired Boost', 'Boost Target', 'Target Boost', 'Wastegate Desired', 'Boost Control Target Pressure (Corrected)'] },
   desired_fuel_pressure:   { label: 'Desired Fuel Pressure', aliases: ['FRP_DES', 'Fuel Rail Pressure Desired', 'Desired Fuel Rail Pressure', 'Fuel Pressure Target'] },
   current_gear:            { label: 'Current Gear',       aliases: ['GEAR', 'Current Gear', 'Trans Current Gear', 'Gear'] },
   commanded_gear:          { label: 'Commanded Gear',     aliases: ['GEAR_CMD', 'Commanded Gear', 'Trans Commanded Gear', 'Desired Gear'] },

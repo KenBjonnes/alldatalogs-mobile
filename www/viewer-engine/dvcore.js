@@ -21,12 +21,15 @@ var DVCore = (() => {
   // ../../../../websites/Alldatalogs/packages/datalog-core/browser/entry.ts
   var entry_exports = {};
   __export(entry_exports, {
+    HALTECH_TYPES: () => HALTECH_TYPES,
     HPL_PID_NAMES: () => HPL_PID_NAMES,
     bucketDecimate: () => bucketDecimate,
     convertHolleyDlToCsv: () => convertHolleyDlToCsv,
     convertHplToCsv: () => convertHplToCsv,
     convertLdToCsv: () => convertLdToCsv,
-    parseDatalogCsv: () => parseDatalogCsv
+    isHaltechCsv: () => isHaltechCsv,
+    parseDatalogCsv: () => parseDatalogCsv,
+    parseHaltechCsv: () => parseHaltechCsv
   });
 
   // ../../../../websites/Alldatalogs/packages/datalog-core/src/decimate.ts
@@ -41,6 +44,131 @@ var DVCore = (() => {
     indices.add(0);
     indices.add(rows - 1);
     return Array.from(indices).sort((a, b) => a - b);
+  }
+
+  // ../../../../websites/Alldatalogs/packages/datalog-core/src/haltech/haltech-csv.ts
+  var HALTECH_TYPES = {
+    Angle: { div: 10, unit: "\xB0" },
+    Pressure: { div: 10, unit: "kPa" },
+    AbsPressure: { div: 10, unit: "kPa" },
+    EngineSpeed: { div: 1, unit: "rpm" },
+    Percentage: { div: 10, unit: "%" },
+    Temperature: { div: 10, add: -273.15, unit: "\xB0C" },
+    // 0.1 K
+    BatteryVoltage: { div: 1e3, unit: "V" },
+    Time_us: { div: 1e3, unit: "ms" },
+    Time_ms_as_s: { div: 1e3, unit: "s" },
+    AFR: { div: 1e3, unit: "\u03BB" },
+    Speed: { div: 10, unit: "km/h" },
+    Acceleration: { div: 1e3, unit: "g" },
+    ShorterDistance: { div: 1e3, unit: "mm" },
+    // µm
+    DrivenDistance: { div: 1e3, unit: "km" },
+    // m
+    Ratio: { div: 1e3, unit: "" },
+    AngularVelocity: { div: 10, unit: "\xB0/s" },
+    Gear: { div: 1, unit: "" },
+    Position: { div: 1, unit: "" },
+    Flow: { div: 1, unit: "" },
+    Raw: { div: 1, unit: "" }
+  };
+  function isHaltechCsv(text) {
+    return /^﻿?\s*%DataLog%/.test(text.slice(0, 32));
+  }
+  var TIME_RE = /^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?$/;
+  function wallClockSeconds(cell) {
+    const m = TIME_RE.exec(cell);
+    if (!m) return NaN;
+    const frac = m[4] ? Number("0." + m[4]) : 0;
+    return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + frac;
+  }
+  function parseHaltechCsv(text) {
+    const warnings = [];
+    const lines = text.split(/\r\n|\r|\n/);
+    if (lines.length > 0 && lines[0].charCodeAt(0) === 65279) lines[0] = lines[0].slice(1);
+    const chans = [];
+    let cur = null;
+    let dataStart = -1;
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      const comma = line.indexOf(",");
+      if (TIME_RE.test(comma === -1 ? line : line.slice(0, comma))) {
+        dataStart = i;
+        break;
+      }
+      const sep = line.indexOf(" : ");
+      if (sep === -1) continue;
+      const key = line.slice(0, sep).trim();
+      const val = line.slice(sep + 3).trim();
+      if (key === "Channel") {
+        cur = { name: val, id: 0, type: "Raw" };
+        chans.push(cur);
+      } else if (cur && key === "ID") cur.id = parseInt(val, 10) || 0;
+      else if (cur && key === "Type") cur.type = val;
+    }
+    if (!chans.length) throw new Error('Haltech CSV: no "Channel :" blocks found in the header.');
+    if (dataStart === -1) throw new Error("Haltech CSV: no data rows found after the header.");
+    const keep = [];
+    chans.forEach((c, i) => {
+      if (c.name === "Unknown" && c.id === 0) {
+        warnings.push({ code: "haltech_unknown_dropped", message: 'Dropped an "Unknown" placeholder column', channel: `column ${i + 2}` });
+        return;
+      }
+      keep.push(i);
+    });
+    const seen = {};
+    const channelNames = keep.map((i) => {
+      const n2 = chans[i].name;
+      seen[n2] = (seen[n2] || 0) + 1;
+      if (seen[n2] > 1) {
+        warnings.push({ code: "dup_channel", message: "Duplicate channel name renamed", channel: n2 });
+        return `${n2} (${seen[n2]})`;
+      }
+      return n2;
+    });
+    const scales = keep.map((i) => {
+      const t = HALTECH_TYPES[chans[i].type];
+      if (!t) warnings.push({ code: "haltech_unknown_type", message: `Unknown Haltech channel type "${chans[i].type}"; values kept raw`, channel: chans[i].name });
+      return t || { div: 1, unit: "" };
+    });
+    const units = scales.map((s) => s.unit);
+    const n = keep.length;
+    const time = [];
+    const series = Array.from({ length: n }, () => []);
+    const last = new Float64Array(n).fill(NaN);
+    let t0 = NaN, prevT = NaN, dayOffset = 0, skipped = 0;
+    for (let i = dataStart; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line) continue;
+      const cells = line.split(",");
+      const wall = wallClockSeconds(cells[0].trim());
+      if (!isFinite(wall)) {
+        skipped++;
+        continue;
+      }
+      if (isNaN(t0)) t0 = wall;
+      if (isFinite(prevT) && wall + dayOffset - t0 < prevT - 3600) dayOffset += 86400;
+      let t = wall + dayOffset - t0;
+      if (isFinite(prevT) && t < prevT) t = prevT;
+      prevT = t;
+      time.push(t);
+      for (let k = 0; k < n; k++) {
+        const cell = cells[keep[k] + 1];
+        let v = last[k];
+        if (cell !== void 0 && cell !== "") {
+          const raw = Number(cell);
+          if (!isNaN(raw)) {
+            const s = scales[k];
+            v = raw / s.div + (s.add || 0);
+            last[k] = v;
+          }
+        }
+        series[k].push(v);
+      }
+    }
+    if (!time.length) throw new Error("Haltech CSV: no data rows could be read.");
+    if (skipped) warnings.push({ code: "haltech_rows_skipped", message: `Skipped ${skipped} row(s) without a time stamp` });
+    return { channelNames, units, time, series, textLevels: {}, channelIds: null, warnings };
   }
 
   // ../../../../websites/Alldatalogs/packages/datalog-core/src/importers/csv.ts
@@ -102,6 +230,7 @@ var DVCore = (() => {
   }
   var NAN_SPELLINGS = /^(?:[+-]?nan(?:\(ind\))?|[+-]?inf(?:inity)?|#div\/0!|#n\/a|n\/a|null|--)$/i;
   function parseDatalogCsv(text) {
+    if (isHaltechCsv(text)) return parseHaltechCsv(text);
     const warnings = [];
     const lines = text.split(/\r\n|\r|\n/);
     if (lines.length > 0 && lines[0].charCodeAt(0) === 65279) lines[0] = lines[0].slice(1);
