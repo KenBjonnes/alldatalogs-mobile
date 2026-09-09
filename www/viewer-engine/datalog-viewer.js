@@ -3733,6 +3733,7 @@ function openAccelSettings(anchor){
     html += '<div class="dlv-accel-info">' +
       '<div><b>Chassis speed:</b> ' + escapeHtml(meta.sourceText || '—') + '</div>' +
       '<div><b>Window:</b> ' + meta.windowMs + ' ms · <b>Sample rate:</b> ' + meta.sampleHz + ' Hz' + (meta.resolutionMph ? ' · <b>Resolution:</b> ' + meta.resolutionMph + ' mph' : '') + '</div>' +
+      (meta.windowNote ? '<div><b>Note:</b> ' + escapeHtml(meta.windowNote) + '</div>' : '') +
       (meta.rejected && meta.rejected.length ? '<div><b>Not used:</b> ' + escapeHtml(meta.rejected.map(function(r){ return r.name; }).join(', ')) + '</div>' : '') +
       (meta.events && meta.events.length ? '<div><b>Events:</b> ' + meta.events.slice(0, 6).map(function(e){ return escapeHtml(e.kind) + ' ' + e.t0.toFixed(1) + '–' + e.t1.toFixed(1) + ' s' + (e.corrected ? ' (corrected)' : ''); }).join('; ') + (meta.events.length > 6 ? ' …' : '') + '</div>' : '<div><b>Events:</b> no wheel spin found</div>') +
       '</div>';

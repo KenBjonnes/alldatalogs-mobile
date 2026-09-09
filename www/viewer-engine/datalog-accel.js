@@ -42,6 +42,7 @@
 
   var MPH_PER_S_PER_G = 21.936851, FT_PER_MPH = 1.4666667, M_PER_MPH = 0.44704;
   var PRESETS = { fast: 50, normal: 150, smooth: 250, verysmooth: 500 };
+  var PRESET_LABELS = { fast: 'Fast', normal: 'Normal', smooth: 'Smooth', verysmooth: 'Very smooth' };
   var DEFAULT_SETTINGS = { source: 'auto', filter: 'auto', spin: 'auto' };
   var SOURCE_MODES = ['auto', 'gps', 'vss', 'wheels'];
   var SPIN_MODES = ['off', 'auto', 'aggressive'];
@@ -688,8 +689,18 @@
 
     // ---- window + the derivative ------------------------------------------------------------------------
     var agreeAvg = 0, ac = 0; for (i = 0; i < n; i++) if (hyg.valid[i] && isFin(fused[i])) { agreeAvg += agree[i]; ac++; } agreeAvg = ac ? agreeAvg / ac : 0;
-    var windowMs, f = String(settings.filter || 'auto').toLowerCase();
+    var windowMs, windowNote = null, f = String(settings.filter || 'auto').toLowerCase();
     if (PRESETS[f]) windowMs = PRESETS[f]; else if (isFin(parseFloat(f)) && parseFloat(f) > 0) windowMs = parseFloat(f); else windowMs = chooseWindowMs(hyg, resMax, active.length, agreeAvg);
+    // A requested window narrower than three samples has nothing to fit a slope through: "Fast" (50 ms) on
+    // a 25 Hz log holds ONE sample per window, the local-linear slope is undefined, and every G came out
+    // 0.00 -- a flat trace with no error (Ken, 2026-09-09, WhiteGirlWOT4.hpl on the desktop app). Auto already
+    // floors at three samples (chooseWindowMs); the presets and explicit values now do too, and say so.
+    var minWindowMs = Math.ceil(3 * hyg.dtMed * 1000 - 1e-6);
+    if (isFin(minWindowMs) && minWindowMs > 0 && windowMs < minWindowMs) {
+      var reqLabel = PRESETS[f] ? (PRESET_LABELS[f] || f) + ' (' + PRESETS[f] + ' ms)' : windowMs + ' ms';
+      windowNote = reqLabel + ' widened to ' + minWindowMs + ' ms: this log samples every ' + Math.round(hyg.dtMed * 1000) + ' ms';
+      windowMs = minWindowMs;
+    }
     var fit = localLinear(t, chassisRaw, hyg.valid, hyg.seg, windowMs / 2000);
     var chassis = fit.val, rate = fill(n, NaN), blanked = 0;
     for (i = 0; i < n; i++) {
@@ -753,7 +764,7 @@
       if (on) meta.sources.push(rec); else meta.rejected.push({ name: p.src.name, reason: p.note || (mode === 'auto' ? 'not usable' : 'not in the selected source mode') });
     });
     exc.events.forEach(function (e) { meta.events.push({ t0: Math.round(e.t0 * 1000) / 1000, t1: Math.round(e.t1 * 1000) / 1000, kind: e.kind, corrected: !!e.corrected, peakExcessMph: Math.round(e.peakExcess * 10) / 10, fallMph: Math.round(e.fall * 10) / 10 }); });
-    meta.windowMs = windowMs; meta.resolutionMph = resMax; meta.agreement = Math.round(agreeAvg * 100); meta.haveDriven = haveDriven; meta.accelReference = discovered.accelRef ? discovered.accelRef.name : null;
+    meta.windowMs = windowMs; meta.windowNote = windowNote; meta.resolutionMph = resMax; meta.agreement = Math.round(agreeAvg * 100); meta.haveDriven = haveDriven; meta.accelReference = discovered.accelRef ? discovered.accelRef.name : null;
     meta.correctedSamples = 0; for (i = 0; i < n; i++) if (exc.corrected[i]) meta.correctedSamples++;
     meta.implausibleSamples = implausible; meta.blankedSamples = blanked;
     if (measG && measN) meta.accelCheck = { channel: discovered.accelRef.name, disagreePct: Math.round(100 * disagree / measN) };
