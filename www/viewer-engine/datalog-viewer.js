@@ -4062,8 +4062,25 @@ function dashScorecardContext(def){
     unitByChannel: (typeof VIEWER_UNIT_BY_CHANNEL === 'object' ? VIEWER_UNIT_BY_CHANNEL : {}),
     vehicle: (typeof getCurrentVehicleMeta === 'function') ? getCurrentVehicleMeta() : null,
     fileName: (typeof VIEWER_FILE_NAME === 'string') ? VIEWER_FILE_NAME : null,
+    // what the card's Type / Fuel auto-detection can lean on: the auto-matched preset (v6-gauge = an
+    // EcoBoost fascia) and how many per-cylinder knock channels the log carries
+    presetId: (VIEWER_ACTIVE_PRESET && VIEWER_ACTIVE_PRESET.id) || null,
+    cylinderCount: (typeof detectCylinderCount === 'function') ? detectCylinderCount(VIEWER_RESOLVED_ROLES) : null,
+    profile: def && def.profile ? def.profile : null,
     range: dashScorecardRange(def, time)
   };
+}
+// The scorecard's evidence rows jump the graphs to their moment, and its Type / Fuel pulldowns
+// re-evaluate the card -- both go through this host hook (the module itself knows no viewer state).
+if(typeof Scorecard !== 'undefined' && typeof Scorecard.setHost === 'function'){
+  Scorecard.setHost({
+    navigate: {
+      setCursor: function(t){ setCursorTime(t); },
+      setRange: function(t0, t1){ setVisibleRange(t0, t1); },
+      highlightIndices: function(idx){ setHighlightIndices(idx); }
+    },
+    onDefChanged: function(){ markGaugesDirty(); evaluateDashScorecards(); }
+  });
 }
 function evaluateDashScorecards(){
   if(!VIEWER_DASH || typeof Scorecard === 'undefined' || !Scorecard.runScorecard) return;

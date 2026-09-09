@@ -29,7 +29,7 @@
   'use strict';
 
   /** Bump when the persisted scorecard def shape changes; migrateDef() upgrades older defs. */
-  var SCORECARD_SCHEMA_VERSION = 1;
+  var SCORECARD_SCHEMA_VERSION = 2;   // v2 (2026-09-09): def.profile { induction, fuel } -- the card's two pulldowns
   var MAX_CATEGORIES = 10;
 
   // ------------------------------------------------------------------------------------------------
@@ -168,6 +168,9 @@
   // ================================================================================================
   /** @type {Object.<string, ScorecardEvaluator>} */
   var EVALUATORS = {};
+  // The viewer registers { navigate: { setCursor(t), setRange(t0,t1), highlightIndices(idx) }, onDefChanged(def) }
+  // so evidence rows can jump the graphs to their moment and the pulldowns can re-evaluate + mark dirty.
+  var HOST = {};
   /** Register an evaluator. Later registrations override (so a real impl can replace a placeholder). */
   function registerEvaluator(ev) {
     if (!ev || !ev.id || typeof ev.evaluate !== 'function') throw new Error('Scorecard: invalid evaluator');
@@ -178,6 +181,9 @@
     // knock). Each group is { label, roles:[roleId,...] }. Distinct from requiredChannels, which is AND.
     if (!ev.requiredAnyOf) ev.requiredAnyOf = [];
     if (!ev.defaultSettings) ev.defaultSettings = {};
+    // settingsMeta: { key: [label, unit, help] } -- how the configuration dialog labels each tunable.
+    // Keys without meta still show (humanized), so every numeric/boolean/string setting is reachable.
+    if (!ev.settingsMeta) ev.settingsMeta = {};
     EVALUATORS[ev.id] = ev;
     return ev;
   }
@@ -208,9 +214,10 @@
     var r = dl.range || { mode: 'entire', startIdx: 0, endIdx: Math.max(0, time.length - 1) };
     var sampleRateHz = null;
     if (time.length > 1) { var dt = (time[time.length - 1] - time[0]) / (time.length - 1); if (dt > 0) sampleRateHz = 1 / dt; }
-    return {
+    var shared = {
       data: data, roles: roles, stats: stats, time: time, range: r,
       unitByChannel: dl.unitByChannel || {},
+      presetId: dl.presetId || null, cylinderCount: dl.cylinderCount || null,
       meta: {
         fileName: dl.fileName || null,
         channelCount: (data.channels || []).length,
@@ -221,6 +228,70 @@
         sampleRateHz: sampleRateHz
       },
       vehicle: dl.vehicle || null
+    };
+    shared.profile = resolveProfile(dl.profile || null, shared);
+    return shared;
+  }
+
+  // ================================================================================================
+  // 4b. PROFILE -- what kind of car and what fuel (Ken, 2026-09-09: "a few pulldowns at top of the
+  //     scorecard ... type (NA, FI or Eco) and pump gas, ethanol, race gas; try to identify the car
+  //     automatically but if not, we can pick it"). The def stores the user's choice ('auto' or a fixed
+  //     id); resolveProfile turns that into what the evaluators use, remembering what was detected so
+  //     the pulldown can say "Auto (EcoBoost)".
+  // ================================================================================================
+  var INDUCTIONS = [['na', 'NA'], ['fi', 'Forced induction'], ['eco', 'EcoBoost']];
+  var FUELS = [['pump', 'Pump gas'], ['e', 'Ethanol / E-mix'], ['race', 'Race gas']];
+  function inductionLabel(id) { for (var i = 0; i < INDUCTIONS.length; i++) if (INDUCTIONS[i][0] === id) return INDUCTIONS[i][1]; return id; }
+  function fuelLabel(id) { for (var i = 0; i < FUELS.length; i++) if (FUELS[i][0] === id) return FUELS[i][1]; return id; }
+  function normInduction(v) { v = String(v || '').toLowerCase(); return v === 'ecoboost' ? 'eco' : (v === 'na' || v === 'fi' || v === 'eco') ? v : null; }
+  function normFuel(v) { v = String(v || '').toLowerCase(); return v === 'ethanol' || v === 'e85' || v === 'emix' ? 'e' : (v === 'pump' || v === 'e' || v === 'race') ? v : null; }
+  function seriesMax(shared, role) {
+    var ch = shared.roles[role]; if (!ch) return null;
+    var st = shared.stats[ch]; if (st && isFinite(st.max)) return st.max;
+    var s = shared.data.series[ch]; if (!s) return null;
+    var m = -Infinity; for (var i = 0; i < s.length; i++) { var v = s[i]; if (v != null && isFinite(v) && v > m) m = v; }
+    return isFinite(m) ? m : null;
+  }
+  function detectInduction(shared) {
+    var v = shared.vehicle || {}, pc = String(v.platformCategory || v.platform || v.engine || '').toLowerCase();
+    if (/eco/.test(pc)) return { id: 'eco', source: 'vehicle record' };
+    if (/turbo|super|boost|forced|\bfi\b|procharg|whipple|roush|vortech|kenne/.test(pc)) return { id: 'fi', source: 'vehicle record' };
+    if (/\bna\b|natural|aspir/.test(pc)) return { id: 'na', source: 'vehicle record' };
+    var boostMax = seriesMax(shared, 'boost_pressure'), mapMax = seriesMax(shared, 'manifold_absolute_pressure');
+    // psi gauge: > ~3 psi of boost = boosted; MAP (psia) above ~20 says the same when there is no boost channel
+    var boosted = (boostMax != null && boostMax >= 3) || (boostMax == null && mapMax != null && mapMax >= 20);
+    var cyl = shared.cylinderCount || 0, preset = String(shared.presetId || '').toLowerCase();
+    if (boosted && (cyl === 6 || cyl === 4 || /v6/.test(preset))) return { id: 'eco', source: 'boost + ' + (cyl || 6) + ' cylinders' };
+    if (boosted) return { id: 'fi', source: 'boost logged' };
+    if (boostMax == null && mapMax == null) return { id: 'na', source: 'no boost channel' };
+    return { id: 'na', source: 'no boost seen' };
+  }
+  function detectFuel(shared) {
+    var chans = shared.data.channels || [], best = null;
+    for (var i = 0; i < chans.length; i++) {
+      var c = chans[i];
+      if (!/ethanol|alcohol|flex.?fuel|fuel.?comp/i.test(c) || /learn|corr|adapt|trim|sensor volt/i.test(c)) continue;
+      var st = shared.stats[c], s = shared.data.series[c], avg = null;
+      if (st && isFinite(st.avg)) avg = st.avg;
+      else if (s) { var sum = 0, n = 0; for (var k = 0; k < s.length; k++) { var v = s[k]; if (v != null && isFinite(v)) { sum += v; n++; } } avg = n ? sum / n : null; }
+      if (avg == null) continue;
+      if (avg <= 1) avg *= 100;   // a 0-1 ratio
+      best = { channel: c, avg: avg }; break;
+    }
+    if (best) return { id: best.avg >= 30 ? 'e' : 'pump', source: best.channel + ' ~' + Math.round(best.avg) + '%' };
+    return { id: 'pump', source: 'default (no ethanol channel)' };
+  }
+  /** The profile the evaluators use: user choice when fixed, detection when 'auto'. */
+  function resolveProfile(choice, shared) {
+    choice = choice || {};
+    var wantI = normInduction(choice.induction), wantF = normFuel(choice.fuel);
+    var detI = detectInduction(shared), detF = detectFuel(shared);
+    return {
+      induction: wantI || detI.id, fuel: wantF || detF.id,
+      inductionAuto: !wantI, fuelAuto: !wantF,
+      detected: { induction: detI.id, inductionSource: detI.source, fuel: detF.id, fuelSource: detF.source },
+      inductionLabel: inductionLabel(wantI || detI.id), fuelLabel: fuelLabel(wantF || detF.id)
     };
   }
   /**
@@ -246,7 +317,7 @@
     function rolesResolved(roles) { return (roles || []).filter(function (rl) { return !!channelFor(rl); }); }
     function anyRole(roles) { var m = rolesResolved(roles); return m.length ? channelFor(m[0]) : null; }
     return {
-      meta: shared.meta, vehicle: shared.vehicle, range: r, time: shared.time,
+      meta: shared.meta, vehicle: shared.vehicle, range: r, time: shared.time, profile: shared.profile,
       category: category, settings: category.settings || {}, evaluatorId: evaluator.id,
       channelFor: channelFor, series: series, rangeSeries: rangeSeries, statsFor: statsFor, unitFor: unitFor,
       rolesResolved: rolesResolved, anyRole: anyRole,
@@ -337,14 +408,20 @@
     if (!cats.length) {
       return { results: [], overall: { score: null, status: 'not_evaluated' }, state: 'empty', evaluatedCount: 0, totalCount: 0 };
     }
-    var shared = buildSharedContext(dl);
+    var shared = buildSharedContext(dl.profile === undefined ? extendDl(dl, def) : dl);
     var results = cats.map(function (c) { return evaluateCategory(shared, c); });
     var scored = results.filter(function (r) { return r.score != null; }).length;
     var overall = computeOverall(results, cats, {
       mode: (def.overall && def.overall.enabled === false) ? 'disabled' : (def.overall ? def.overall.mode : 'weighted')
     });
     var state = scored === 0 ? 'none_evaluated' : scored < results.length ? 'partial' : 'complete';
-    return { results: results, overall: overall, state: state, evaluatedCount: scored, totalCount: results.length };
+    return { results: results, overall: overall, state: state, evaluatedCount: scored, totalCount: results.length, profile: shared.profile };
+  }
+  // The def's profile choice rides into the shared context (a caller may also pass dl.profile directly).
+  function extendDl(dl, def) {
+    var o = {}; Object.keys(dl).forEach(function (k) { o[k] = dl[k]; });
+    o.profile = def && def.profile ? def.profile : null;
+    return o;
   }
 
   // ================================================================================================
@@ -390,6 +467,7 @@
       },
       overall: { enabled: true, mode: 'weighted' },
       range: { mode: 'entire' }, // entire | visible | selection | auto
+      profile: { induction: 'auto', fuel: 'auto' },   // the card's pulldowns: NA / FI / EcoBoost, pump / ethanol / race
       categories: recommendedCategories()
     };
   }
@@ -399,10 +477,12 @@
     var v = def.scHubVersion || 0;
     if (v >= SCORECARD_SCHEMA_VERSION) return def;
     // v0 -> v1: ensure display/overall/range/categories exist with defaults; stamp version.
+    // v1 -> v2: profile pulldowns (auto/auto).
     var base = makeDef(def.x, def.y);
     def.display = mergeDefaults(def.display, base.display);
     def.overall = mergeDefaults(def.overall, base.overall);
     def.range = mergeDefaults(def.range, base.range);
+    def.profile = mergeDefaults(def.profile, base.profile);
     if (!Array.isArray(def.categories)) def.categories = recommendedCategories();
     def.categories.forEach(function (c, i) {
       if (!c.id) c.id = newCategoryId();
@@ -436,6 +516,8 @@
     clampScore: clampScore, roundScore: roundScore, statusForScore: statusForScore, statusMetaById: statusMetaById,
     computeOverall: computeOverall, registerEvaluator: registerEvaluator, getEvaluator: getEvaluator,
     listEvaluators: listEvaluators, evaluateCategory: evaluateCategory, runScorecard: runScorecard,
+    resolveProfile: resolveProfile, detectInduction: detectInduction, detectFuel: detectFuel, INDUCTIONS: INDUCTIONS, FUELS: FUELS,
+    setHost: function (host) { HOST = host || {}; },
     buildSharedContext: buildSharedContext, notEvaluated: notEvaluated,
     makeDef: makeDef, migrateDef: migrateDef, makeCategory: makeCategory, recommendedCategories: recommendedCategories,
     enabledCategories: enabledCategories, enabledCount: enabledCount, RECOMMENDED_CATEGORIES: RECOMMENDED_CATEGORIES,
@@ -572,6 +654,7 @@
         empty: 'No categories configured', none_evaluated: 'No categories could be evaluated'
       }[state] || 'No datalog loaded';
       card.innerHTML = headerHtml(def, null) + '<div class="dlv-sc-state" role="status">' + esc(msg) + '</div>';
+      wireProfile(card, def);
     }
     // One combined header ROW: title/subtitle on the left, the Overall Score on the right (when shown).
     // Keeps the title and score off separate rows so the card wastes no vertical space up top.
@@ -591,8 +674,28 @@
           '<div class="dlv-sc-ov-meta"><span class="dlv-sc-ov-status" style="color:' + m.color + '">' + esc(m.status) + '</span>' +
           '<span class="dlv-sc-ov-count">' + o.evaluatedCount + '/' + o.totalCount + ' evaluated</span></div></div>';
       }
-      return '<div class="dlv-sc-head' + (showOv ? ' has-ov' : '') + '">' + left + right + '</div>';
+      return '<div class="dlv-sc-head' + (showOv ? ' has-ov' : '') + '">' + left + right + '</div>' + profileHtml(def, run);
     }
+    // The two pulldowns under the header: what the evaluators assume about the car and its fuel.
+    // "Auto (EcoBoost)" shows what was detected; picking a fixed value overrides it for this card.
+    function profileHtml(def, run) {
+      var p = def.profile || { induction: 'auto', fuel: 'auto' }, res = run && run.profile;
+      var sel = function (key, list, chosen, detectedId, detectedSource, labelOf) {
+        var auto = normStr(chosen) === 'auto' || !chosen;
+        var opts = '<option value="auto"' + (auto ? ' selected' : '') + '>Auto' + (detectedId ? ' (' + esc(labelOf(detectedId)) + ')' : '') + '</option>' +
+          list.map(function (o) { return '<option value="' + o[0] + '"' + (!auto && normStr(chosen) === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('');
+        var title = key === 'induction' ? 'Engine type: sets the WOT lambda target' : 'Fuel: sets the WOT lambda target';
+        if (detectedSource) title += ' — detected from ' + detectedSource;
+        return '<label class="dlv-sc-pf"><span>' + (key === 'induction' ? 'Type' : 'Fuel') + '</span><select data-sc-profile="' + key + '" title="' + esc(title) + '">' + opts + '</select></label>';
+      };
+      var det = res ? res.detected : null;
+      return '<div class="dlv-sc-profile">' +
+        sel('induction', INDUCTIONS, normInduction(p.induction) || (p.induction === 'auto' ? 'auto' : p.induction), det ? det.induction : null, det ? det.inductionSource : null, inductionLabel) +
+        sel('fuel', FUELS, normFuel(p.fuel) || (p.fuel === 'auto' ? 'auto' : p.fuel), det ? det.fuel : null, det ? det.fuelSource : null, fuelLabel) +
+        (res ? '<span class="dlv-sc-pf-note" title="WOT lambda target in use">' + esc(res.inductionLabel) + ' · ' + esc(res.fuelLabel) + '</span>' : '') +
+        '</div>';
+    }
+    function normStr(v) { return String(v == null ? '' : v).toLowerCase(); }
 
     /** Full render given evaluation results (called after runScorecard). */
     SC.renderResults = function (card, def, run) {
@@ -617,7 +720,21 @@
       if (!ovShown) html += '<div class="dlv-sc-foot">' + run.evaluatedCount + ' of ' + run.totalCount + ' categories evaluated</div>';
       card.innerHTML = html;
       wireDetails(card);
+      wireProfile(card, def);
     };
+    function wireProfile(card, def) {
+      card.querySelectorAll('[data-sc-profile]').forEach(function (sel) {
+        sel.addEventListener('mousedown', function (e) { e.stopPropagation(); });   // never starts a dash drag
+        sel.addEventListener('click', function (e) { e.stopPropagation(); });
+        sel.addEventListener('change', function (e) {
+          e.stopPropagation();
+          if (!def.profile) def.profile = { induction: 'auto', fuel: 'auto' };
+          def.profile[sel.getAttribute('data-sc-profile')] = sel.value;
+          def.scHubVersion = SCORECARD_SCHEMA_VERSION;
+          if (HOST && typeof HOST.onDefChanged === 'function') HOST.onDefChanged(def);
+        });
+      });
+    }
 
     function rowHtml(r, cat, d, prec, thresholds) {
       var m = statusMetaById(r.status, thresholds);
@@ -647,12 +764,21 @@
       if (r.missingRoles && r.missingRoles.length) parts.push('<div class="dlv-sc-d-missing">Missing channels: ' + esc(r.missingRoles.join(', ')) + '</div>');
       if (r.details && r.details.length) {
         parts.push('<div class="dlv-sc-d-grid">' + r.details.map(function (x) {
-          return '<span class="dlv-sc-d-k">' + esc(x.label) + '</span><span class="dlv-sc-d-v">' + esc(x.value) + '</span>'; }).join('') + '</div>');
+          // a detail that carries a time is a link to that moment on the graphs
+          var val = (x.time != null && isFinite(x.time))
+            ? '<button type="button" class="dlv-sc-d-link" data-sc-go="' + x.time + '" data-sc-t0="' + (x.startTime != null ? x.startTime : x.time) + '" data-sc-t1="' + (x.endTime != null ? x.endTime : x.time) + '" title="Show this on the graphs">' + esc(x.value) + ' <i>&#8674; ' + fmtT(x.time) + 's</i></button>'
+            : esc(x.value);
+          return '<span class="dlv-sc-d-k">' + esc(x.label) + '</span><span class="dlv-sc-d-v">' + val + '</span>'; }).join('') + '</div>');
       }
       if (r.evidence && r.evidence.length) {
-        parts.push('<div class="dlv-sc-d-ev">' + r.evidence.slice(0, 5).map(function (e) {
-          return '<div class="dlv-sc-ev sev-' + esc(e.severity) + '"><b>' + esc(e.label) + '</b> ' + esc(e.message) +
-            ' <span class="dlv-sc-ev-t">' + fmtT(e.startTime) + (e.endTime != null ? '–' + fmtT(e.endTime) : '') + 's</span></div>'; }).join('') + '</div>');
+        // Every evidence row is a link (Ken, 2026-09-09: "those should be clickable to find them"):
+        // click zooms the graphs to the event and parks the cursor on its peak.
+        parts.push('<div class="dlv-sc-d-ev">' + r.evidence.slice(0, 6).map(function (e) {
+          var t0 = e.startTime, t1 = e.endTime != null ? e.endTime : e.startTime, tp = e.peakTime != null ? e.peakTime : e.startTime;
+          var can = t0 != null && isFinite(t0);
+          return '<' + (can ? 'button type="button"' : 'div') + ' class="dlv-sc-ev sev-' + esc(e.severity) + (can ? ' dlv-sc-link' : '') + '"' +
+            (can ? ' data-sc-go="' + tp + '" data-sc-t0="' + t0 + '" data-sc-t1="' + t1 + '" title="Show this on the graphs"' : '') + '><b>' + esc(e.label) + '</b> ' + esc(e.message) +
+            ' <span class="dlv-sc-ev-t">' + (can ? '&#8674; ' : '') + fmtT(e.startTime) + (e.endTime != null && e.endTime !== e.startTime ? '–' + fmtT(e.endTime) : '') + 's</span></' + (can ? 'button' : 'div') + '>'; }).join('') + '</div>');
       }
       if (r.confidence != null) parts.push('<div class="dlv-sc-d-conf">Confidence: ' + Math.round(r.confidence * 100) + '%</div>');
       if (r.warnings && r.warnings.length) parts.push('<div class="dlv-sc-d-warn">' + esc(r.warnings.join(' · ')) + '</div>');
@@ -670,9 +796,29 @@
           if (open) det.setAttribute('hidden', ''); else det.removeAttribute('hidden');
           row.classList.toggle('open', !open);
         }
-        row.addEventListener('click', function (e) { if (!e.target.closest('a')) toggle(); });
-        row.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+        row.addEventListener('click', function (e) {
+          var go = e.target.closest('[data-sc-go]');
+          if (go) { e.stopPropagation(); e.preventDefault(); goTo(go); return; }
+          if (!e.target.closest('a')) toggle();
+        });
+        row.addEventListener('keydown', function (e) {
+          if (e.target.closest && e.target.closest('[data-sc-go]')) return;   // the link handles its own Enter
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+        });
+        row.querySelectorAll('[data-sc-go]').forEach(function (b) { b.addEventListener('mousedown', function (e) { e.stopPropagation(); }); });
       });
+    }
+    // Zoom the graphs to [t0, t1] with breathing room (never tighter than ~4 s) and park the cursor on
+    // the peak. Goes through the host's navigator; a host without one just leaves the click inert.
+    function goTo(el) {
+      var nav = HOST && HOST.navigate; if (!nav) return;
+      var t = parseFloat(el.getAttribute('data-sc-go')), t0 = parseFloat(el.getAttribute('data-sc-t0')), t1 = parseFloat(el.getAttribute('data-sc-t1'));
+      if (!isFinite(t)) return;
+      if (!isFinite(t0)) t0 = t; if (!isFinite(t1)) t1 = t;
+      var span = Math.max(t1 - t0, 0), pad = Math.max(1.5, span * 0.35), lo = t0 - pad, hi = t1 + pad;
+      if (hi - lo < 4) { var mid = (lo + hi) / 2; lo = mid - 2; hi = mid + 2; }
+      try { if (typeof nav.setRange === 'function') nav.setRange(Math.max(0, lo), hi); } catch (err) {}
+      try { if (typeof nav.setCursor === 'function') nav.setCursor(t); } catch (err) {}
     }
 
     // ---- Config UI ------------------------------------------------------------------------------
@@ -721,17 +867,47 @@
         '<label class="dlv-sc-cfg-row">Score precision <select data-sc="display.precision"><option value="0"' + (d.precision === 0 ? ' selected' : '') + '>whole (92)</option><option value="1"' + (d.precision === 1 ? ' selected' : '') + '>1 decimal (92.4)</option></select></label>' +
         '<label class="dlv-sc-cfg-row">Row density <select data-sc="display.density"><option value="comfortable"' + (d.density !== 'compact' ? ' selected' : '') + '>Comfortable</option><option value="compact"' + (d.density === 'compact' ? ' selected' : '') + '>Compact</option></select></label>';
     }
+    var TUNE_OPEN = {};   // category id -> its settings panel is open (survives re-renders within the dialog)
+    function humanizeKey(k) { return String(k).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }); }
+    function stepFor(v) { var a = Math.abs(v); return a >= 100 ? '1' : a >= 10 ? '0.5' : a >= 1 ? '0.1' : a >= 0.1 ? '0.01' : '0.001'; }
+    /** The per-category settings panel: one row per tunable (label · input · unit · help). */
+    function tuneHtml(cat) {
+      var ev = getEvaluator(cat.evaluatorId); if (!ev) return '';
+      var defaults = ev.defaultSettings || {}, meta = ev.settingsMeta || {}, cur = cat.settings || {};
+      var keys = Object.keys(defaults).concat(Object.keys(cur).filter(function (k) { return !(k in defaults); }));
+      var rows = keys.map(function (k) {
+        var d = defaults[k], v = cur[k] !== undefined ? cur[k] : d;
+        if (d !== null && typeof d === 'object') return '';   // nested tables (e.g. target matrices) are not edited here
+        var m = meta[k] || [], label = m[0] || humanizeKey(k), unit = m[1] || '', help = m[2] || '';
+        var changed = cur[k] !== undefined && JSON.stringify(cur[k]) !== JSON.stringify(d);
+        var input;
+        if (typeof d === 'boolean') input = '<input type="checkbox" data-sc-setting="' + esc(k) + '" data-kind="bool"' + (v ? ' checked' : '') + '>';
+        else if (typeof d === 'string') input = '<input type="text" data-sc-setting="' + esc(k) + '" data-kind="str" value="' + esc(v == null ? '' : v) + '">';
+        else input = '<input type="number" data-sc-setting="' + esc(k) + '" data-kind="num" step="' + stepFor(typeof v === 'number' ? v : (typeof d === 'number' ? d : 1)) + '" value="' + (v == null ? '' : esc(String(v))) + '"' + (d == null ? ' placeholder="off"' : '') + '>';
+        return '<label class="dlv-sc-tune-row' + (changed ? ' changed' : '') + '" title="' + esc(help ? help + (d != null ? ' (default ' + d + ')' : '') : (d != null ? 'default ' + d : '')) + '">' +
+          '<span class="dlv-sc-tune-k">' + esc(label) + '</span>' + input + '<span class="dlv-sc-tune-u">' + esc(unit) + '</span></label>';
+      }).join('');
+      if (!rows) return '<div class="dlv-sc-tune" data-tune-for="' + esc(cat.id) + '"><div class="dlv-sc-cfg-help">This evaluator has no tunable settings.</div></div>';
+      return '<div class="dlv-sc-tune" data-tune-for="' + esc(cat.id) + '">' +
+        '<div class="dlv-sc-tune-head"><b>' + esc(ev.name) + '</b> settings' + (ev.evaluatorVersion ? ' <span>v' + esc(ev.evaluatorVersion) + '</span>' : '') +
+        '<button type="button" data-sc-cat="tunereset" title="Back to the evaluator defaults">Reset to defaults</button></div>' +
+        (ev.description ? '<div class="dlv-sc-cfg-help">' + esc(ev.description) + '</div>' : '') +
+        '<div class="dlv-sc-tune-grid">' + rows + '</div></div>';
+    }
     function categoriesTab(def) {
       var evs = listEvaluators();
       var rows = (def.categories || []).slice().sort(function (a, b) { return (a.order || 0) - (b.order || 0); }).map(function (c) {
-        return '<div class="dlv-sc-cfg-cat" data-cat="' + esc(c.id) + '">' +
+        var open = !!TUNE_OPEN[c.id];
+        return '<div class="dlv-sc-cfg-cat' + (open ? ' tuning' : '') + '" data-cat="' + esc(c.id) + '">' +
           '<span class="dlv-sc-cfg-drag" title="Reorder">≡</span>' +
           '<input type="checkbox" data-sc-cat="enabled" title="Enabled"' + (c.enabled ? ' checked' : '') + '>' +
           '<input type="text" class="dlv-sc-cfg-lbl" data-sc-cat="label" value="' + esc(c.label) + '">' +
           '<select class="dlv-sc-cfg-ev" data-sc-cat="evaluatorId">' + evs.map(function (e) {
             return '<option value="' + esc(e.id) + '"' + (e.id === c.evaluatorId ? ' selected' : '') + '>' + esc(e.name) + (e.status === 'placeholder' ? ' (placeholder)' : '') + '</option>'; }).join('') + '</select>' +
           '<input type="number" class="dlv-sc-cfg-w" data-sc-cat="weight" min="0" step="0.5" value="' + (c.weight != null ? c.weight : 1) + '" title="Weight">' +
-          '<button type="button" class="dlv-sc-cfg-catx" data-sc-cat="remove" title="Remove">×</button></div>';
+          '<button type="button" class="dlv-sc-cfg-tune' + (open ? ' on' : '') + '" data-sc-cat="tune" title="Tune this category\'s thresholds">⚙</button>' +
+          '<button type="button" class="dlv-sc-cfg-catx" data-sc-cat="remove" title="Remove">×</button></div>' +
+          (open ? tuneHtml(c) : '');
       }).join('');
       var count = enabledCount(def);
       return '<div class="dlv-sc-cfg-cats">' + rows + '</div>' +
@@ -765,14 +941,28 @@
           if (path === 'overall.mode') { if (val === 'disabled') { def.overall.enabled = false; } else { def.overall.enabled = true; def.overall.mode = val; } changed(); return; }
           setPath(def, path, val); changed(); return;
         }
-        if (catField && catField !== 'remove') {
+        var settingKey = t.getAttribute('data-sc-setting');
+        if (settingKey) {
+          var panel = t.closest('[data-tune-for]'), cid = panel && panel.getAttribute('data-tune-for');
+          var scat = def.categories.filter(function (c) { return c.id === cid; })[0]; if (!scat) return;
+          var sev = getEvaluator(scat.evaluatorId), dflt = sev ? sev.defaultSettings[settingKey] : undefined;
+          if (!scat.settings) scat.settings = {};
+          var kind = t.getAttribute('data-kind'), nv;
+          if (kind === 'bool') nv = !!t.checked;
+          else if (kind === 'str') nv = t.value;
+          else { nv = t.value === '' ? (dflt == null ? null : dflt) : parseFloat(t.value); if (nv != null && !isFinite(nv)) nv = dflt; if (t.value === '' && dflt != null) t.value = String(dflt); }
+          scat.settings[settingKey] = nv;
+          t.closest('.dlv-sc-tune-row').classList.toggle('changed', JSON.stringify(nv) !== JSON.stringify(dflt));
+          commit(); return;
+        }
+        if (catField && catField !== 'remove' && catField !== 'tune' && catField !== 'tunereset') {
           var id = t.closest('[data-cat]').getAttribute('data-cat');
           var cat = def.categories.filter(function (c) { return c.id === id; })[0]; if (!cat) return;
           if (catField === 'enabled') {
             if (t.checked && enabledCount(def) >= MAX_CATEGORIES) { t.checked = false; alertOnce('Up to ' + MAX_CATEGORIES + ' enabled categories.'); return; }
             cat.enabled = t.checked;
           } else if (catField === 'weight') { cat.weight = Math.max(0, parseFloat(t.value) || 0); }
-          else if (catField === 'evaluatorId') { cat.evaluatorId = t.value; var ev = getEvaluator(t.value); if (ev) cat.settings = JSON.parse(JSON.stringify(ev.defaultSettings)); }
+          else if (catField === 'evaluatorId') { cat.evaluatorId = t.value; var ev = getEvaluator(t.value); if (ev) cat.settings = JSON.parse(JSON.stringify(ev.defaultSettings)); if (TUNE_OPEN[id]) rerenderConfigBody(ovl, def); }
           else cat[catField] = t.value;
           commit();
         }
@@ -784,7 +974,16 @@
         else if (act === 'reset') { var fresh = makeDef(def.x, def.y); ['title', 'subtitle', 'display', 'overall', 'range', 'categories'].forEach(function (k) { def[k] = fresh[k]; }); rerenderConfigBody(ovl, def); commit(); }
         else if (e.target.getAttribute('data-sc-cat') === 'remove') {
           var id = e.target.closest('[data-cat]').getAttribute('data-cat');
-          def.categories = def.categories.filter(function (c) { return c.id !== id; }); rerenderConfigBody(ovl, def); commit();
+          def.categories = def.categories.filter(function (c) { return c.id !== id; }); delete TUNE_OPEN[id]; rerenderConfigBody(ovl, def); commit();
+        }
+        else if (e.target.getAttribute('data-sc-cat') === 'tune') {
+          var tid = e.target.closest('[data-cat]').getAttribute('data-cat');
+          TUNE_OPEN[tid] = !TUNE_OPEN[tid]; rerenderConfigBody(ovl, def);
+        }
+        else if (e.target.getAttribute('data-sc-cat') === 'tunereset') {
+          var rid = e.target.closest('[data-tune-for]').getAttribute('data-tune-for');
+          var rcat = def.categories.filter(function (c) { return c.id === rid; })[0], rev = rcat && getEvaluator(rcat.evaluatorId);
+          if (rcat && rev) { rcat.settings = JSON.parse(JSON.stringify(rev.defaultSettings)); rerenderConfigBody(ovl, def); commit(); }
         }
       });
     }
