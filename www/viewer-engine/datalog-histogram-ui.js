@@ -1366,7 +1366,11 @@
         if (!entries || !entries.length || !headEls || !headEls.length || entries[0].breakpoint == null) return null;
         if (typeof rawVal !== 'number' || rawVal !== rawVal) return null;
         var pairs = [];
-        for (var i = 0; i < entries.length && i < headEls.length; i++) pairs.push({ v: entries[i].breakpoint, el: headEls[i] });
+        // rawVal is the LIVE channel value (the log's unit). entry.breakpoint is the def's breakpoint in
+        // the def's axis unit -- binValue is that same breakpoint converted to the live unit by
+        // resolveAxis. A MAP axis authored in inHg on a log that reads psi interpolated 35 psi against
+        // 5..100 inHg and parked the dot at "35-40 inHg" while the samples sat at 72 (Ken, 2026-09-08).
+        for (var i = 0; i < entries.length && i < headEls.length; i++) pairs.push({ v: entries[i].binValue != null ? entries[i].binValue : entries[i].breakpoint, el: headEls[i] });
         pairs.sort(function (a, b) { return a.v - b.v; });
         var n = pairs.length;
         if (n === 1) return headCenter(pairs[0].el, vertical);
