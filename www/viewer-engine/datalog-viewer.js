@@ -303,6 +303,11 @@ function openViewerCore(fetchPromise, meta){
                            rows: res.data.full.time.length, decimated: !!res.data.full.decimated };
     }
 
+    // Estimated acceleration / chassis speed / wheel slip (datalog-accel.js): computed on the full-resolution
+    // set when the host kept one, sampled to the display set -- after the full set is attached so both
+    // carry the channels (graphs draw the display set, histograms bin the full one).
+    injectAccelChannels();
+
     var cylinderCount = detectCylinderCount(VIEWER_RESOLVED_ROLES);
     var matched = selectPreset({
       manualOverrideId: VIEWER_MANUAL_PRESET_OVERRIDE,
@@ -2844,9 +2849,12 @@ function renderOneChannelRow(c, pinnedRow){
           (pinnedRow ? '&#9679;' : '&#8593;') + '</button></td>'
       : '') +
     '<td class="dlv-ch-cell">' +
-      '<div class="dlv-ch-name" title="' + escapeHtml(c) + (isMathChannel(c) ? ' -- a math channel (computed, not logged)' : '') + '">' +
+      '<div class="dlv-ch-name" title="' + escapeHtml(c) + (isMathChannel(c) ? ' -- a math channel (computed, not logged)' : isAccelChannel(c) ? ' -- calculated (Vehicle Dynamics): estimated from this log\'s speed channels' : '') + '">' +
         (isMathChannel(c) ? '<span class="dlv-ch-math-badge" title="Math channel -- computed, not logged">&fnof;</span>' : '') +
-        escapeHtml(c) + '</div>' +
+        (isAccelChannel(c) ? '<span class="dlv-ch-calc-badge" title="Calculated · Vehicle Dynamics -- estimated from this log\'s speed channels">&asymp;</span>' : '') +
+        escapeHtml(c) +
+        (isAccelChannel(c) ? '<button type="button" class="dlv-ch-cfg" data-accel-cfg="1" title="Estimated acceleration settings: speed source, filtering, wheel-spin correction">&#9881;</button>' : '') +
+        '</div>' +
       '<div class="dlv-ch-value"><span class="dlv-ch-value-num' + (isTextChannel(c) ? ' dlv-ch-value-text' : '') + '" data-ch-value="' + escapeHtml(c) + '">--</span>' + (unit && unit !== 'na' ? '<span class="dlv-ch-value-unit">' + escapeHtml(unit) + '</span>' : '') + '</div>' +
     '</td>' +
     '<td class="dlv-cell-center dlv-ul-cell">' +
@@ -3501,6 +3509,140 @@ function injectMathChannels(){
   VIEWER_CHANNEL_STATS = computeChannelStats(VIEWER_DATA);
 }
 function isMathChannel(ch){ return VIEWER_MATH_CHANNEL_NAMES.indexOf(ch) !== -1; }
+
+// ---- Estimated acceleration (datalog-accel.js) ---------------------------------------------------
+// Calculated "Vehicle Dynamics" channels -- Estimated Acceleration (G / ft/s² / m/s²), Acceleration
+// Rate, Estimated Chassis Speed, Estimated Wheel Slip, Wheel Spin Detected / Correction Active and the
+// estimate's Confidence -- injected into VIEWER_DATA exactly like math channels, so every consumer keyed
+// on "name -> series[name]" (list, graphs, cursor, tooltips, stats, gauges, histograms) just works.
+// Settings (speed source / filtering / wheel-spin correction) live in localStorage; a change recomputes.
+var VIEWER_ACCEL = null;                 // { settings, result }
+var VIEWER_ACCEL_KEY = 'pbdDatalogViewerAccel.v1';
+var VIEWER_ACCEL_NAMES = [];             // names currently injected (display + full sets)
+function accelSettings(){
+  if(VIEWER_ACCEL && VIEWER_ACCEL.settings) return VIEWER_ACCEL.settings;
+  var s = null;
+  try { var raw = window.localStorage ? localStorage.getItem(VIEWER_ACCEL_KEY) : null; s = raw ? JSON.parse(raw) : null; } catch(e){ s = null; }
+  s = s && typeof s === 'object' ? s : {};
+  var d = (typeof DatalogAccel !== 'undefined') ? DatalogAccel.DEFAULT_SETTINGS : { source: 'auto', filter: 'auto', spin: 'auto' };
+  var out = { source: s.source || d.source, filter: s.filter || d.filter, spin: s.spin || d.spin };
+  VIEWER_ACCEL = VIEWER_ACCEL || {};
+  VIEWER_ACCEL.settings = out;
+  return out;
+}
+function setAccelSettings(patch){
+  var s = accelSettings();
+  Object.keys(patch || {}).forEach(function(k){ s[k] = patch[k]; });
+  try { if(window.localStorage) localStorage.setItem(VIEWER_ACCEL_KEY, JSON.stringify(s)); } catch(e){}
+}
+function isAccelChannel(ch){ return VIEWER_ACCEL_NAMES.indexOf(ch) !== -1; }
+function accelAddChannel(data, name, unit, values){
+  data.channels.push(name);
+  if(Array.isArray(data.units)) data.units.push(unit || '');
+  if(Array.isArray(data.channelIds)) data.channelIds.push(null);   // no HP Tuners PID, keep the rows aligned
+  data.series[name] = values;
+}
+function accelRemoveChannel(data, name){
+  var idx = data.channels.indexOf(name);
+  if(idx !== -1){ data.channels.splice(idx, 1); if(Array.isArray(data.units)) data.units.splice(idx, 1); if(Array.isArray(data.channelIds)) data.channelIds.splice(idx, 1); }
+  delete data.series[name];
+}
+// The display set is a SUBSET of the full set's rows: pick, for every display timestamp, the full sample
+// at (or nearest to) that time. Linear walk, both axes ascending.
+function accelSampleToDisplay(fullT, dispT, arr){
+  var out = new Float64Array(dispT.length), j = 0, n = fullT.length;
+  for(var i = 0; i < dispT.length; i++){
+    var t = dispT[i];
+    while(j + 1 < n && fullT[j] < t) j++;
+    var k = j;
+    if(j > 0 && Math.abs(fullT[j - 1] - t) < Math.abs(fullT[j] - t)) k = j - 1;
+    out[i] = arr[k];
+  }
+  return out;
+}
+function injectAccelChannels(){
+  if(!VIEWER_DATA) return;
+  var full = (VIEWER_DATA.full && VIEWER_DATA.full.series && VIEWER_DATA.full.time) ? VIEWER_DATA.full : null;
+  VIEWER_ACCEL_NAMES.forEach(function(name){
+    accelRemoveChannel(VIEWER_DATA, name);
+    if(full) accelRemoveChannel(full, name);
+    delete VIEWER_UNIT_BY_CHANNEL[name];
+    var si = VIEWER_SELECTED.indexOf(name);
+    if(si !== -1) VIEWER_SELECTED.splice(si, 1);
+    delete VIEWER_PANEL_ASSIGN[name];
+  });
+  VIEWER_ACCEL_NAMES = [];
+  if(typeof DatalogAccel === 'undefined' || !DatalogAccel.run) return;
+  var base = full ? { channels: full.channels, units: full.units, series: full.series, time: full.time, textLevels: full.textLevels } : VIEWER_DATA;
+  var roles = full ? resolveChannelRoles(full.channels) : VIEWER_RESOLVED_ROLES;
+  var unitMap = {};
+  base.channels.forEach(function(c, i){ unitMap[c] = base.units ? base.units[i] : ''; });
+  var res = null;
+  try { res = DatalogAccel.run(base, roles, unitMap, getCurrentVehicleMeta(), accelSettings()); }
+  catch(err){ if(window.console) console.warn('Estimated acceleration failed', err); res = null; }
+  VIEWER_ACCEL = VIEWER_ACCEL || {};
+  VIEWER_ACCEL.result = res;
+  if(!res || !res.channels || !res.channels.length) return;
+  res.channels.forEach(function(c){
+    if(VIEWER_DATA.channels.indexOf(c.name) !== -1) return;   // a real logged column of that name wins
+    var vals = c.values;
+    if(full){ accelAddChannel(full, c.name, c.unit, c.values); vals = accelSampleToDisplay(full.time, VIEWER_DATA.time, c.values); }
+    accelAddChannel(VIEWER_DATA, c.name, c.unit, vals);
+    VIEWER_UNIT_BY_CHANNEL[c.name] = c.unit || null;
+    VIEWER_ACCEL_NAMES.push(c.name);
+  });
+  VIEWER_CHANNEL_STATS = computeChannelStats(VIEWER_DATA);
+}
+// Developer console: how the estimate was built (sources used / rejected, spin events, window, rate).
+window.DatalogAccelDebug = function(){ return (VIEWER_ACCEL && VIEWER_ACCEL.result) ? VIEWER_ACCEL.result.meta : null; };
+// The small settings popover behind the ⚙ on any estimated-acceleration row.
+function openAccelSettings(anchor){
+  closeHdrMenu();
+  var s = accelSettings(), res = VIEWER_ACCEL && VIEWER_ACCEL.result, meta = res ? res.meta : null;
+  var m = document.createElement('div');
+  m.className = 'dlv-gmenu dlv-hdr-menu dlv-accel-menu';
+  m.__which = 'accel';
+  var srcOpts = [['auto', 'Auto'], ['gps', 'GPS'], ['vss', 'Vehicle speed'], ['wheels', 'Wheel speed fusion']];
+  if(res && res.discovered && res.discovered.sources) res.discovered.sources.forEach(function(x){ srcOpts.push([x.name, x.name]); });
+  var filtOpts = [['auto', 'Auto'], ['fast', 'Fast (50 ms)'], ['normal', 'Normal (150 ms)'], ['smooth', 'Smooth (250 ms)'], ['verysmooth', 'Very smooth (500 ms)']];
+  var spinOpts = [['off', 'Off'], ['auto', 'Auto'], ['aggressive', 'Aggressive']];
+  function sel(key, label, opts, cur){
+    return '<label class="dlv-accel-row"><span>' + label + '</span><select data-accel="' + key + '">' + opts.map(function(o){
+      return '<option value="' + escapeHtml(o[0]) + '"' + (String(cur).toLowerCase() === String(o[0]).toLowerCase() ? ' selected' : '') + '>' + escapeHtml(o[1]) + '</option>'; }).join('') + '</select></label>';
+  }
+  var html = '<h4>Estimated Acceleration</h4>' +
+    sel('source', 'Speed source', srcOpts, s.source) + sel('filter', 'Filtering', filtOpts, s.filter) + sel('spin', 'Wheel spin correction', spinOpts, s.spin);
+  if(meta){
+    html += '<div class="dlv-accel-info">' +
+      '<div><b>Chassis speed:</b> ' + escapeHtml(meta.sourceText || '—') + '</div>' +
+      '<div><b>Window:</b> ' + meta.windowMs + ' ms · <b>Sample rate:</b> ' + meta.sampleHz + ' Hz' + (meta.resolutionMph ? ' · <b>Resolution:</b> ' + meta.resolutionMph + ' mph' : '') + '</div>' +
+      (meta.rejected && meta.rejected.length ? '<div><b>Not used:</b> ' + escapeHtml(meta.rejected.map(function(r){ return r.name; }).join(', ')) + '</div>' : '') +
+      (meta.events && meta.events.length ? '<div><b>Events:</b> ' + meta.events.slice(0, 6).map(function(e){ return escapeHtml(e.kind) + ' ' + e.t0.toFixed(1) + '–' + e.t1.toFixed(1) + ' s' + (e.corrected ? ' (corrected)' : ''); }).join('; ') + (meta.events.length > 6 ? ' …' : '') + '</div>' : '<div><b>Events:</b> no wheel spin found</div>') +
+      '</div>';
+  } else html += '<div class="dlv-gmenu-hint">No speed channel in this log — nothing to estimate.</div>';
+  m.innerHTML = html;
+  m.addEventListener('mousedown', function(e){ e.stopPropagation(); });
+  m.addEventListener('click', function(e){ e.stopPropagation(); });
+  document.body.appendChild(m);
+  positionHdrMenu(m, anchor);
+  VIEWER_HDR_MENU = m;
+  m.querySelectorAll('[data-accel]').forEach(function(el){
+    el.addEventListener('change', function(){
+      var patch = {}; patch[el.getAttribute('data-accel')] = el.value;
+      setAccelSettings(patch);
+      closeHdrMenu();
+      injectAccelChannels();
+      renderViewerBody();
+      if(window.showToast) showToast('Estimated acceleration recalculated.');
+    });
+  });
+}
+document.addEventListener('click', function(e){
+  var b = e.target && e.target.closest ? e.target.closest('[data-accel-cfg]') : null;
+  if(!b) return;
+  e.stopPropagation(); e.preventDefault();
+  openAccelSettings(b);
+}, true);
 function enterHistograms(){
   if(!viewerIsPro()) return;
   adlTrack('histograms_used', { action: 'open' });

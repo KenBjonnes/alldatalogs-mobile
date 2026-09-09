@@ -40,6 +40,17 @@
 var NORMALIZED_CHANNEL_ROLES = {
   engine_rpm:              { label: 'Engine RPM',        aliases: ['ENGINE_SPEED', 'Engine RPM', 'Engine Speed', 'RPM'] },
   vehicle_speed:           { label: 'Speed',              aliases: ['VSPD', 'Vehicle Speed', 'Speed', 'vehicle speed mph'] },
+  // Speed sources the estimated-acceleration engine (datalog-accel.js) fuses: GPS is spin-proof, the four
+  // wheels give a consensus (and the non-driven pair a spin-free reference), the driveline speeds follow
+  // the tyres. Name-pattern discovery in that module covers spellings these aliases miss.
+  gps_speed:               { label: 'GPS Speed',          aliases: ['GPS Speed', 'GPS Vehicle Speed', 'GPS MPH', 'GPS Ground Speed', 'GPS Velocity', 'GNSS Speed'] },
+  wheel_speed_fl:          { label: 'Wheel FL',           aliases: ['Wheel Speed Front Left', 'Front Left Wheel Speed', 'LF Wheel Speed', 'FL Wheel Speed', 'Wheel Speed FL', 'Wheel Speed LF', 'WSS_FL', 'Front Left Wheel', 'Ford Wheel Speed Front Left'] },
+  wheel_speed_fr:          { label: 'Wheel FR',           aliases: ['Wheel Speed Front Right', 'Front Right Wheel Speed', 'RF Wheel Speed', 'FR Wheel Speed', 'Wheel Speed FR', 'Wheel Speed RF', 'WSS_FR', 'Front Right Wheel', 'Ford Wheel Speed Front Right'] },
+  wheel_speed_rl:          { label: 'Wheel RL',           aliases: ['Wheel Speed Rear Left', 'Rear Left Wheel Speed', 'LR Wheel Speed', 'RL Wheel Speed', 'Wheel Speed RL', 'Wheel Speed LR', 'WSS_RL', 'Rear Left Wheel', 'Ford Wheel Speed Rear Left'] },
+  wheel_speed_rr:          { label: 'Wheel RR',           aliases: ['Wheel Speed Rear Right', 'Rear Right Wheel Speed', 'RR Wheel Speed', 'Wheel Speed RR', 'WSS_RR', 'Rear Right Wheel', 'Ford Wheel Speed Rear Right'] },
+  output_shaft_speed:      { label: 'Output Shaft',       aliases: ['Trans Output Shaft RPM', 'Output Shaft Speed', 'Transmission Output Shaft Speed', 'OSS', 'Gear Output Shaft Speed', 'Trans Output Speed', 'Output Shaft RPM'] },
+  driveshaft_speed:        { label: 'Driveshaft',         aliases: ['Driveshaft', 'Driveshaft RPM', 'DRIVESHAFT RPM', 'Driveshaft_RPM', 'Drive Shaft Speed', 'Driveshaft Speed', 'Prop Shaft Speed'] },
+  longitudinal_g:          { label: 'Accel G',            aliases: ['Accel G', 'Longitudinal G', 'Longitudinal Accel', 'X Accel Corrected', 'X Accel Correcte', 'Accel_G', 'Long G', 'G Force Longitudinal', 'Accelerometer X'] },
   boost_pressure:          { label: 'Boost',              aliases: ['BOOST', 'Boost Pressure', 'Boost PSIG'] },
   manifold_absolute_pressure: { label: 'MAP',             aliases: ['MAP', 'Manifold Absolute Pressure', 'Manifold Pressure', 'Measured Manifold Pressure'] },
   barometric_pressure:     { label: 'Baro',               aliases: ['BARO', 'Barometric Pressure', 'Baro Pressure', 'Ambient Pressure'] },
@@ -645,10 +656,14 @@ var FORD_TORQUE_SOURCE_LABELS = {
   '26': 'TQ+ from Trans',
   '30': 'HEV Decel Fuel Cut'
 };
+var YES_NO_LABELS = { '0': 'No', '1': 'Yes' };
 var VALUE_LABEL_DEFAULTS = {
   'torque source': FORD_TORQUE_SOURCE_LABELS,          // SCT: "torque source"
   'torque sources': FORD_TORQUE_SOURCE_LABELS,         // other SCT spellings
-  'torque source (sae)': FORD_TORQUE_SOURCE_LABELS
+  'torque source (sae)': FORD_TORQUE_SOURCE_LABELS,
+  // the estimated-acceleration engine's boolean channels (datalog-accel.js)
+  'wheel spin detected': YES_NO_LABELS,
+  'wheel spin correction active': YES_NO_LABELS
 };
 function valueLabelKey(v){ return (typeof v === 'number' && isFinite(v)) ? String(Math.round(v)) : String(v == null ? '' : v).trim(); }
 // "0 = Base / MBT" / "1: Torque Control" / "2, Borderline" / "3 Tipin" -- one per line (or ;-separated).
