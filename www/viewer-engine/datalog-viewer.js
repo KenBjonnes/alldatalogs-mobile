@@ -1199,6 +1199,8 @@ function formatReadoutValue(v, ch){
   if(v == null || !isFinite(v)) return '--';
   var vl = valueLabelsForChannel(ch), vt = (vl && typeof valueLabelText === 'function') ? valueLabelText(vl, v) : null;
   if(vt != null) return vt;
+  // a state channel (it has a label table) whose code is not in the table: show the bare id, not "43.00"
+  if(vl && Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v));
   if(Math.abs(v) >= 1000) return v.toFixed(0);
   if(Math.abs(v) >= 100) return v.toFixed(1);
   return v.toFixed(2);

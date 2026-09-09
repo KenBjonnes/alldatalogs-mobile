@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-09-09T14:05:56.310Z",
+  "builtAt": "2026-09-09T14:21:18.734Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
     "siteRepo": "C:/websites/Alldatalogs",
-    "siteCommit": "390f67a"
+    "siteCommit": "b5bb5fe"
   },
   "files": {
     "viewer-engine/datalog-viewer.css": {
@@ -23,8 +23,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram-editor.css"
     },
     "viewer-engine/datalog-presets.js": {
-      "sha256": "33fafd0cd55d06baf37b9a003bc6170aae2c09ad679a29a3d4b06e1ccf117055",
-      "bytes": 82918,
+      "sha256": "d3a1a69e43f986b4af2b690dbb7e6cbebcff03f84a99e941d7116efef35fb0e5",
+      "bytes": 84512,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-presets.js"
     },
     "viewer-engine/datalog-gauges.js": {
@@ -83,8 +83,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-vehicles.js"
     },
     "viewer-engine/datalog-viewer.js": {
-      "sha256": "b8363c2a4e88743bcb0a865e6ea8661da683d8d4ac9b765c96e461de3d250cf1",
-      "bytes": 405303,
+      "sha256": "1a0c02bc11aa989dd7fac2b6596914961c30f504034c777cfa79f632aea7621a",
+      "bytes": 405486,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.js"
     },
     "viewer-engine/runtime.js": {
@@ -128,8 +128,8 @@
       "from": "C:/websites/Alldatalogs/packages/datalog-core/browser/entry.ts (esbuild)"
     },
     "glue.js": {
-      "sha256": "c7e32e6fea6b9a6701bfb265ba56cd55e8e4e8fef3ddb7f022f69c912a9bf1b6",
-      "bytes": 891566,
+      "sha256": "3b95842cb5ee9a599eb6cbc0632f2c4263c335f5c317800dc18ecbd8561e9671",
+      "bytes": 891594,
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/glue.ts (esbuild)"
     },
     "parse-worker.js": {
@@ -138,8 +138,8 @@
       "from": "apps/web/public/parse-worker.js (esbuild)"
     },
     "index.html": {
-      "sha256": "b597bc514bad6537853dc2b44a625f8d6724f4d923756ec2e8616a9982a1d7fb",
-      "bytes": 7555,
+      "sha256": "30a0eb059024735fae251751eb2acc943a298d5d95f735030e803f4c95056c05",
+      "bytes": 7611,
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/index.html (version stamped)"
     }
   }

@@ -615,7 +615,41 @@ function roleForChannelName(name){
 // user's own maps on top (edited in a Table gauge's menu, kept in localStorage) -- Ken, 2026-09-09.
 // The built-in table stays EMPTY until SCT's code order is confirmed on a real log: guessing codes
 // would print the wrong state with total confidence, which is worse than a number.
-var VALUE_LABEL_DEFAULTS = {};
+// Ford PCM "torque source" (tq_source) -- the id the PCM reports for what is setting engine torque right
+// now. HP Tuners logs it as TEXT ("Driver Demand", "Trans Shift Mod"...); SCT logs the raw id. Correlated
+// 2026-09-09 on Ken's GT350 SCT log against HP Tuners' labels and the Ford strategy source's own comments
+// (0 driver demand, 2 traction, 3 vehicle speed limit, 4 engine speed limit, 5 tip-in, 6 DFSO, 7 shift
+// decrement, 9 EMS Target-N, 13 antishuffle, 14 speed control, 16 dashpot, 17 VDE, 19 combustion
+// stability, 22 idle speed control, 23 anti-surge, 25 MSR, 26 trans torque increase; 20/21/30 HEV).
+// Labels use HP Tuners' wording where HPT has one, so an SCT log reads like an HPT log. Ids the strategy
+// does not name (1, 8, 10-12, 15, 18, 24, 27+, 43) stay numeric until a log pins them down.
+var FORD_TORQUE_SOURCE_LABELS = {
+  '0': 'Driver Demand',
+  '2': 'Traction Control',
+  '3': 'Vehicle Speed Limit',
+  '4': 'Engine Speed Limit',
+  '5': 'Tipin Limit',
+  '6': 'Decel Fuel Cut',
+  '7': 'Trans Shift Mod',
+  '9': 'Target N',
+  '13': 'Antishuffle',
+  '14': 'Speed Control (Cruise)',
+  '16': 'TQ Based Decel',
+  '17': 'VDE',
+  '19': 'Comb. Stab. Limit',
+  '20': 'HEV Pull Down',
+  '21': 'HEV Tipout / CL TQCTL',
+  '22': 'Idle Speed Limit',
+  '23': 'Anti-surge Enrichment',
+  '25': 'TQ+ for MSR',
+  '26': 'TQ+ from Trans',
+  '30': 'HEV Decel Fuel Cut'
+};
+var VALUE_LABEL_DEFAULTS = {
+  'torque source': FORD_TORQUE_SOURCE_LABELS,          // SCT: "torque source"
+  'torque sources': FORD_TORQUE_SOURCE_LABELS,         // other SCT spellings
+  'torque source (sae)': FORD_TORQUE_SOURCE_LABELS
+};
 function valueLabelKey(v){ return (typeof v === 'number' && isFinite(v)) ? String(Math.round(v)) : String(v == null ? '' : v).trim(); }
 // "0 = Base / MBT" / "1: Torque Control" / "2, Borderline" / "3 Tipin" -- one per line (or ;-separated).
 function parseValueLabels(text){
