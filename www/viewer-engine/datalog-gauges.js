@@ -423,6 +423,53 @@ function buildNumberCard(def){
   return { box: box, refs: { kind: 'number', valueEl: valueEl } };
 }
 
+// ---- Table: label | value rows ----------------------------------------------------------------
+// Ken (2026-09-09): "a 2 column table. on the left is the label and on the right is the output.
+// Typically text output fields -- source fields." Rows are independent channels (def.rows, each a
+// {channelOverride, role, label, decimals, unit} like a gauge). The HOST resolves every row's text --
+// a text channel's level, a value-label lookup for a numeric state code (SCT logs the same PCM enums
+// as numbers), or a formatted number -- and hands updateGaugeElement an array of {text, missing}.
+// Free-size: width from the designer, height from its rows; fontScale sizes both columns.
+function buildTable(def){
+  var box = document.createElement('div');
+  box.className = 'pbd-table-box';
+  box.style.borderLeftColor = def.color || '#22c55e';
+  var rows = Array.isArray(def.rows) ? def.rows : [];
+  var refs = { kind: 'table', rows: [] };
+  if(def.label){
+    var head = document.createElement('div');
+    head.className = 'pbd-table-head';
+    head.style.fontSize = gaugeLabelPx(def, 13);
+    head.textContent = def.label;
+    box.appendChild(head);
+  }
+  rows.forEach(function(r, i){
+    var row = document.createElement('div');
+    row.className = 'pbd-table-row';
+    var lab = document.createElement('div');
+    lab.className = 'pbd-table-label';
+    lab.style.fontSize = gaugeLabelPx(def, 14);
+    lab.textContent = (r && (r.label || r.channelOverride || r.role)) || ('Row ' + (i + 1));
+    lab.title = lab.textContent;
+    var val = document.createElement('div');
+    val.className = 'pbd-table-value';
+    val.style.fontSize = gaugeValuePx(def, 15);
+    val.style.color = def.color || '';
+    val.textContent = '--';
+    row.appendChild(lab); row.appendChild(val);
+    box.appendChild(row);
+    refs.rows.push({ labelEl: lab, valueEl: val });
+  });
+  if(!rows.length){
+    var empty = document.createElement('div');
+    empty.className = 'pbd-table-empty';
+    empty.style.fontSize = gaugeLabelPx(def, 14);
+    empty.textContent = 'Right-click to add rows';
+    box.appendChild(empty);
+  }
+  return { box: box, refs: refs };
+}
+
 // ---- Horizontal bar ---------------------------------------------------------------------------
 // Same model as the vertical bar, laid out left-to-right. Fill and zones are % of the track WIDTH,
 // so the whole thing stretches to whatever size the container gives it (dashboard bars are free-size).
@@ -578,6 +625,7 @@ function createGaugeElement(def, opts){
     else if(def.type === 'vertical-bar') built = buildVerticalBar(def);
     else if(def.type === 'horizontal-bar') built = buildHBar(def);
     else if(def.type === 'light') built = buildWarnLight(def);
+    else if(def.type === 'table') built = buildTable(def);
     else built = buildNumberCard(def);
   } finally {
     GAUGE_TEXT = { label: 1, tick: 1, value: 1 };
@@ -608,6 +656,19 @@ function createGaugeElement(def, opts){
 function updateGaugeElement(wrap, def, rawValue, rawValue2){
   var refs = wrap && wrap._pbdRefs;
   if(!refs) return;
+  if(refs.kind === 'table'){
+    // rawValue = [{text, missing}] per row, text already resolved by the host; the tile only dims
+    // when NO row has a value.
+    var cells = Array.isArray(rawValue) ? rawValue : [], any = false;
+    refs.rows.forEach(function(r, i){
+      var c = cells[i], miss = !c || c.missing || c.text == null;
+      r.valueEl.textContent = miss ? '--' : String(c.text);
+      r.valueEl.classList.toggle('missing', !!miss);
+      if(!miss) any = true;
+    });
+    wrap.classList.toggle('pbd-gauge-missing', refs.rows.length > 0 && !any);
+    return;
+  }
   var missing = rawValue == null || !isFinite(rawValue);
   wrap.classList.toggle('pbd-gauge-missing', missing);
 
@@ -831,9 +892,11 @@ function renderGaugeFascia(gaugeDefs){
 var GAUGE_THUMB_BASE = { 'round': { w: 172, h: 206 }, 'combo': { w: 177, h: 212 }, 'digital': { w: 96, h: 92 }, 'light': { w: 96, h: 92 } };
 function gaugeThumbBox(g){
   var t = g.type === 'tach' ? 'round' : g.type;
-  if(t === 'vertical-bar' || t === 'horizontal-bar' || t === 'scorecard'){
-    var d = t === 'vertical-bar' ? { w: 92, h: 210 } : t === 'horizontal-bar' ? { w: 220, h: 76 } : { w: 260, h: 160 };
-    return { w: (+g.w > 0 ? +g.w : d.w), h: (+g.h > 0 ? +g.h : d.h) };
+  if(t === 'vertical-bar' || t === 'horizontal-bar' || t === 'scorecard' || t === 'table'){
+    var d = t === 'vertical-bar' ? { w: 92, h: 210 } : t === 'horizontal-bar' ? { w: 220, h: 76 }
+      : t === 'table' ? { w: 240, h: 16 + 26 * Math.max(1, (g.rows && g.rows.length) || 3) * (+g.fontScale > 0 ? +g.fontScale : 1) } : { w: 260, h: 160 };
+    // a table's height is its rows (never the designer's h)
+    return { w: (+g.w > 0 ? +g.w : d.w), h: (t !== 'table' && +g.h > 0) ? +g.h : d.h };
   }
   var b = GAUGE_THUMB_BASE[t] || GAUGE_THUMB_BASE.round, s = (+g.scale > 0 ? +g.scale : 1);
   return { w: b.w * s, h: b.h * s };
@@ -880,6 +943,15 @@ function gaugesThumbnailSvg(gauges){
       out.push('<rect x="' + n(hx) + '" y="' + n(hy) + '" width="' + n(hw) + '" height="' + n(hh) + '" rx="3" fill="#0a0a0d" stroke="#3a3a44"/>');
       out.push('<rect x="' + n(hx) + '" y="' + n(hy) + '" width="' + n(hw * 0.6) + '" height="' + n(hh) + '" rx="3" fill="' + esc(col) + '"/>');
       out.push('<text x="' + n(hx) + '" y="' + n(y + b.h * 0.3) + '" font-family="' + font + '" font-size="' + n(Math.max(9, b.h * 0.18)) + '" fill="#a8a8b2">' + label + '</text>');
+    } else if(t === 'table'){
+      tile();
+      var trows = Array.isArray(g.rows) ? g.rows.slice(0, 8) : [], rh = (b.h - 12) / Math.max(1, trows.length), tfs = Math.max(8, Math.min(13, rh * 0.5));
+      trows.forEach(function(r, i){
+        var ry = y + 6 + rh * i + rh * 0.66;
+        out.push('<text x="' + n(x + 10) + '" y="' + n(ry) + '" font-family="' + font + '" font-size="' + n(tfs) + '" fill="#a8a8b2">' + esc(String((r && (r.label || r.channelOverride)) || '').slice(0, 16)) + '</text>');
+        out.push('<text x="' + n(x + b.w - 10) + '" y="' + n(ry) + '" text-anchor="end" font-family="' + font + '" font-weight="700" font-size="' + n(tfs) + '" fill="' + esc(col) + '">—</text>');
+        if(i < trows.length - 1) out.push('<line x1="' + n(x + 8) + '" y1="' + n(y + 6 + rh * (i + 1)) + '" x2="' + n(x + b.w - 8) + '" y2="' + n(y + 6 + rh * (i + 1)) + '" stroke="#2c2c34"/>');
+      });
     } else if(t === 'light'){
       tile();
       var lr = Math.min(b.w, b.h) * 0.24;

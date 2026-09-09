@@ -603,6 +603,44 @@ function roleForChannelName(name){
   return looseHit;
 }
 
+// ---- Value labels: numeric state codes -> text ---------------------------------------------------
+// HP Tuners logs a PCM state channel (Spark Source, Torque Source, Fuel Source...) as TEXT; SCT logs
+// the same PCM enum as a NUMBER. A value-label map ({ "0": "Base / MBT", ... }) shows the text either
+// way. VALUE_LABEL_DEFAULTS is the built-in table by channel name (normalised); the viewer layers the
+// user's own maps on top (edited in a Table gauge's menu, kept in localStorage) -- Ken, 2026-09-09.
+// The built-in table stays EMPTY until SCT's code order is confirmed on a real log: guessing codes
+// would print the wrong state with total confidence, which is worse than a number.
+var VALUE_LABEL_DEFAULTS = {};
+function valueLabelKey(v){ return (typeof v === 'number' && isFinite(v)) ? String(Math.round(v)) : String(v == null ? '' : v).trim(); }
+// "0 = Base / MBT" / "1: Torque Control" / "2, Borderline" / "3 Tipin" -- one per line (or ;-separated).
+function parseValueLabels(text){
+  var out = {}, n = 0;
+  String(text == null ? '' : text).split(/[\n;]+/).forEach(function(line){
+    var m = /^\s*(-?\d+(?:\.\d+)?)\s*(?:=|:|,|\t|\s)\s*(.+?)\s*$/.exec(line);
+    if(!m) return;
+    out[valueLabelKey(parseFloat(m[1]))] = m[2]; n++;
+  });
+  return n ? out : null;
+}
+function formatValueLabels(map){
+  if(!map) return '';
+  return Object.keys(map).sort(function(a, b){ return parseFloat(a) - parseFloat(b); }).map(function(k){ return k + ' = ' + map[k]; }).join('\n');
+}
+function valueLabelText(map, v){
+  if(!map || typeof v !== 'number' || !isFinite(v)) return null;
+  var k = valueLabelKey(v);
+  return Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null;
+}
+// The map for a channel: the built-in one for that name (normalised), with `userMap` layered on top.
+function valueLabelsFor(channel, userMap){
+  var base = channel ? VALUE_LABEL_DEFAULTS[normalizeForMatch(channel)] : null;
+  if(!base && !userMap) return null;
+  var out = {};
+  if(base) Object.keys(base).forEach(function(k){ out[k] = base[k]; });
+  if(userMap) Object.keys(userMap).forEach(function(k){ out[k] = userMap[k]; });
+  return out;
+}
+
 // A gauge def may carry an alternate identity: `altRole` + an `alt` presentation block. When the
 // primary role can't resolve for this log but the alt role can, the gauge BECOMES the alt (label,
 // scale, unit, warnings) and binds to the alt role. This is how the two λ gauges turn into AFR

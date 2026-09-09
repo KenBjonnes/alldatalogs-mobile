@@ -1168,6 +1168,27 @@ function textLevelsFor(ch){
 }
 function isTextChannel(ch){ return !!textLevelsFor(ch); }
 
+// ---- Value labels (number -> text) for state channels logged as codes ---------------------------
+// SCT logs Spark Source / Torque Source / ... as numbers where HP Tuners logs text. The user's own
+// code -> label maps (per channel name, edited in a Table gauge's menu) live here, layered over the
+// presets' built-in VALUE_LABEL_DEFAULTS, and apply everywhere a value is read out.
+var VIEWER_VALUE_LABELS = null;
+var VIEWER_VALUE_LABELS_KEY = 'pbdDatalogViewerValueLabels.v1';
+function userValueLabels(){
+  if(VIEWER_VALUE_LABELS) return VIEWER_VALUE_LABELS;
+  try { var raw = window.localStorage ? localStorage.getItem(VIEWER_VALUE_LABELS_KEY) : null; VIEWER_VALUE_LABELS = raw ? (JSON.parse(raw) || {}) : {}; }
+  catch(err){ VIEWER_VALUE_LABELS = {}; }
+  return VIEWER_VALUE_LABELS;
+}
+function setUserValueLabels(ch, map){
+  var all = userValueLabels();
+  if(map && Object.keys(map).length) all[ch] = map; else delete all[ch];
+  try { if(window.localStorage) localStorage.setItem(VIEWER_VALUE_LABELS_KEY, JSON.stringify(all)); } catch(err){}
+}
+function valueLabelsForChannel(ch){
+  if(!ch || typeof valueLabelsFor !== 'function') return null;
+  return valueLabelsFor(ch, userValueLabels()[ch] || null);
+}
 function formatReadoutValue(v, ch){
   var levels = ch ? textLevelsFor(ch) : null;
   if(levels){
@@ -1175,6 +1196,8 @@ function formatReadoutValue(v, ch){
     return levels[Math.round(v)] != null ? levels[Math.round(v)] : '--';
   }
   if(v == null || !isFinite(v)) return '--';
+  var vl = valueLabelsForChannel(ch), vt = (vl && typeof valueLabelText === 'function') ? valueLabelText(vl, v) : null;
+  if(vt != null) return vt;
   if(Math.abs(v) >= 1000) return v.toFixed(0);
   if(Math.abs(v) >= 100) return v.toFixed(1);
   return v.toFixed(2);
@@ -2984,6 +3007,7 @@ function updateHistDashGauges(idx, dataX){
   gs.forEach(function(g){
     var el = VIEWER_HIST_DASH_ELS[g.id];
     if(!el) return;
+    if(g.type === 'table'){ updateGaugeElement(el, g, dashTableCells(g, idx, dataX)); return; }
     var ch = gaugeChannelFor(g);
     var val = ch ? valueAtCursor(ch, idx, dataX) : null;
     var val2;
@@ -3010,8 +3034,8 @@ var DASH_GRID = 20;            // snap step in px; hold Alt while dragging for f
 // Keyed by PALETTE type ('tach' is a round dial with a redline, so it scales like a dial).
 var DASH_SCALES = { 'round': 1.0, 'tach': 1.05, 'combo': 1.5, 'digital': 1.6, 'light': 1.4 };
 // Bars are FREE-SIZE (Ken): explicit w x h, resized independently, not aspect-locked like the dials.
-var DASH_BAR_SIZES = { 'vertical-bar': { w: 92, h: 210 }, 'horizontal-bar': { w: 220, h: 76 } };
-function dashIsFreeSize(type){ return type === 'vertical-bar' || type === 'horizontal-bar' || type === 'scorecard'; }
+var DASH_BAR_SIZES = { 'vertical-bar': { w: 92, h: 210 }, 'horizontal-bar': { w: 220, h: 76 }, 'table': { w: 240, h: 0 } };   // a table's height hugs its rows
+function dashIsFreeSize(type){ return type === 'vertical-bar' || type === 'horizontal-bar' || type === 'scorecard' || type === 'table'; }
 var DASH_PALETTE = [
   { type:'round', label:'Dial' },
   { type:'tach', label:'Tach' },
@@ -3020,6 +3044,7 @@ var DASH_PALETTE = [
   { type:'horizontal-bar', label:'H-Bar' },
   { type:'digital', label:'Number' },
   { type:'light', label:'Light' },
+  { type:'table', label:'Table' },      // label | value rows, for state (text) fields
   { type:'scorecard', label:'Scorecard' }   // renders as a table (datalog-scorecard.js), not an SVG gauge
 ];
 
@@ -3122,9 +3147,51 @@ function dashStampRole(g, ch){
   if(role){ g.role = role; g.roleFallback = true; }
   else { delete g.role; delete g.roleFallback; }
 }
+// Table gauge: label | value rows, seeded with the log's state (text) channels -- the "Source"
+// fields a Ford log carries -- else its first numeric channels. Rows bind like gauges
+// (channelOverride + stamped role), so a shared dash still finds them on another car's log.
+function dashTextChannels(){
+  return (VIEWER_DATA && VIEWER_DATA.channels ? VIEWER_DATA.channels : []).filter(function(c){ return isTextChannel(c); });
+}
+function dashMakeTableRow(ch){
+  var r = { channelOverride: ch || null, label: ch ? (typeof shortChannelName === 'function' ? shortChannelName(ch) : ch) : 'Row', decimals: null, unit: null };
+  dashStampRole(r, ch);
+  return r;
+}
+function dashMakeTable(x, y){
+  var texts = dashTextChannels().slice();
+  texts.sort(function(a, b){ return (/source/i.test(b) ? 1 : 0) - (/source/i.test(a) ? 1 : 0); });   // Source fields first
+  var seed = texts.slice(0, 4);
+  if(!seed.length) seed = dashNumericChannels().slice(0, 3);
+  return { id: 'dash-' + (DASH_ID++), type: 'table', label: '', color: VIEWER_DASH_COLOR, fontScale: 1, rows: seed.map(dashMakeTableRow), x: x, y: y, w: DASH_BAR_SIZES.table.w, h: 0 };
+}
+// One display cell per row: a text channel's level, a value-label lookup for a numeric state code,
+// or the number (row decimals/unit, else the gauge's, else the standard readout format).
+// A table row may read a TEXT channel -- the whole point of the gauge -- so it resolves without the
+// text guard gaugeChannelFor applies to needle/bar gauges (which can only draw a magnitude).
+function dashTableRowChannel(r){
+  if(typeof resolveGaugeChannel !== 'function') return VIEWER_RESOLVED_ROLES[r.role] || r.channelOverride || null;
+  return resolveGaugeChannel(r, VIEWER_RESOLVED_ROLES, VIEWER_DATA && VIEWER_DATA.channels, null);
+}
+function dashTableCells(g, idx, dataX){
+  return (Array.isArray(g.rows) ? g.rows : []).map(function(r){
+    var ch = dashTableRowChannel(r);
+    if(!ch) return { text: '--', missing: true };
+    var v = valueAtCursor(ch, idx, dataX);
+    if(v == null || !isFinite(v)) return { text: '--', missing: true };
+    if(isTextChannel(ch)) return { text: formatReadoutValue(v, ch), missing: false };
+    var vl = valueLabelsForChannel(ch), vt = (vl && typeof valueLabelText === 'function') ? valueLabelText(vl, v) : null;
+    if(vt != null) return { text: vt, missing: false };
+    var dec = (r.decimals != null && isFinite(r.decimals)) ? r.decimals : ((g.decimals != null && isFinite(g.decimals)) ? g.decimals : null);
+    var text = dec != null ? v.toFixed(dec) : formatReadoutValue(v, ch);
+    var unit = r.unit != null ? r.unit : ((VIEWER_DATA && VIEWER_DATA.units) ? (VIEWER_DATA.units[ch] || '') : '');
+    return { text: text + (unit ? ' ' + unit : ''), missing: false };
+  });
+}
 function dashMakeGauge(ptype, x, y){
   if(ptype === 'scorecard'){ return (scorecardEnabled() && typeof Scorecard !== 'undefined') ? Scorecard.makeDef(x, y) : null; }
   if(ptype === 'combo') return dashMakeCombo(x, y);
+  if(ptype === 'table') return dashMakeTable(x, y);
   var ch = (ptype === 'tach' ? dashRpmChannel() : null) || dashNextChannel();
   var rng = ch ? dashRangeFor(ch) : { min:0, max:100 };
   var unit = (VIEWER_DATA && VIEWER_DATA.units && ch) ? (VIEWER_DATA.units[ch] || '') : '';
@@ -4047,7 +4114,7 @@ function dashPlaceGauge(canvas, g){
     // Bars fill an explicit box (free-resize); dials/etc. scale by unit (aspect-locked).
     el.style.removeProperty('--dlv-gauge-u');
     el.style.width = (g.w || 90) + 'px';
-    el.style.height = (g.h || 200) + 'px';
+    el.style.height = g.type === 'table' ? '' : (g.h || 200) + 'px';   // a table hugs its rows
     el.classList.toggle('dlv-bar-narrow', (g.w || 90) < DASH_BAR_NARROW_W);   // no room for scale numerals
   } else {
     el.style.setProperty('--dlv-gauge-u', (g.scale || 1) + 'px');   // sizes the WHOLE gauge, aspect intact
@@ -4091,7 +4158,7 @@ function dashMakeResizable(el, g, canvas){
         var h = dashSnap(startH + (ev.clientY - startY), freeSz);
         g.w = Math.max(40, Math.min(w, canvas.clientWidth - g.x));
         g.h = Math.max(30, Math.min(h, canvas.clientHeight - g.y));
-        el.style.width = g.w + 'px'; el.style.height = g.h + 'px';
+        el.style.width = g.w + 'px'; el.style.height = g.type === 'table' ? '' : g.h + 'px';
         el.classList.toggle('dlv-bar-narrow', g.w < DASH_BAR_NARROW_W);
         g._w = g.w; g._h = g.h;
       } else {
@@ -4204,18 +4271,18 @@ function dashAssignMenu(e, g){
     return;
   }
   var chans = (VIEWER_DATA && VIEWER_DATA.channels) ? VIEWER_DATA.channels : [];
-  var isLight = g.type === 'light';
+  var isLight = g.type === 'light', isTable = g.type === 'table';
   // Warnings (Yellow/Red at) on every gauge: dials & bars draw the band + recolour, a light IS its
   // threshold state, and a plain Number gauge -- which has no band -- recolours its digits and tints
   // its tile when tripped (see updateGaugeElement). So every type gets the warnings editor (Ken,
   // 2026-07-24: "warnings settings for number gauges").
-  var canWarn = true;
+  var canWarn = !isTable;   // a table has no single value to threshold
   var m = document.createElement('div');
   m.className = 'dlv-gmenu dlv-dash-assign';
   m.addEventListener('click', function(ev){ ev.stopPropagation(); });
   // Two columns (Ken: the single stack was too tall). LEFT = the tall channel picker, untouched.
   // RIGHT = everything else (settings / warnings / colour / park / delete) stacked beside it.
-  var chanCol =
+  var chanCol = isTable ? dashTableRowsHtml(g, chans) :
     '<div class="dlv-dash-assign-chan">' +
       // On a combo the left list assigns the MAIN (RPM) dial; the inset has its own picker on the right.
       '<h4>' + (g.type === 'combo' ? 'Main dial (RPM)' : 'Assign channel') + '</h4>' +
@@ -4230,12 +4297,14 @@ function dashAssignMenu(e, g){
       // Label, scale range (min/max), value precision, unit -- Min/Max hidden for a light (it fires off
       // its trigger values, not a range).
       '<div class="dlv-dash-thr dlv-dash-set">' +
-        '<label>Label <input type="text" class="dlv-dash-set-in" data-set="label" value="' + escapeHtml(g.label != null ? String(g.label) : '') + '"></label>' +
-        (isLight ? '' :
+        '<label>' + (isTable ? 'Header' : 'Label') + ' <input type="text" class="dlv-dash-set-in" data-set="label" value="' + escapeHtml(g.label != null ? String(g.label) : '') + '"' + (isTable ? ' placeholder="optional"' : '') + '></label>' +
+        (isLight || isTable ? '' :
           '<label>Min <input type="number" step="any" class="dlv-dash-thr-in" data-set="min" value="' + (g.min != null ? g.min : '') + '"></label>' +
           '<label>Max <input type="number" step="any" class="dlv-dash-thr-in" data-set="max" value="' + (g.max != null ? g.max : '') + '"></label>') +
-        '<label>Decimals <input type="number" min="0" max="3" step="1" class="dlv-dash-thr-in" data-set="decimals" value="' + (g.decimals != null ? g.decimals : 0) + '"></label>' +
-        '<label>Unit <input type="text" class="dlv-dash-set-in" data-set="unit" value="' + escapeHtml(g.unit != null ? String(g.unit) : '') + '"></label>' +
+        '<label>Decimals <input type="number" min="0" max="3" step="1" class="dlv-dash-thr-in" data-set="decimals" value="' + (g.decimals != null ? g.decimals : (isTable ? '' : 0)) + '"' + (isTable ? ' placeholder="auto"' : '') + '></label>' +
+        (isTable ? '' : '<label>Unit <input type="text" class="dlv-dash-set-in" data-set="unit" value="' + escapeHtml(g.unit != null ? String(g.unit) : '') + '"></label>') +
+        // Font size on every gauge (Ken, 2026-09-09: "make the font / table size adjustable").
+        '<label>Font &times; <input type="number" min="0.5" max="3" step="0.1" class="dlv-dash-thr-in" data-set="fontScale" value="' + (g.fontScale != null ? g.fontScale : 1) + '"></label>' +
       '</div>' +
       // Warnings (yellow band + redline) on every gauge that renders zones -- a plain dial or bar can
       // carry a redline too, not just the tach/light that seed one by default.
@@ -4318,9 +4387,14 @@ function dashAssignMenu(e, g){
       else if(key === 'unit'){ g.unit = inp.value; }
       else if(key === 'decimals'){
         var d = parseInt(inp.value, 10);
-        if(!isFinite(d)) d = 0;
+        if(!isFinite(d)){ if(g.type === 'table'){ g.decimals = null; inp.value = ''; dashRebuildGauge(g); return; } d = 0; }
         d = Math.max(0, Math.min(3, d));
         g.decimals = d; inp.value = d;
+      } else if(key === 'fontScale'){
+        var f = parseFloat(inp.value);
+        if(!isFinite(f)) f = 1;
+        f = Math.max(0.5, Math.min(3, Math.round(f * 10) / 10));
+        g.fontScale = f; inp.value = f;
       } else {   // min / max
         var v = parseFloat(inp.value);
         if(!isFinite(v)){ inp.value = g[key]; return; }
@@ -4374,6 +4448,7 @@ function dashAssignMenu(e, g){
       dashRebuildGauge(g);
     });
   });
+  if(isTable) wireTableRowsEditor(m, g);
   m.querySelector('[data-dash-del]').addEventListener('click', function(){ dashDelete(g); closeDashMenu(); });
   var dupBtn = m.querySelector('[data-dash-dup]');
   if(dupBtn) dupBtn.addEventListener('click', function(){ dashDuplicate(g); closeDashMenu(); });
@@ -4381,6 +4456,85 @@ function dashAssignMenu(e, g){
   if(copyBtn) copyBtn.addEventListener('click', function(){ dashCopy(g); closeDashMenu(); });
 }
 
+// ---- Table gauge: rows editor (the left column of its right-click menu) -------------------------
+// Each row picks a channel (text/state channels listed first) and a label; rows reorder and delete;
+// "Value labels" edits the code -> text map for one of the table's channels (kept per channel name,
+// shared by every readout of that channel).
+function dashTableRowsHtml(g, chans){
+  var rows = Array.isArray(g.rows) ? g.rows : (g.rows = []);
+  var texts = chans.filter(function(c){ return isTextChannel(c); }), nums = chans.filter(function(c){ return !isTextChannel(c); });
+  var one = function(sel){ return function(c){ return '<option value="' + escapeHtml(c) + '"' + (c === sel ? ' selected' : '') + '>' + escapeHtml(c) + '</option>'; }; };
+  var opts = function(sel){
+    return '<option value="">&mdash; channel &mdash;</option>' +
+      (texts.length ? '<optgroup label="Text / state">' + texts.map(one(sel)).join('') + '</optgroup>' : '') +
+      '<optgroup label="Numeric">' + nums.map(one(sel)).join('') + '</optgroup>';
+  };
+  var chList = [];
+  rows.forEach(function(r){ if(r.channelOverride && chList.indexOf(r.channelOverride) < 0) chList.push(r.channelOverride); });
+  var vlCh = chList.filter(function(c){ return !isTextChannel(c); })[0] || chList[0] || '';
+  return '<div class="dlv-dash-assign-chan dlv-dash-rows">' +
+    '<h4>Rows</h4>' +
+    '<div class="dlv-dash-rowlist">' + rows.map(function(r, i){
+      return '<div class="dlv-dash-rowedit" data-row="' + i + '">' +
+        '<select class="dlv-dash-row-ch" data-row="' + i + '" title="Channel">' + opts(r.channelOverride) + '</select>' +
+        '<input type="text" class="dlv-dash-row-label" data-row="' + i + '" placeholder="label" title="Label" value="' + escapeHtml(r.label || '') + '">' +
+        '<button type="button" class="dlv-dash-row-btn" data-row-up="' + i + '" title="Move up">&#9650;</button>' +
+        '<button type="button" class="dlv-dash-row-btn" data-row-down="' + i + '" title="Move down">&#9660;</button>' +
+        '<button type="button" class="dlv-dash-row-btn x" data-row-del="' + i + '" title="Remove row">&times;</button>' +
+      '</div>';
+    }).join('') + (rows.length ? '' : '<div class="dlv-gmenu-hint">No rows yet.</div>') + '</div>' +
+    '<button type="button" class="act clear dlv-dash-row-add" data-row-add="1">+ Add row</button>' +
+    '<div class="dlv-menu-sep"></div>' +
+    '<div class="dlv-dash-thr-h">Value labels</div>' +
+    '<div class="dlv-gmenu-hint">Number &rarr; text, one per line (SCT logs state fields as codes): <span class="mono">0 = Base / MBT</span></div>' +
+    '<select class="dlv-dash-vl-ch" title="Which channel the labels are for">' + (chList.length ? chList.map(function(c){ return '<option value="' + escapeHtml(c) + '"' + (c === vlCh ? ' selected' : '') + '>' + escapeHtml(c) + (isTextChannel(c) ? ' (already text)' : '') + '</option>'; }).join('') : '<option value="">&mdash; add a row first &mdash;</option>') + '</select>' +
+    '<textarea class="dlv-dash-vl" rows="4" spellcheck="false" placeholder="0 = Base / MBT&#10;1 = Torque Control&#10;2 = Borderline">' + escapeHtml(vlCh ? formatValueLabels(userValueLabels()[vlCh] || null) : '') + '</textarea>' +
+    '</div>';
+}
+function wireTableRowsEditor(m, g){
+  var rows = Array.isArray(g.rows) ? g.rows : (g.rows = []);
+  var rerender = function(){ dashRebuildGauge(g); };
+  // Structural changes (add / remove / reorder) re-open the menu in place so the row list matches.
+  var reopen = function(){ var rc = m.getBoundingClientRect(); closeDashMenu(); dashAssignMenu({ clientX: rc.left, clientY: rc.top }, g); };
+  m.querySelectorAll('.dlv-dash-row-ch').forEach(function(sel){
+    sel.addEventListener('change', function(){
+      var r = rows[parseInt(sel.getAttribute('data-row'), 10)];
+      if(!r) return;
+      var ch = sel.value || null;
+      r.channelOverride = ch; dashStampRole(r, ch);
+      if(ch){
+        r.label = (typeof shortChannelName === 'function') ? shortChannelName(ch) : ch;
+        var lab = m.querySelector('.dlv-dash-row-label[data-row="' + sel.getAttribute('data-row') + '"]');
+        if(lab) lab.value = r.label;
+      }
+      rerender();
+    });
+  });
+  m.querySelectorAll('.dlv-dash-row-label').forEach(function(inp){
+    inp.addEventListener('input', function(){ var r = rows[parseInt(inp.getAttribute('data-row'), 10)]; if(!r) return; r.label = inp.value; rerender(); });
+  });
+  m.querySelectorAll('[data-row-del]').forEach(function(b){ b.addEventListener('click', function(){ rows.splice(parseInt(b.getAttribute('data-row-del'), 10), 1); rerender(); reopen(); }); });
+  m.querySelectorAll('[data-row-up]').forEach(function(b){ b.addEventListener('click', function(){ var i = parseInt(b.getAttribute('data-row-up'), 10); if(i > 0){ var t = rows[i - 1]; rows[i - 1] = rows[i]; rows[i] = t; rerender(); reopen(); } }); });
+  m.querySelectorAll('[data-row-down]').forEach(function(b){ b.addEventListener('click', function(){ var i = parseInt(b.getAttribute('data-row-down'), 10); if(i < rows.length - 1){ var t = rows[i + 1]; rows[i + 1] = rows[i]; rows[i] = t; rerender(); reopen(); } }); });
+  var add = m.querySelector('[data-row-add]');
+  if(add) add.addEventListener('click', function(){
+    var used = {}; rows.forEach(function(r){ if(r.channelOverride) used[r.channelOverride] = 1; });
+    var pick = dashTextChannels().filter(function(c){ return !used[c]; })[0] || dashNumericChannels().filter(function(c){ return !used[c]; })[0] || null;
+    rows.push(dashMakeTableRow(pick)); rerender(); reopen();
+  });
+  var vlCh = m.querySelector('.dlv-dash-vl-ch'), vlTa = m.querySelector('.dlv-dash-vl');
+  if(vlCh && vlTa){
+    vlCh.addEventListener('change', function(){ vlTa.value = formatValueLabels(userValueLabels()[vlCh.value] || null); });
+    vlTa.addEventListener('change', function(){
+      var ch = vlCh.value;
+      if(!ch) return;
+      var map = parseValueLabels(vlTa.value);
+      setUserValueLabels(ch, map);
+      if(VIEWER_DATA){ updateDashGauges(VIEWER_DATA.time.length - 1); updateAtCursor(VIEWER_CURSOR_TIME); }
+      if(window.showToast) showToast(map ? 'Value labels saved for ' + ch : 'Value labels cleared for ' + ch);
+    });
+  }
+}
 // Rebuild one gauge element in place (its ticks/labels/zones/redline are baked in at build time).
 function dashRebuildGauge(g){
   var canvas = document.getElementById('dlvDashCanvas');
@@ -4494,6 +4648,7 @@ function updateDashGauges(idx, dataX){
     var el = VIEWER_DASH_ELS[g.id];
     if(!el) return;
     if(g.type === 'scorecard') return;   // evaluated over a range, not updated per-cursor (see evaluateDashScorecards)
+    if(g.type === 'table'){ updateGaugeElement(el, g, dashTableCells(g, idx, dataX)); return; }
     var ch = gaugeChannelFor(g);
     var val = ch ? valueAtCursor(ch, idx, dataX) : null;
     // Combo gauges carry a second (inset) channel -- resolve + pass its value too.

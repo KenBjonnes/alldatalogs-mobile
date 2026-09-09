@@ -965,6 +965,7 @@ table.dlv-channel-table tbody tr.dlv-row-selected{background:rgba(209,19,46,0.06
 .dash-ico-vertical-bar{width:9px;height:18px;}
 .dash-ico-horizontal-bar{width:18px;height:9px;}
 .dash-ico-digital{height:12px;border-radius:3px;}
+.dash-ico-table{height:14px;border-radius:2px;background:repeating-linear-gradient(180deg, transparent 0 3px, currentColor 3px 4px);}
 .dash-ico-light{border-radius:50%;background:#22c55e;border-color:rgba(255,255,255,.35);box-shadow:0 0 6px #22c55e;}
 /* Combo = round (red, tach-like) with a small inset ring at the bottom-right: a gauge-in-a-gauge. */
 .dash-ico-combo{border-radius:50%;border-color:#d1132e;position:relative;}
@@ -1057,6 +1058,31 @@ button.dlv-dash-paste:hover{border-color:var(--amber, #f5a623);}
 
 /* number cards */
 .pbd-number-box{border-left:3px solid;border-radius:7px;background:var(--bg-elev, #111114);padding:6px 10px;min-width:100px;}
+/* ---- Table gauge: label | value rows (state / "Source" fields). Width from the designer, height
+   hugs the rows; both columns size from the gauge's fontScale. ------------------------------------ */
+.pbd-table-box{border-left:3px solid;border-radius:7px;background:var(--bg-elev, #111114);padding:3px 0;width:100%;box-sizing:border-box;min-width:120px;}
+.pbd-table-head{color:var(--text-dim, #9a9aa2);text-transform:uppercase;letter-spacing:.6px;font-weight:800;padding:3px 10px 4px;border-bottom:1px solid var(--card-border, #26262c);}
+.pbd-table-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:3px 10px;border-bottom:1px solid rgba(255,255,255,.06);}
+.pbd-table-row:last-child{border-bottom:none;}
+.pbd-table-label{color:var(--text-dim, #9a9aa2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+.pbd-table-value{font-weight:800;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;flex-shrink:0;max-width:70%;overflow:hidden;text-overflow:ellipsis;}
+.pbd-table-value.missing{color:var(--text-faint, #5c5c66) !important;font-weight:600;}
+.pbd-table-empty{color:var(--text-faint, #5c5c66);padding:6px 10px;}
+.dlv-dash-gauge.pbd-gauge-table{height:auto;}
+/* rows editor inside the table gauge's right-click menu */
+.dlv-dash-rows{min-width:320px;}
+.dlv-dash-rowlist{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow:auto;padding-right:2px;}
+.dlv-dash-rowedit{display:flex;align-items:center;gap:4px;}
+.dlv-dash-rowedit select,.dlv-dash-rowedit input,.dlv-dash-vl-ch{background:#0b0b0e;color:var(--text, #f2f2f4);border:1px solid var(--card-border, #26262c);border-radius:5px;font-size:11px;padding:3px 5px;min-width:0;}
+.dlv-dash-rowedit select{flex:1 1 130px;}
+.dlv-dash-rowedit input{flex:0 1 88px;}
+.dlv-dash-row-btn{width:22px;height:22px;flex-shrink:0;padding:0;border:1px solid var(--card-border, #26262c);background:transparent;color:var(--text-dim, #9a9aa2);border-radius:4px;cursor:pointer;font-size:9px;line-height:1;}
+.dlv-dash-row-btn.x{font-size:14px;}
+.dlv-dash-row-btn:hover{color:var(--text, #f2f2f4);border-color:var(--red, #d1132e);}
+.dlv-dash-row-add{margin-top:6px;}
+.dlv-dash-vl-ch{width:100%;margin-top:4px;}
+.dlv-dash-vl{width:100%;box-sizing:border-box;font-family:ui-monospace,Consolas,monospace;font-size:11px;background:#0b0b0e;color:var(--text, #f2f2f4);border:1px solid var(--card-border, #26262c);border-radius:5px;padding:5px 7px;margin-top:4px;resize:vertical;}
+.dlv-dash-rows .mono{font-family:ui-monospace,Consolas,monospace;color:var(--amber, #f5a623);}
 .pbd-number-label{color:var(--text-dim, #9a9aa2);text-transform:uppercase;}
 .pbd-number-value{font-weight:800;font-variant-numeric:tabular-nums;}
 /* 'digital' gauges (ECT / MCT): square, big number, no needle. Sized in gauge units like the dials
