@@ -947,12 +947,15 @@
   // ===============================================================================================
   var THROTTLE_DEFAULTS = {
     wotPedalMin: 95, wotThrottleMin: 85, settleSec: 0.3,
+    closureOnEcoBoost: false,   // Ken 2026-09-09: on EcoBoost the blade IS a boost / torque control actuator, so a
+                                // part-open blade at WOT is normal and not a criterion (tracking still scored)
     closurePerPct: 0.8, closurePenaltyMax: 50, deepClosurePct: 70,
     trackPedalMin: 5, trackPedalMax: 70, trackBoostMax: 1, trackTolPct: 15, trackPerPct: 2, trackPenaltyMax: 25,
     rpmFloor: 900, minSamples: 20
   };
   var THROTTLE_META = {
     wotPedalMin: ['Flat pedal', '%', 'Pedal at/above this = wide open'], wotThrottleMin: ['Blade open enough', '%', 'Throttle below this with the pedal flat = closure'], settleSec: ['Settle', 's', 'Blade travel time after the pedal goes down'],
+    closureOnEcoBoost: ['Judge closure on EcoBoost', '', 'Off: EcoBoost uses the blade for boost / torque control, so closure at WOT is normal and not scored'],
     closurePerPct: ['Points per % of WOT time closed', 'pts'], closurePenaltyMax: ['Closure penalty cap', 'pts'], deepClosurePct: ['Deep closure below', '%', 'Critical when the blade falls under this at WOT'],
     trackPedalMin: ['Tracking band low', '% pedal'], trackPedalMax: ['Tracking band high', '% pedal'], trackBoostMax: ['Tracking only below', 'psi', 'Off boost the blade should follow the pedal'],
     trackTolPct: ['Tracking error free', '%', '95th percentile |throttle − pedal|'], trackPerPct: ['Points per % error', 'pts'], trackPenaltyMax: ['Tracking penalty cap', 'pts'],
@@ -964,6 +967,8 @@
     if (!thr) return notEval('Throttle position not logged.');
     if (!ped) return notEval('Accelerator pedal not logged — the blade cannot be judged against driver demand.', 'Throttle Control compares the throttle blade with the pedal; log Accelerator Pedal Position.');
     var N = thr.length, boost = ctx.rangeSeries('boost_pressure'), rpm = ctx.rangeSeries('engine_rpm');
+    // EcoBoost (card Type): the blade closes under boost by design -- closure is reported, never penalised
+    var isEco = !!(ctx.profile && ctx.profile.induction === 'eco'), judgeClosure = !(isEco && !s.closureOnEcoBoost);
     function flat(i) { return fin(ped[i]) && fin(thr[i]) && ped[i] >= s.wotPedalMin && rpmFloorOk(rpm, i, s.rpmFloor); }
     var runs = runsWhere(N, flat, R.absT, s.settleSec, 0).filter(function (r) { return !r.brief; });
     var settled = 0, closed = 0, deep = 0, worstI = -1, closedRuns = 0, i;
@@ -976,9 +981,14 @@
       errs.push(Math.abs(thr[i] - ped[i])); errI.push(i);
     }
     if (!settled && errs.length < s.minSamples) return notEval('Neither a flat-pedal run nor enough part-throttle driving in range.', 'Throttle Control needs flat-pedal runs or part-throttle driving off boost.');
+    if (!judgeClosure && errs.length < s.minSamples) return notEval('Blade closure at WOT is not scored on EcoBoost (boost / torque control), and there is not enough part-throttle driving off boost to judge tracking.', 'Throttle Control on EcoBoost scores part-throttle tracking only; none found here.');
     var evidence = [], details = [], warnings = [], penalties = 0;
     var closedPct = settled ? closed / settled * 100 : 0;
-    if (settled) {
+    if (settled && !judgeClosure) {
+      // informational only
+      details.push({ label: 'Flat-pedal time', value: grp(settled) + ' samples over ' + runs.length + ' run' + (runs.length === 1 ? '' : 's') });
+      details.push({ label: 'Blade at WOT', value: 'not scored on EcoBoost (boost / torque control); lowest ' + round1(thr[worstI]) + ' %', time: R.absT(worstI) });
+    } else if (settled) {
       var closurePen = Math.min(s.closurePenaltyMax, closedPct * s.closurePerPct);
       penalties += closurePen;
       if (closurePen > 0) {
@@ -1000,14 +1010,17 @@
     } else warnings.push('Not enough part-throttle driving off boost to judge tracking.');
     var score = fClamp(100 - penalties);
     if (!boost) warnings.push('Boost not logged — tracking judged on all part-throttle samples.');
-    var summary = settled
-      ? (closedPct <= 5 ? 'Blade stays open with the pedal flat' : closedPct <= 30 ? 'Blade closes at WOT some of the time' : 'Blade closes at WOT most of the time') + ' (lowest ' + round1(thr[worstI]) + ' %' + (deep ? ', torque / boost limiting' : '') + ').'
-      : 'Part-throttle tracking only (no flat-pedal run).';
+    var trackTxt = errs.length >= s.minSamples ? (penalties > 0 && !settled ? 'Blade does not follow the pedal at part throttle.' : 'Blade follows the pedal at part throttle.') : '';
+    var summary = !judgeClosure
+      ? (trackTxt || 'Part-throttle tracking only.') + ' WOT closure not scored on EcoBoost (boost / torque control).'
+      : settled
+        ? (closedPct <= 5 ? 'Blade stays open with the pedal flat' : closedPct <= 30 ? 'Blade closes at WOT some of the time' : 'Blade closes at WOT most of the time') + ' (lowest ' + round1(thr[worstI]) + ' %' + (deep ? ', torque / boost limiting' : '') + ').'
+        : 'Part-throttle tracking only (no flat-pedal run).';
     return { score: score, confidence: Math.min(1, (settled + errs.length) / (s.minSamples * 5)), summary: summary, details: details, evidence: evidence, warnings: warnings, evaluatedSampleCount: settled + errs.length, evaluatedTimeRange: R.range };
   }
   SC.registerEvaluator({
     id: 'throttle', name: 'Throttle Control', status: 'experimental', evaluatorVersion: '0.9.0',
-    description: 'Throttle blade vs pedal: closure at wide-open pedal (torque / boost limiting) and part-throttle tracking off boost.',
+    description: 'Throttle blade vs pedal: closure at wide-open pedal (torque / boost limiting; not scored on EcoBoost) and part-throttle tracking off boost.',
     requiredChannels: [{ role: 'throttle_position', label: 'Throttle Position' }, { role: 'accelerator_pedal_position', label: 'Accelerator Pedal' }],
     optionalChannels: [{ role: 'boost_pressure' }, { role: 'engine_rpm' }],
     defaultSettings: extend(THROTTLE_DEFAULTS, null), settingsMeta: THROTTLE_META, evaluate: computeThrottle

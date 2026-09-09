@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-09-09T12:21:18.805Z",
+  "builtAt": "2026-09-09T12:36:33.956Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
     "siteRepo": "C:/websites/Alldatalogs",
-    "siteCommit": "1af378b"
+    "siteCommit": "9705836"
   },
   "files": {
     "viewer-engine/datalog-viewer.css": {
@@ -38,8 +38,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-scorecard.js"
     },
     "viewer-engine/datalog-scorecard-evaluators.js": {
-      "sha256": "42cdf65ee2553149e4123061d32c70ef0d207ae0a5011ac40e4d3d24a3bad5a0",
-      "bytes": 109334,
+      "sha256": "698824c5d2bf83f1d71a7808e1df4c523d0e1c77e788e41cb2fab16797c15429",
+      "bytes": 110987,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-scorecard-evaluators.js"
     },
     "viewer-engine/datalog-expr.js": {
