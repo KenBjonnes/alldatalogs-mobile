@@ -29,7 +29,7 @@
   'use strict';
 
   /** Bump when the persisted scorecard def shape changes; migrateDef() upgrades older defs. */
-  var SCORECARD_SCHEMA_VERSION = 2;   // v2 (2026-09-09): def.profile { induction, fuel } -- the card's two pulldowns
+  var SCORECARD_SCHEMA_VERSION = 3;   // v2 (2026-09-09): def.profile { induction, fuel }; v3: + fuelSystem (return / returnless)
   var MAX_CATEGORIES = 10;
 
   // ------------------------------------------------------------------------------------------------
@@ -242,6 +242,32 @@
   // ================================================================================================
   var INDUCTIONS = [['na', 'NA'], ['fi', 'Forced induction'], ['eco', 'EcoBoost']];
   var FUELS = [['pump', 'Pump gas'], ['e', 'Ethanol / E-mix'], ['race', 'Race gas']];
+  // Fuel system (Ken, 2026-09-09): a RETURN system holds a constant pressure drop across the injector
+  // (rail minus manifold, set by a vacuum-referenced regulator), so that delta-P is what Fuel Pressure
+  // checks; a returnless / PCM-controlled rail is checked against its desired pressure instead.
+  var FUEL_SYSTEMS = [['returnless', 'Returnless'], ['return', 'Return (regulator)']];
+  function fuelSystemLabel(id) { for (var i = 0; i < FUEL_SYSTEMS.length; i++) if (FUEL_SYSTEMS[i][0] === id) return FUEL_SYSTEMS[i][1]; return id; }
+  function normFuelSystem(v) { v = String(v || '').toLowerCase(); return v === 'return' || v === 'returnless' ? v : null; }
+  function detectFuelSystem(shared) {
+    var fp = shared.roles.fuel_pressure;
+    if (!fp) return { id: 'returnless', source: 'no fuel pressure channel' };
+    if (shared.roles.desired_fuel_pressure) return { id: 'returnless', source: 'desired fuel pressure is logged (PCM-controlled rail)' };
+    var st = shared.stats[fp], s = shared.data.series[fp];
+    if (st && isFinite(st.avg) && st.avg > 150) return { id: 'returnless', source: 'direct-injection rail pressure' };
+    var mapCh = shared.roles.boost_pressure || shared.roles.manifold_absolute_pressure, m = mapCh ? shared.data.series[mapCh] : null;
+    if (s && m) {
+      // rail pressure that rises and falls with manifold pressure = a vacuum-referenced regulator
+      var n = Math.min(s.length, m.length), sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, c = 0, lo = Infinity, hi = -Infinity, i;
+      for (i = 0; i < n; i++) { var a = s[i], b = m[i]; if (a == null || b == null || !isFinite(a) || !isFinite(b)) continue; sx += a; sy += b; sxx += a * a; syy += b * b; sxy += a * b; c++; if (a < lo) lo = a; if (a > hi) hi = a; }
+      if (c > 50 && hi - lo >= 3) {
+        var cov = sxy / c - (sx / c) * (sy / c), vx = sxx / c - (sx / c) * (sx / c), vy = syy / c - (sy / c) * (sy / c);
+        var r = vx > 0 && vy > 0 ? cov / Math.sqrt(vx * vy) : 0;
+        if (r > 0.6) return { id: 'return', source: 'rail pressure tracks manifold pressure (r ' + (Math.round(r * 100) / 100) + ')' };
+      }
+      return { id: 'returnless', source: 'rail pressure does not follow manifold pressure' };
+    }
+    return { id: 'returnless', source: 'default (no manifold pressure to compare)' };
+  }
   function inductionLabel(id) { for (var i = 0; i < INDUCTIONS.length; i++) if (INDUCTIONS[i][0] === id) return INDUCTIONS[i][1]; return id; }
   function fuelLabel(id) { for (var i = 0; i < FUELS.length; i++) if (FUELS[i][0] === id) return FUELS[i][1]; return id; }
   function normInduction(v) { v = String(v || '').toLowerCase(); return v === 'ecoboost' ? 'eco' : (v === 'na' || v === 'fi' || v === 'eco') ? v : null; }
@@ -285,13 +311,13 @@
   /** The profile the evaluators use: user choice when fixed, detection when 'auto'. */
   function resolveProfile(choice, shared) {
     choice = choice || {};
-    var wantI = normInduction(choice.induction), wantF = normFuel(choice.fuel);
-    var detI = detectInduction(shared), detF = detectFuel(shared);
+    var wantI = normInduction(choice.induction), wantF = normFuel(choice.fuel), wantS = normFuelSystem(choice.fuelSystem);
+    var detI = detectInduction(shared), detF = detectFuel(shared), detS = detectFuelSystem(shared);
     return {
-      induction: wantI || detI.id, fuel: wantF || detF.id,
-      inductionAuto: !wantI, fuelAuto: !wantF,
-      detected: { induction: detI.id, inductionSource: detI.source, fuel: detF.id, fuelSource: detF.source },
-      inductionLabel: inductionLabel(wantI || detI.id), fuelLabel: fuelLabel(wantF || detF.id)
+      induction: wantI || detI.id, fuel: wantF || detF.id, fuelSystem: wantS || detS.id,
+      inductionAuto: !wantI, fuelAuto: !wantF, fuelSystemAuto: !wantS,
+      detected: { induction: detI.id, inductionSource: detI.source, fuel: detF.id, fuelSource: detF.source, fuelSystem: detS.id, fuelSystemSource: detS.source },
+      inductionLabel: inductionLabel(wantI || detI.id), fuelLabel: fuelLabel(wantF || detF.id), fuelSystemLabel: fuelSystemLabel(wantS || detS.id)
     };
   }
   /**
@@ -467,7 +493,7 @@
       },
       overall: { enabled: true, mode: 'weighted' },
       range: { mode: 'entire' }, // entire | visible | selection | auto
-      profile: { induction: 'auto', fuel: 'auto' },   // the card's pulldowns: NA / FI / EcoBoost, pump / ethanol / race
+      profile: { induction: 'auto', fuel: 'auto', fuelSystem: 'auto' },   // the card's pulldowns: NA / FI / EcoBoost, pump / ethanol / race, returnless / return
       categories: recommendedCategories()
     };
   }
@@ -516,7 +542,7 @@
     clampScore: clampScore, roundScore: roundScore, statusForScore: statusForScore, statusMetaById: statusMetaById,
     computeOverall: computeOverall, registerEvaluator: registerEvaluator, getEvaluator: getEvaluator,
     listEvaluators: listEvaluators, evaluateCategory: evaluateCategory, runScorecard: runScorecard,
-    resolveProfile: resolveProfile, detectInduction: detectInduction, detectFuel: detectFuel, INDUCTIONS: INDUCTIONS, FUELS: FUELS,
+    resolveProfile: resolveProfile, detectInduction: detectInduction, detectFuel: detectFuel, detectFuelSystem: detectFuelSystem, INDUCTIONS: INDUCTIONS, FUELS: FUELS, FUEL_SYSTEMS: FUEL_SYSTEMS,
     setHost: function (host) { HOST = host || {}; },
     buildSharedContext: buildSharedContext, notEvaluated: notEvaluated,
     makeDef: makeDef, migrateDef: migrateDef, makeCategory: makeCategory, recommendedCategories: recommendedCategories,
@@ -679,20 +705,21 @@
     // The two pulldowns under the header: what the evaluators assume about the car and its fuel.
     // "Auto (EcoBoost)" shows what was detected; picking a fixed value overrides it for this card.
     function profileHtml(def, run) {
-      var p = def.profile || { induction: 'auto', fuel: 'auto' }, res = run && run.profile;
+      var p = def.profile || { induction: 'auto', fuel: 'auto', fuelSystem: 'auto' }, res = run && run.profile;
       var sel = function (key, list, chosen, detectedId, detectedSource, labelOf) {
         var auto = normStr(chosen) === 'auto' || !chosen;
         var opts = '<option value="auto"' + (auto ? ' selected' : '') + '>Auto' + (detectedId ? ' (' + esc(labelOf(detectedId)) + ')' : '') + '</option>' +
           list.map(function (o) { return '<option value="' + o[0] + '"' + (!auto && normStr(chosen) === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('');
-        var title = key === 'induction' ? 'Engine type: sets the WOT lambda target' : 'Fuel: sets the WOT lambda target';
+        var title = key === 'induction' ? 'Engine type: sets the WOT lambda target' : key === 'fuel' ? 'Fuel: sets the WOT lambda target' : 'Fuel system: Return checks the pressure drop across the injector (rail minus manifold); Returnless checks the rail against its desired pressure';
         if (detectedSource) title += ' — detected from ' + detectedSource;
-        return '<label class="dlv-sc-pf"><span>' + (key === 'induction' ? 'Type' : 'Fuel') + '</span><select data-sc-profile="' + key + '" title="' + esc(title) + '">' + opts + '</select></label>';
+        return '<label class="dlv-sc-pf"><span>' + (key === 'induction' ? 'Type' : key === 'fuel' ? 'Fuel' : 'Fuel sys') + '</span><select data-sc-profile="' + key + '" title="' + esc(title) + '">' + opts + '</select></label>';
       };
       var det = res ? res.detected : null;
       return '<div class="dlv-sc-profile">' +
         sel('induction', INDUCTIONS, normInduction(p.induction) || (p.induction === 'auto' ? 'auto' : p.induction), det ? det.induction : null, det ? det.inductionSource : null, inductionLabel) +
         sel('fuel', FUELS, normFuel(p.fuel) || (p.fuel === 'auto' ? 'auto' : p.fuel), det ? det.fuel : null, det ? det.fuelSource : null, fuelLabel) +
-        (res ? '<span class="dlv-sc-pf-note" title="WOT lambda target in use">' + esc(res.inductionLabel) + ' · ' + esc(res.fuelLabel) + '</span>' : '') +
+        sel('fuelSystem', FUEL_SYSTEMS, normFuelSystem(p.fuelSystem) || 'auto', det ? det.fuelSystem : null, det ? det.fuelSystemSource : null, fuelSystemLabel) +
+        (res ? '<span class="dlv-sc-pf-note" title="WOT lambda target and fuel-system check in use">' + esc(res.inductionLabel) + ' · ' + esc(res.fuelLabel) + ' · ' + esc(res.fuelSystemLabel) + '</span>' : '') +
         '</div>';
     }
     function normStr(v) { return String(v == null ? '' : v).toLowerCase(); }
@@ -714,6 +741,14 @@
       run.results.forEach(function (r) {
         html += rowHtml(r, catById[r.categoryId] || { label: r.categoryId }, d, prec, thresholds);
       });
+      // Categories switched off stay visible, dimmed, so they can be switched back on from the card
+      // (Ken, 2026-09-09: "each one needs a toggle to turn it off").
+      (def.categories || []).filter(function (c) { return !c.enabled; }).sort(function (a, b) { return (a.order || 0) - (b.order || 0); }).forEach(function (c) {
+        html += '<div class="dlv-sc-row dlv-sc-off" role="row" aria-label="' + esc(c.label) + ': off">' +
+          '<span class="dlv-sc-cat" role="cell">' + esc(c.shortLabel || c.label) + '</span>' +
+          '<span class="dlv-sc-score" role="cell"><b>—</b></span>' +
+          '<span class="dlv-sc-status" role="cell">off' + switchHtml(c) + '</span></div>';
+      });
       html += '</div>';
       // Footer only when the Overall (which already shows the count) is hidden -- no duplicate row.
       var ovShown = run.overall && d.showOverall !== false && def.overall && def.overall.enabled !== false;
@@ -721,14 +756,32 @@
       card.innerHTML = html;
       wireDetails(card);
       wireProfile(card, def);
+      wireToggles(card, def);
     };
+    function switchHtml(cat) {
+      return '<button type="button" class="dlv-sc-sw' + (cat.enabled ? ' on' : '') + '" role="switch" aria-checked="' + (cat.enabled ? 'true' : 'false') + '" data-sc-toggle="' + esc(cat.id) + '" title="' + (cat.enabled ? 'Turn this category off' : 'Turn this category on') + '"><span class="dlv-sc-sw-knob"></span></button>';
+    }
+    function wireToggles(card, def) {
+      card.querySelectorAll('[data-sc-toggle]').forEach(function (b) {
+        b.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+        b.addEventListener('click', function (e) {
+          e.stopPropagation(); e.preventDefault();
+          var id = b.getAttribute('data-sc-toggle'), cat = (def.categories || []).filter(function (c) { return c.id === id; })[0];
+          if (!cat) return;
+          if (!cat.enabled && enabledCount(def) >= MAX_CATEGORIES) { alertOnce('Up to ' + MAX_CATEGORIES + ' enabled categories.'); return; }
+          cat.enabled = !cat.enabled;
+          def.scHubVersion = SCORECARD_SCHEMA_VERSION;
+          if (HOST && typeof HOST.onDefChanged === 'function') HOST.onDefChanged(def);
+        });
+      });
+    }
     function wireProfile(card, def) {
       card.querySelectorAll('[data-sc-profile]').forEach(function (sel) {
         sel.addEventListener('mousedown', function (e) { e.stopPropagation(); });   // never starts a dash drag
         sel.addEventListener('click', function (e) { e.stopPropagation(); });
         sel.addEventListener('change', function (e) {
           e.stopPropagation();
-          if (!def.profile) def.profile = { induction: 'auto', fuel: 'auto' };
+          if (!def.profile) def.profile = { induction: 'auto', fuel: 'auto', fuelSystem: 'auto' };
           def.profile[sel.getAttribute('data-sc-profile')] = sel.value;
           def.scHubVersion = SCORECARD_SCHEMA_VERSION;
           if (HOST && typeof HOST.onDefChanged === 'function') HOST.onDefChanged(def);
@@ -753,7 +806,8 @@
         '<span class="dlv-sc-status" role="cell" style="color:' + m.color + '">' +
         '<span class="dlv-sc-dot" style="background:' + m.color + '" aria-hidden="true"></span>' +
         (d.showStatusLabels !== false ? esc(m.status) : '') +
-        (expandable ? '<span class="dlv-sc-caret" aria-hidden="true">›</span>' : '') + '</span>' +
+        (expandable ? '<span class="dlv-sc-caret" aria-hidden="true">›</span>' : '') +
+        (cat.id ? switchHtml(cat) : '') + '</span>' +
         (expandable ? detailHtml(r) : '') + '</div>';
     }
 
@@ -797,6 +851,7 @@
           row.classList.toggle('open', !open);
         }
         row.addEventListener('click', function (e) {
+          if (e.target.closest('[data-sc-toggle]')) return;   // the on/off switch handles itself
           var go = e.target.closest('[data-sc-go]');
           if (go) { e.stopPropagation(); e.preventDefault(); goTo(go); return; }
           if (!e.target.closest('a')) toggle();
@@ -989,5 +1044,6 @@
     }
     var _alerted = false;
     function alertOnce(msg) { if (!_alerted && global.alert) { global.alert(msg); } }
+    SC._alertOnce = alertOnce;
   }
 })(typeof window !== 'undefined' ? window : globalThis);

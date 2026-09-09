@@ -764,9 +764,14 @@
     noiseTolPct: 3, noisePerPct: 3, noisePenaltyMax: 20,
     dropTolPct: 10, dropPerPct: 3, dropPenaltyMax: 60,
     minPressure: 0, minPressurePoints: 30,
+    // RETURN-style system (card Fuel sys = Return): the check is delta-P = rail minus manifold pressure
+    dpTolPsi: 3, dpPerPsi: 5, dpPenaltyMax: 50,          // 95th-percentile deviation from the delta-P set point
+    dpSagTolPsi: 2, dpSagPerPsi: 8, dpSagPenaltyMax: 60, // delta-P falling short under demand (pump / regulator)
     minSamples: 20
   };
   var FUELP_META = {
+    dpTolPsi: ['Delta-P spread free', 'psi', 'Return system: rail minus manifold, 95th percentile deviation from the set point'], dpPerPsi: ['Points per psi delta-P spread', 'pts'], dpPenaltyMax: ['Delta-P spread cap', 'pts'],
+    dpSagTolPsi: ['Delta-P sag free', 'psi', 'Return system: set point minus delta-P under demand'], dpSagPerPsi: ['Points per psi delta-P sag', 'pts'], dpSagPenaltyMax: ['Delta-P sag cap', 'pts'],
     demandMin: ['Demand threshold', '%', 'Pedal / throttle at/above this = under demand'], baselineDemandMax: ['Baseline below', '% demand', 'Idle / cruise samples that set the baseline (no desired channel)'], rpmFloor: ['RPM floor', 'rpm'], settleSec: ['Settle', 's'],
     sagTolPct: ['Sag free', '% of desired'], sagPerPct: ['Points per % sag', 'pts'], sagPenaltyMax: ['Sag penalty cap', 'pts'],
     overTolPct: ['Overshoot free', '% of desired'], overPerPct: ['Points per % over', 'pts'], overPenaltyMax: ['Overshoot penalty cap', 'pts'],
@@ -775,9 +780,55 @@
     minPressure: ['Hard floor', 'log unit', '0 = off. Below this under demand is critical'], minPressurePoints: ['Hard-floor penalty', 'pts'],
     minSamples: ['Minimum samples', '', 'Fewer demand samples = low confidence']
   };
+  /** Manifold pressure as GAUGE psi: the boost channel when logged, else MAP minus baro (or minus 14.7). */
+  function manifoldGauge(ctx) {
+    var boost = ctx.rangeSeries('boost_pressure');
+    if (boost) return { series: boost, name: ctx.channelFor('boost_pressure'), assumedBaro: false };
+    var map = ctx.rangeSeries('manifold_absolute_pressure'); if (!map) return null;
+    var baro = ctx.rangeSeries('barometric_pressure'), out = new Float64Array(map.length), i;
+    for (i = 0; i < map.length; i++) { var b = baro && fin(baro[i]) ? baro[i] : 14.7; out[i] = fin(map[i]) ? map[i] - b : NaN; }
+    return { series: out, name: ctx.channelFor('manifold_absolute_pressure') + (baro ? ' − ' + ctx.channelFor('barometric_pressure') : ' − 14.7 psi'), assumedBaro: !baro };
+  }
+  // Return-style fuel system: a vacuum-referenced regulator holds a constant pressure DROP across the
+  // injector, so rail minus manifold should sit on one set point everywhere. Spread from it = the
+  // regulator wandering; delta-P falling short under demand = the pump not keeping up.
+  function computeFuelPressureReturn(ctx, s, R) {
+    var fp = ctx.rangeSeries('fuel_pressure'), N = fp.length, rpm = ctx.rangeSeries('engine_rpm'), dem = demandSeries(ctx), unit = ctx.unitFor('fuel_pressure') || 'psi';
+    var mg = manifoldGauge(ctx);
+    if (!mg) return notEval('A return-style fuel system is checked by the pressure drop across the injector (rail minus manifold), and this log has no manifold or boost pressure. Turn this category off for this car, or set Fuel system to Returnless.', 'Fuel Pressure (return) needs MAP or boost pressure alongside rail pressure.');
+    var dp = [], idx = [], i, k;
+    for (i = 0; i < N; i++) { if (!fin(fp[i]) || !fin(mg.series[i]) || !rpmFloorOk(rpm, i, s.rpmFloor)) continue; dp.push(fp[i] - mg.series[i]); idx.push(i); }
+    if (dp.length < s.minSamples) return notEval('Too few samples with both rail and manifold pressure above ' + s.rpmFloor + ' rpm.');
+    var set = pct(dp.slice().sort(fAsc), 0.5);
+    var devI = -1, devMax = -1, devs = [];
+    for (k = 0; k < dp.length; k++) { var dv = Math.abs(dp[k] - set); devs.push(dv); if (dv > devMax) { devMax = dv; devI = idx[k]; } }
+    var p95 = pct(devs.slice().sort(fAsc), 0.95);
+    var spreadPen = Math.min(s.dpPenaltyMax, Math.max(0, p95 - s.dpTolPsi) * s.dpPerPsi);
+    var sag = [], sagI = -1, sagWorst = -Infinity, demN = 0;
+    for (k = 0; k < dp.length; k++) { i = idx[k]; var d = dem.at(i); if (d != null && d < s.demandMin) continue; demN++; var sv = set - dp[k]; sag.push(sv); if (sv > sagWorst) { sagWorst = sv; sagI = i; } }
+    var sagP95 = sag.length ? pct(sag.slice().sort(fAsc), 0.95) : 0;
+    var sagPen = Math.min(s.dpSagPenaltyMax, Math.max(0, sagP95 - s.dpSagTolPsi) * s.dpSagPerPsi);
+    var score = fClamp(100 - spreadPen - sagPen), evidence = [], warnings = [];
+    if (sagPen > 0 && sagI >= 0) evidence.push({ startTime: R.absT(sagI), peakTime: R.absT(sagI), severity: sagP95 > s.dpSagTolPsi * 3 ? 'critical' : 'warning',
+      label: 'Delta-P falls under demand', message: 'Rail minus manifold down to ' + round1(set - sagWorst) + ' ' + unit + ' vs the ' + round1(set) + ' ' + unit + ' set point (95th pct short by ' + round1(sagP95) + ')', values: { sagPsi: round1(sagP95), setPoint: round1(set) } });
+    if (spreadPen > 0 && devI >= 0) evidence.push({ startTime: R.absT(devI), peakTime: R.absT(devI), severity: p95 > s.dpTolPsi * 3 ? 'critical' : 'warning',
+      label: 'Delta-P wanders', message: 'Rail minus manifold strays ' + round1(devMax) + ' ' + unit + ' from the set point at worst (95th pct ' + round1(p95) + ')', values: { spreadPsi: round1(p95) } });
+    var details = [
+      { label: 'Fuel system', value: 'Return (regulator): checking rail minus manifold' },
+      { label: 'Delta-P set point', value: round1(set) + ' ' + unit + ' (median over ' + grp(dp.length) + ' samples)' },
+      { label: 'Delta-P spread (95th pct)', value: round1(p95) + ' ' + unit + ', worst ' + round1(devMax), time: devI >= 0 ? R.absT(devI) : null },
+      { label: 'Under demand', value: demN ? 'short by ' + round1(sagP95) + ' ' + unit + ' at the 95th pct (' + grp(demN) + ' samples)' : 'no demand samples', time: sagI >= 0 ? R.absT(sagI) : null },
+      { label: 'Manifold reference', value: mg.name }
+    ];
+    if (mg.assumedBaro) warnings.push('No barometric pressure channel — MAP referenced to 14.7 psi.');
+    if (!dem.source) warnings.push('No pedal / throttle / load — every above-idle sample treated as demand.');
+    var summary = (score >= 90 ? 'Delta-P holds' : score >= 70 ? 'Delta-P wanders a little' : 'Delta-P is not holding') + ' — ' + round1(set) + ' ' + unit + ' across the injector' + (sagPen > 0 ? ', short by ' + round1(sagP95) + ' under demand' : '') + '.';
+    return { score: score, confidence: Math.min(1, dp.length / (s.minSamples * 3)), summary: summary, details: details, evidence: evidence, warnings: warnings, evaluatedSampleCount: dp.length, evaluatedTimeRange: R.range };
+  }
   function computeFuelPressure(ctx) {
     var s = extend(FUELP_DEFAULTS, ctx.settings), R = rangeOf(ctx);
     var fp = ctx.rangeSeries('fuel_pressure'); if (!fp) return notEval('Fuel pressure not logged.');
+    if (ctx.profile && ctx.profile.fuelSystem === 'return') return computeFuelPressureReturn(ctx, s, R);
     var N = fp.length, des = ctx.rangeSeries('desired_fuel_pressure'), rpm = ctx.rangeSeries('engine_rpm'), dem = demandSeries(ctx), unit = ctx.unitFor('fuel_pressure') || 'psi';
     function underDemand(i) { var d = dem.at(i); return fin(fp[i]) && rpmFloorOk(rpm, i, s.rpmFloor) && (d == null ? true : d >= s.demandMin); }
     var runs = runsWhere(N, underDemand, R.absT, s.settleSec, 0).filter(function (r) { return !r.brief; });
@@ -840,7 +891,7 @@
     id: 'fuel_pressure', name: 'Fuel Pressure', status: 'experimental', evaluatorVersion: '0.9.0',
     description: 'Rail pressure vs desired under demand (sag, overshoot, hunting); drop from baseline when no desired channel is logged.',
     requiredChannels: [{ role: 'fuel_pressure', label: 'Fuel Rail Pressure' }],
-    optionalChannels: [{ role: 'desired_fuel_pressure' }, { role: 'engine_rpm' }, { role: 'accelerator_pedal_position' }, { role: 'throttle_position' }, { role: 'actual_load' }],
+    optionalChannels: [{ role: 'desired_fuel_pressure' }, { role: 'engine_rpm' }, { role: 'accelerator_pedal_position' }, { role: 'throttle_position' }, { role: 'actual_load' }, { role: 'boost_pressure' }, { role: 'manifold_absolute_pressure' }, { role: 'barometric_pressure' }],
     defaultSettings: extend(FUELP_DEFAULTS, null), settingsMeta: FUELP_META, evaluate: computeFuelPressure
   });
 

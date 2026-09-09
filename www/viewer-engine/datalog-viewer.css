@@ -313,6 +313,14 @@ table.dlv-channel-table tbody tr.dlv-row-selected{background:rgba(209,19,46,0.06
 /* calculated Vehicle Dynamics channels (estimated acceleration) + their settings gear */
 .dlv-ch-calc-badge{display:inline-block;margin-right:4px;font-weight:800;color:#38bdf8;}
 .dlv-ch-cfg{background:none;border:none;color:var(--text-faint, #5c5c66);cursor:pointer;font-size:12px;line-height:1;padding:0 3px;margin-left:4px;vertical-align:middle;}
+/* per-channel smoothing: shows on row hover, stays visible (with the window) once set */
+.dlv-ch-smooth{background:none;border:none;color:var(--text-faint, #5c5c66);cursor:pointer;font-size:13px;line-height:1;padding:0 3px;margin-left:3px;vertical-align:middle;opacity:0;transition:opacity .12s;}
+.dlv-ch-smooth small{font-size:9px;margin-left:1px;font-weight:700;}
+tr:hover .dlv-ch-smooth,.dlv-ch-smooth.on{opacity:1;}
+.dlv-ch-smooth.on{color:#38bdf8;} .dlv-ch-smooth:hover{color:var(--amber, #f5a623);}
+.dlv-mobile .dlv-ch-smooth{opacity:1;}
+.dlv-smooth-menu{min-width:260px;max-width:340px;}
+.dlv-smooth-menu h4{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:320px;}
 .dlv-ch-cfg:hover{color:var(--amber, #f5a623);}
 .dlv-accel-menu{min-width:300px;max-width:380px;}
 .dlv-accel-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 9px;font-size:11.5px;color:var(--text-dim, #9a9aa2);}
@@ -1542,6 +1550,13 @@ button.dlv-dash-paste:hover{border-color:var(--amber, #f5a623);}
 .dlv-sc-pf select{background:#0b0b0e;color:var(--text, #f2f2f4);border:1px solid var(--card-border, #26262c);border-radius:5px;font-size:11px;font-weight:600;padding:2px 4px;text-transform:none;letter-spacing:0;max-width:150px;}
 .dlv-sc-pf select:focus{outline:none;border-color:var(--amber, #f5a623);}
 .dlv-sc-pf-note{margin-left:auto;font-size:9.5px;color:var(--text-faint, #5c5c66);white-space:nowrap;}
+/* per-row on/off switch */
+.dlv-sc-sw{position:relative;display:inline-block;width:24px;height:13px;margin-left:8px;border-radius:7px;border:none;padding:0;background:#3a3a44;cursor:pointer;vertical-align:middle;flex-shrink:0;}
+.dlv-sc-sw .dlv-sc-sw-knob{position:absolute;top:2px;left:2px;width:9px;height:9px;border-radius:50%;background:#9a9aa2;transition:left .12s;}
+.dlv-sc-sw.on{background:var(--amber, #f5a623);} .dlv-sc-sw.on .dlv-sc-sw-knob{left:13px;background:#16161a;}
+.dlv-sc-sw:focus-visible{outline:2px solid var(--amber, #f5a623);outline-offset:1px;}
+.dlv-sc-row.dlv-sc-off{opacity:.45;} .dlv-sc-row.dlv-sc-off .dlv-sc-status{color:var(--text-faint, #5c5c66);font-size:10px;text-transform:uppercase;letter-spacing:.05em;}
+.dlv-sc-row:hover .dlv-sc-sw{outline:1px solid rgba(255,255,255,.15);}
 .dlv-sc-compact .dlv-sc-profile{padding:2px 12px;}
 .dlv-sc-d-conf,.dlv-sc-d-warn{font-size:10px;color:var(--text-faint, #5c5c66);margin-top:3px;}
 .dlv-sc-foot{padding:5px 12px;border-top:1px solid var(--card-border, #26262c);font-size:10px;color:var(--text-faint, #5c5c66);flex-shrink:0;text-align:right;}

@@ -117,6 +117,7 @@ function loadViewerPrefs(){
     if(p.graphCount) VIEWER_GRAPH_COUNT = p.graphCount;
     if(p.legendPos) VIEWER_LEGEND_POS = p.legendPos;
     if(p.gaugeSubmode) VIEWER_GAUGE_SUBMODE = p.gaugeSubmode;
+    if(p.lastSaved && p.lastSaved.id) VIEWER_LAST_SAVED = p.lastSaved;
   } catch(e){ /* sessionStorage unavailable (private mode etc.) -- just use defaults */ }
   // (The old clamp back to 'default' is gone: it existed only while Gauge/Graph View were disabled
   // in the picker. Views are selectable now, and openViewerCore sets the mode from the active view.)
@@ -131,6 +132,7 @@ function saveViewerPrefs(){
       graphCount: VIEWER_GRAPH_COUNT,
       legendPos: VIEWER_LEGEND_POS,
       gaugeSubmode: VIEWER_GAUGE_SUBMODE,
+      lastSaved: VIEWER_LAST_SAVED,
     }));
   } catch(e){ /* ignore */ }
 }
@@ -307,6 +309,8 @@ function openViewerCore(fetchPromise, meta){
     // set when the host kept one, sampled to the display set -- after the full set is attached so both
     // carry the channels (graphs draw the display set, histograms bin the full one).
     injectAccelChannels();
+    VIEWER_RAW_SERIES = {}; VIEWER_RAW_FULL_SERIES = {};   // a new log: nothing smoothed yet
+    applyAllSmoothing();
 
     var cylinderCount = detectCylinderCount(VIEWER_RESOLVED_ROLES);
     var matched = selectPreset({
@@ -386,6 +390,9 @@ function openViewerCore(fetchPromise, meta){
     });
     // non-blocking: My Views populate into the selector as soon as they arrive
     loadSavedViews().then(refreshViewSelect);
+    // The saved Layout / Custom Gauges the tuner picked last comes back on the next log (its graph
+    // channels that exist here, its dash) unless a host config for this car takes over below.
+    if(!VIEWER_VEHICLE_CONFIGS.length && !VIEWER_AUTO_CONFIG) reapplyLastSaved();
     // A host-resolved config (e.g. a ticket's BigData Config for this vehicle) overrides the built-in
     // auto-select -- applied LAST, via the same path as choosing a saved view, so the log opens straight
     // into its intended gauges/graphs. Accepts either a bare config or a {id,name,kind,config} wrapper.
@@ -2854,6 +2861,7 @@ function renderOneChannelRow(c, pinnedRow){
         (isAccelChannel(c) ? '<span class="dlv-ch-calc-badge" title="Calculated · Vehicle Dynamics -- estimated from this log\'s speed channels">&asymp;</span>' : '') +
         escapeHtml(c) +
         (isAccelChannel(c) ? '<button type="button" class="dlv-ch-cfg" data-accel-cfg="1" title="Estimated acceleration settings: speed source, filtering, wheel-spin correction">&#9881;</button>' : '') +
+        (isTextChannel(c) ? '' : '<button type="button" class="dlv-ch-smooth' + (smoothingFor(c) ? ' on' : '') + '" data-smooth-ch="' + escapeHtml(c) + '" title="' + (smoothingFor(c) ? 'Smoothing: ' + smoothingFor(c) + ' ms' : 'Smooth this channel') + '">&#8767;' + (smoothingFor(c) ? '<small>' + (smoothingFor(c) >= 1000 ? (smoothingFor(c) / 1000) + 's' : smoothingFor(c)) + '</small>' : '') + '</button>') +
         '</div>' +
       '<div class="dlv-ch-value"><span class="dlv-ch-value-num' + (isTextChannel(c) ? ' dlv-ch-value-text' : '') + '" data-ch-value="' + escapeHtml(c) + '">--</span>' + (unit && unit !== 'na' ? '<span class="dlv-ch-value-unit">' + escapeHtml(unit) + '</span>' : '') + '</div>' +
     '</td>' +
@@ -3567,6 +3575,7 @@ function injectAccelChannels(){
     accelRemoveChannel(VIEWER_DATA, name);
     if(full) accelRemoveChannel(full, name);
     delete VIEWER_UNIT_BY_CHANNEL[name];
+    delete VIEWER_RAW_SERIES[name]; delete VIEWER_RAW_FULL_SERIES[name];   // the series are being replaced
     var si = VIEWER_SELECTED.indexOf(name);
     if(si !== -1) VIEWER_SELECTED.splice(si, 1);
     delete VIEWER_PANEL_ASSIGN[name];
@@ -3592,6 +3601,7 @@ function injectAccelChannels(){
     VIEWER_ACCEL_NAMES.push(c.name);
   });
   VIEWER_CHANNEL_STATS = computeChannelStats(VIEWER_DATA);
+  applyAllSmoothing();   // a smoothed estimated channel stays smoothed after a recompute
 }
 // Developer console: how the estimate was built (sources used / rejected, spin events, window, rate).
 window.DatalogAccelDebug = function(){ return (VIEWER_ACCEL && VIEWER_ACCEL.result) ? VIEWER_ACCEL.result.meta : null; };
@@ -3643,6 +3653,119 @@ document.addEventListener('click', function(e){
   e.stopPropagation(); e.preventDefault();
   openAccelSettings(b);
 }, true);
+
+// ---- Per-channel smoothing (Ken, 2026-09-09: "for things like the g meter, or maybe even any parameter,
+// we need a way to control smoothing") ----------------------------------------------------------------
+// A channel's smoothing is a centred moving average over a TIME window (ms, so it means the same thing
+// at 25 Hz and 200 Hz). The raw series is kept aside and the smoothed copy takes its place in
+// VIEWER_DATA (and the full-resolution set), so graphs, cursor readouts, gauges, stats and histograms all
+// see the same smoothed trace with no per-consumer changes. Settings live in localStorage (per channel
+// name, across logs) and ride along in a saved Layout.
+var VIEWER_SMOOTHING = null;
+var VIEWER_SMOOTHING_KEY = 'pbdDatalogViewerSmoothing.v1';
+var VIEWER_RAW_SERIES = {};        // channel -> raw display series while a smoothed copy is installed
+var VIEWER_RAW_FULL_SERIES = {};   // same for the full-resolution set
+var SMOOTHING_OPTIONS = [[0, 'Off'], [50, '50 ms'], [100, '100 ms'], [150, '150 ms'], [250, '250 ms'], [500, '500 ms'], [1000, '1 s'], [2000, '2 s']];
+function smoothingMap(){
+  if(VIEWER_SMOOTHING) return VIEWER_SMOOTHING;
+  var m = null;
+  try { var raw = window.localStorage ? localStorage.getItem(VIEWER_SMOOTHING_KEY) : null; m = raw ? JSON.parse(raw) : null; } catch(e){ m = null; }
+  VIEWER_SMOOTHING = (m && typeof m === 'object') ? m : {};
+  return VIEWER_SMOOTHING;
+}
+function smoothingFor(ch){ var m = smoothingMap(); var v = m[ch]; return (typeof v === 'number' && isFinite(v) && v > 0) ? v : 0; }
+function smoothingForSave(){ var m = smoothingMap(), out = {}, any = false; Object.keys(m).forEach(function(k){ if(m[k] > 0 && VIEWER_DATA && VIEWER_DATA.series[k]){ out[k] = m[k]; any = true; } }); return any ? out : null; }
+function persistSmoothing(){ try { if(window.localStorage) localStorage.setItem(VIEWER_SMOOTHING_KEY, JSON.stringify(smoothingMap())); } catch(e){} }
+// Centred mean over [t - ms/2, t + ms/2], finite samples only, O(n) with a sliding window.
+function smoothSeries(time, vals, ms){
+  var n = time.length, half = ms / 2000, out = new Float64Array(n), lo = 0, hi = -1, sum = 0, cnt = 0, i;
+  for(i = 0; i < n; i++){
+    var t = time[i];
+    while(hi + 1 < n && time[hi + 1] <= t + half){ hi++; var a = vals[hi]; if(a != null && isFinite(a)){ sum += a; cnt++; } }
+    while(lo <= hi && time[lo] < t - half){ var r = vals[lo]; if(r != null && isFinite(r)){ sum -= r; cnt--; } lo++; }
+    out[i] = cnt > 0 ? sum / cnt : NaN;
+  }
+  return out;
+}
+function applySmoothing(ch){
+  if(!VIEWER_DATA || !VIEWER_DATA.series[ch] || isTextChannel(ch)) return;
+  var ms = smoothingFor(ch);
+  var sets = [[VIEWER_DATA, VIEWER_RAW_SERIES]];
+  if(VIEWER_DATA.full && VIEWER_DATA.full.series && VIEWER_DATA.full.series[ch]) sets.push([VIEWER_DATA.full, VIEWER_RAW_FULL_SERIES]);
+  sets.forEach(function(pair){
+    var set = pair[0], rawStore = pair[1];
+    if(!rawStore[ch]) rawStore[ch] = set.series[ch];
+    var raw = rawStore[ch];
+    if(ms > 0) set.series[ch] = smoothSeries(set.time, raw, ms);
+    else { set.series[ch] = raw; delete rawStore[ch]; }
+  });
+  var st = computeChannelStats({ channels: [ch], series: VIEWER_DATA.series, textLevels: VIEWER_DATA.textLevels });
+  VIEWER_CHANNEL_STATS[ch] = st[ch];
+}
+function applyAllSmoothing(){
+  if(!VIEWER_DATA) return;
+  var m = smoothingMap();
+  Object.keys(m).forEach(function(ch){ if(m[ch] > 0 && VIEWER_DATA.series[ch]) applySmoothing(ch); });
+}
+function setSmoothing(ch, ms){
+  var m = smoothingMap();
+  if(ms > 0) m[ch] = ms; else delete m[ch];
+  persistSmoothing();
+  applySmoothing(ch);
+}
+// A saved Layout's smoothing map replaces the per-channel settings for the channels it names.
+function setSmoothingMap(map){
+  var m = smoothingMap();
+  Object.keys(map || {}).forEach(function(ch){ var v = parseFloat(map[ch]); if(isFinite(v) && v > 0) m[ch] = v; else delete m[ch]; });
+  persistSmoothing();
+  applyAllSmoothing();
+}
+function openSmoothingMenu(anchor, ch){
+  closeHdrMenu();
+  var cur = smoothingFor(ch);
+  var m = document.createElement('div');
+  m.className = 'dlv-gmenu dlv-hdr-menu dlv-smooth-menu';
+  m.__which = 'smooth';
+  m.innerHTML = '<h4>' + escapeHtml(ch) + '</h4>' +
+    '<label class="dlv-accel-row"><span>Smoothing</span><select data-smooth-ms>' + SMOOTHING_OPTIONS.map(function(o){
+      return '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></label>' +
+    '<div class="dlv-accel-info">A centred moving average over that much time. Applies to the graphs, cursor readouts, gauges, stats and histograms; the raw data is kept and comes back with Off. Saved with a Layout.' +
+    (isAccelChannel(ch) ? ' The ⚙ on this row sets the estimator\'s own filter; this smoothing goes on top.' : '') + '</div>';
+  m.addEventListener('mousedown', function(e){ e.stopPropagation(); });
+  m.addEventListener('click', function(e){ e.stopPropagation(); });
+  document.body.appendChild(m);
+  positionHdrMenu(m, anchor);
+  VIEWER_HDR_MENU = m;
+  m.querySelector('[data-smooth-ms]').addEventListener('change', function(){
+    var ms = parseFloat(this.value) || 0;
+    closeHdrMenu();
+    setSmoothing(ch, ms);
+    markLayoutDirty();
+    renderViewerBody();
+    if(window.showToast) showToast(ms ? escapeHtml(ch) + ': ' + ms + ' ms smoothing' : escapeHtml(ch) + ': smoothing off');
+  });
+}
+document.addEventListener('click', function(e){
+  var b = e.target && e.target.closest ? e.target.closest('[data-smooth-ch]') : null;
+  if(!b) return;
+  e.stopPropagation(); e.preventDefault();
+  openSmoothingMenu(b, b.getAttribute('data-smooth-ch'));
+}, true);
+// Which saved item (Layout or Custom Gauges) the tuner picked last, remembered for the session so the
+// next log opened in the same tab comes up with it (Ken, 2026-09-09: a saved layout should carry the graph
+// channels to the next log -- those that exist in it). Host-pushed vehicle configs still win.
+var VIEWER_LAST_SAVED = null;   // { kind: 'view'|'gauges', id, name }
+function rememberLastSaved(kind, id, name){ VIEWER_LAST_SAVED = { kind: kind, id: id, name: name }; saveViewerPrefs(); }
+function reapplyLastSaved(){
+  var last = VIEWER_LAST_SAVED; if(!last || !last.id) return false;
+  var lp = viewsProvider(); if(!lp) return false;
+  var state = null;
+  try { state = lp.apply(last.id); } catch(e){ state = null; }
+  if(!state) { VIEWER_LAST_SAVED = null; return false; }
+  applyViewConfig(state, { kind: 'saved', id: last.id, name: last.name });
+  if(window.showToast) showToast('Layout "' + last.name + '" applied.');
+  return true;
+}
 function enterHistograms(){
   if(!viewerIsPro()) return;
   adlTrack('histograms_used', { action: 'open' });
@@ -5059,7 +5182,9 @@ function applyGraphsSnapshot(graphs){
 // though a Layout no longer OWNS the gauges the way it used to -- see currentGaugesList and
 // applyViewConfig below for the read side of this).
 function buildConfig(kind){
-  if(kind === 'gauges') return { kind: 'gauges', gauges: currentGaugesList() };
+  // A Custom Gauges set remembers the graph channels too (Ken, 2026-09-09): loading it restores the
+  // ones the log has, the dash itself is unchanged by that.
+  if(kind === 'gauges') return { kind: 'gauges', gauges: currentGaugesList(), graphs: currentGraphsSnapshot(), graphCount: VIEWER_GRAPH_COUNT };
   return {
     kind: 'view',
     layout: VIEWER_VIEW_MODE,
@@ -5074,6 +5199,7 @@ function buildConfig(kind){
     histograms: histogramDefsForSave(),   // the session's tuning tables ride along with the layout
     mathChannels: mathChannelsForSave(),  // the named calculated channels those tables reference
     histGauges: histDashGaugesForSave(),  // the gauges behind the Histograms tab (null when none)
+    smoothing: smoothingForSave(),        // per-channel smoothing windows (ms), null when none
   };
 }
 // Back-compat alias for the single composite save.
@@ -5194,9 +5320,12 @@ function applyViewConfig(cfg, meta){
   }
   VIEWER_CURRENT_LAYOUT = { kind: meta.kind, id: meta.id, name: meta.name, readOnly: !!meta.readOnly };
   VIEWER_LAYOUT_DIRTY = false;
-  // A layout remembers its literal graph channels; restore them. A legacy/built-in config with no
-  // graph snapshot falls back to the role-based defaults.
-  if(cfg.graphs) applyGraphsSnapshot(cfg.graphs);
+  if(meta.kind === 'saved' && !meta.readOnly) rememberLastSaved('view', meta.id, meta.name);
+  if(cfg.smoothing && typeof cfg.smoothing === 'object') setSmoothingMap(cfg.smoothing);
+  // A layout remembers its literal graph channels; restore them (those this log has). A legacy/built-in
+  // config with no graph snapshot -- or one none of whose channels exist here -- falls back to the
+  // role-based defaults.
+  if(cfg.graphs){ applyGraphsSnapshot(cfg.graphs); if(!VIEWER_SELECTED.length) pickDefaultChannels(); }
   else pickDefaultChannels();
   renderViewerBody();
 }
@@ -5211,6 +5340,11 @@ function applyGaugesConfig(cfg, meta, opts){
   VIEWER_DASH = VIEWER_DASH || { gauges: [] };
   VIEWER_DASH.gauges = cfg.gauges.map(function(g){ return JSON.parse(JSON.stringify(g)); });
   dashMigrateScorecards(VIEWER_DASH.gauges);
+  // The graph channels saved with the set come back too (only those this log has); a set saved before
+  // that existed leaves the graphs as they are.
+  if(cfg.graphs){ applyGraphsSnapshot(cfg.graphs); if(!VIEWER_SELECTED.length) pickDefaultChannels(); }
+  if(cfg.graphCount) VIEWER_GRAPH_COUNT = cfg.graphCount;
+  if(meta && meta.kind === 'saved' && !meta.readOnly) rememberLastSaved('gauges', meta.id, meta.name);
   VIEWER_VIEW_MODE = 'gauge';
   VIEWER_GAUGE_SUBMODE = 'custom';
   VIEWER_DASH_EDIT = VIEWER_DASH_TARGET === 'hist' ? true : !!opts.edit;   // "Load gauges" while building the histogram set stays in the designer
