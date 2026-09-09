@@ -22843,7 +22843,7 @@ ${suffix}`;
     return l.endsWith(".hpl") ? "HPL" : l.endsWith(".ld") ? "MoTeC" : l.endsWith(".dl") ? "Holley" : "CSV";
   }
   function isLogName(name) {
-    return /\.(hpl|csv|ld|dl)$/i.test(String(name || ""));
+    return /\.(hpl|csv|ld|dl|msl|mlg)$/i.test(String(name || ""));
   }
   function capBytes(opts) {
     const caps2 = opts.caps || DEFAULT_CAPS;
@@ -22886,7 +22886,7 @@ ${suffix}`;
     const p = await pickLog();
     if (!p) return null;
     if (/\.hlg(zip)?$/i.test(p.name)) throw new Error("Haltech .hlg logs are encrypted by NSP. Export the log as CSV in NSP (File > Export) and open that.");
-    if (!isLogName(p.name)) throw new Error(`"${p.name}" is not a datalog. BigData opens .hpl, .csv, .ld and .dl files.`);
+    if (!isLogName(p.name)) throw new Error(`"${p.name}" is not a datalog. BigData opens .hpl, .csv, .ld, .dl and MegaSquirt .msl files.`);
     const blob = p.blob || (p.webPath ? await blobFromWebPath(p.webPath) : null);
     if (!blob) throw new Error("The picker returned no file data.");
     return { name: p.name, size: blob.size || p.size, file: new File([blob], p.name), origin: "picker", uri: p.path || p.webPath };

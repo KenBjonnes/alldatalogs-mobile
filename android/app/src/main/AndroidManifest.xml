@@ -36,10 +36,16 @@
                 <data android:pathPattern=".*\\.LD" />
                 <data android:pathPattern=".*\\.dl" />
                 <data android:pathPattern=".*\\.DL" />
+                <data android:pathPattern=".*\\.msl" />
+                <data android:pathPattern=".*\\.MSL" />
+                <data android:pathPattern=".*\\.mlg" />
+                <data android:pathPattern=".*\\.MLG" />
                 <data android:pathPattern=".*\\..*\\.hpl" />
                 <data android:pathPattern=".*\\..*\\.csv" />
                 <data android:pathPattern=".*\\..*\\.ld" />
                 <data android:pathPattern=".*\\..*\\.dl" />
+                <data android:pathPattern=".*\\..*\\.msl" />
+                <data android:pathPattern=".*\\..*\\.mlg" />
             </intent-filter>
             <intent-filter android:label="@string/app_name">
                 <action android:name="android.intent.action.VIEW" />

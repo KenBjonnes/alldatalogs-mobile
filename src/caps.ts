@@ -10,7 +10,7 @@ export function fmtOf(name: string): Fmt {
 }
 
 export function isLogName(name: string): boolean {
-  return /\.(hpl|csv|ld|dl)$/i.test(String(name || ''));
+  return /\.(hpl|csv|ld|dl|msl|mlg)$/i.test(String(name || ''));
 }
 
 /** Largest file (bytes) this tier + device may open. */

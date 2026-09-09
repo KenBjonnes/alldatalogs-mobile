@@ -1325,6 +1325,50 @@
     return { channelNames, units, time, series, textLevels: {}, channelIds: null, warnings };
   }
 
+  // ../../../../websites/Alldatalogs/packages/datalog-core/src/megasquirt/msl.ts
+  function isMlvlgBinary(head) {
+    return head.slice(0, 5) === "MLVLG";
+  }
+  var HEADER_RE = /^"?\s*Time\s*"?\t/i;
+  function isMegaSquirtLog(text) {
+    const head = text.slice(0, 4096);
+    if (isMlvlgBinary(head)) return true;
+    const lines = head.split(/\r\n|\r|\n/, 12);
+    if (!lines.length) return false;
+    const first = lines[0].replace(/^﻿/, "");
+    const quotedStart = first.charAt(0) === '"';
+    const captureLine = lines.slice(0, 4).some((l) => /^"?\s*Capture Date:/i.test(l));
+    if (!quotedStart && !captureLine) return false;
+    return lines.some((l) => HEADER_RE.test(l));
+  }
+  function csvCell(cell) {
+    const s = cell.trim();
+    return /[",]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function megaSquirtToCsv(text) {
+    if (isMlvlgBinary(text.slice(0, 8))) {
+      throw new Error("This .mlg is MegaLogViewer's binary log. Open it in MegaLogViewer or TunerStudio and save it as a .msl text log, then open that.");
+    }
+    const lines = text.split(/\r\n|\r|\n/);
+    if (lines.length && lines[0].charCodeAt(0) === 65279) lines[0] = lines[0].slice(1);
+    let h = -1;
+    for (let i = 0; i < lines.length && i < 64; i++) {
+      if (HEADER_RE.test(lines[i])) {
+        h = i;
+        break;
+      }
+    }
+    if (h === -1) throw new Error('MegaSquirt log: no TAB-separated "Time" header row found.');
+    const out = [];
+    for (let i = h; i < lines.length; i++) {
+      const line = lines[i];
+      if (i > h + 1 && !line.trim()) continue;
+      if (line.charAt(0) === "#" && i > h + 1) continue;
+      out.push(line.split("	").map(csvCell).join(","));
+    }
+    return out.join("\n");
+  }
+
   // ../../../../websites/Alldatalogs/packages/datalog-core/src/importers/csv.ts
   function splitCsvLine(line, parenAware) {
     const hasQuote = line.indexOf('"') !== -1;
@@ -1385,6 +1429,7 @@
   var NAN_SPELLINGS = /^(?:[+-]?nan(?:\(ind\))?|[+-]?inf(?:inity)?|#div\/0!|#n\/a|n\/a|null|--)$/i;
   function parseDatalogCsv(text) {
     if (isHaltechCsv(text)) return parseHaltechCsv(text);
+    if (isMegaSquirtLog(text)) text = megaSquirtToCsv(text);
     const warnings = [];
     const lines = text.split(/\r\n|\r|\n/);
     if (lines.length > 0 && lines[0].charCodeAt(0) === 65279) lines[0] = lines[0].slice(1);

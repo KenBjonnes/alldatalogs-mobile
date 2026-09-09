@@ -188,6 +188,7 @@ function adlLogFormat(){
   if(/\.hpl$/.test(n)) return 'hpl';
   if(/\.ld$/.test(n))  return 'ld';
   if(/\.csv$/.test(n)) return 'csv';
+  if(/\.msl$/.test(n) || /\.mlg$/.test(n)) return 'msl';   // MegaSquirt / TunerStudio text log
   var ext = n.indexOf('.') >= 0 ? n.split('.').pop() : '';
   return ext || 'unknown';
 }
@@ -692,7 +693,7 @@ function renderHeaderHtml(){
     '<div class="dlv-header-actions">' +
       '<button type="button" class="dlv-btn dlv-btn-menu" id="dlvAnalyzeBtn" title="Compare, performance data">Analyze &#9662;</button>' +
       '<button type="button" class="dlv-btn dlv-btn-menu" id="dlvLayoutBtn" title="Views, dashboards, download">Layout &#9662;</button>' +
-      '<input type="file" id="dlvCompareFile" accept=".csv,.hpl,.ld" hidden>' +
+      '<input type="file" id="dlvCompareFile" accept=".csv,.hpl,.ld,.dl,.msl,.mlg" hidden>' +
       '<button type="button" class="dlv-close" id="viewerCloseBtn2" title="Close">&times;</button>' +
     '</div>' +
   '</div>' +

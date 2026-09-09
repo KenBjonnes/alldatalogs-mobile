@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-09-09T13:51:50.535Z",
+  "builtAt": "2026-09-09T14:05:56.310Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
     "siteRepo": "C:/websites/Alldatalogs",
-    "siteCommit": "a137b8b"
+    "siteCommit": "390f67a"
   },
   "files": {
     "viewer-engine/datalog-viewer.css": {
@@ -38,8 +38,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-scorecard.js"
     },
     "viewer-engine/datalog-scorecard-evaluators.js": {
-      "sha256": "1c0897a9e2030effb31107f2f23db51d5a3e6fb3a97799dd9184ba75e1b27a39",
-      "bytes": 116613,
+      "sha256": "4fbfbd90c75d5fdf7208194994225493cae5b48f68586ee727a1f720c1721f30",
+      "bytes": 118164,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-scorecard-evaluators.js"
     },
     "viewer-engine/datalog-expr.js": {
@@ -83,8 +83,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-vehicles.js"
     },
     "viewer-engine/datalog-viewer.js": {
-      "sha256": "603cfea2551af451372b0d4497294be062e5f5b9e74e08346fe447d22796f96b",
-      "bytes": 405193,
+      "sha256": "b8363c2a4e88743bcb0a865e6ea8661da683d8d4ac9b765c96e461de3d250cf1",
+      "bytes": 405303,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.js"
     },
     "viewer-engine/runtime.js": {
@@ -123,18 +123,18 @@
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/app.css"
     },
     "viewer-engine/dvcore.js": {
-      "sha256": "3729d0fe699915f401c854f140bcd68aabd8656368adf50cda0b5de18afa902b",
-      "bytes": 64043,
+      "sha256": "f6083ad59dc8903feb22e8df7319c6de636cb99a0e6b5dd50de9f047301b121b",
+      "bytes": 65830,
       "from": "C:/websites/Alldatalogs/packages/datalog-core/browser/entry.ts (esbuild)"
     },
     "glue.js": {
-      "sha256": "254bb85a751e0043f6bf4ddc5d211a0af96690dc7eb0b39d607f57d689685705",
-      "bytes": 891541,
+      "sha256": "c7e32e6fea6b9a6701bfb265ba56cd55e8e4e8fef3ddb7f022f69c912a9bf1b6",
+      "bytes": 891566,
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/glue.ts (esbuild)"
     },
     "parse-worker.js": {
-      "sha256": "a50574358bae3a24156e1de65c3bf14dbcb445dcd7e2d416cb890b305f7b9eee",
-      "bytes": 145238,
+      "sha256": "a15365f46dc32bb8cff6655394bbdc690a1d17cdf67e392ecc8ac4fc960c6bea",
+      "bytes": 147025,
       "from": "apps/web/public/parse-worker.js (esbuild)"
     },
     "index.html": {

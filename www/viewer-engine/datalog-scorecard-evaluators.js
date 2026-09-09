@@ -982,20 +982,36 @@
     //         actuator lag on a tip-in (desired jumps, blade follows ~50-100 ms later) is not an error.
     var desMode = false, desP95 = null, desMax = null, desMaxI = -1, desN = 0, actName = null, desUnit = String(ctx.unitFor('desired_throttle') || '');
     if (des) {
+      // Which ACTUAL pairs with the desired? Ford logs carry the blade twice -- 'throttle position
+      // absolute' (%, 0-100) and 'throttle angle' (degrees, 0-~82) -- and the desired is an angle.
+      // Comparing the angle desired with the percent actual is a different scale (Ken's GT350 log,
+      // 2026-09-09: "throttle angle desired vs throttle position absolute", 11 deg of phantom error).
+      // Units decide when logged; names ("angle") decide when not; and when both actuals exist the
+      // one that actually TRACKS the desired (smaller steady median error) wins regardless.
       var isDeg = function (u) { return /°|deg/i.test(String(u || '')); };
-      var act = thr, unitOk = true;
-      if (isDeg(desUnit) && ang && isDeg(ctx.unitFor('throttle_angle'))) { act = ang; actName = ctx.channelFor('throttle_angle'); }
-      else if (isDeg(desUnit) && isDeg(ctx.unitFor('throttle_position'))) { act = thr; actName = ctx.channelFor('throttle_position'); }
-      else if (!isDeg(desUnit) && !isDeg(ctx.unitFor('throttle_position'))) { act = thr; actName = ctx.channelFor('throttle_position'); }
-      else if (ang) { act = ang; actName = ctx.channelFor('throttle_angle'); unitOk = isDeg(ctx.unitFor('throttle_angle')) === isDeg(desUnit); }
-      else { act = thr; actName = ctx.channelFor('throttle_position'); unitOk = false; }
       var win = Math.max(1, Math.round(s.desSteadyWindowSec / Math.max(0.001, (R.absT(1) - R.absT(0)) || 0.05)));
-      var derr = [], derrI = [];
-      for (i = win; i < N; i++) {
-        if (!fin(des[i]) || !fin(act[i]) || !fin(des[i - win]) || !rpmFloorOk(rpm, i, s.rpmFloor)) continue;
-        if (Math.abs(des[i] - des[i - win]) > s.desSteadyRate) continue;   // desired still moving: actuator lag, not control error
-        derr.push(Math.abs(act[i] - des[i])); derrI.push(i);
-      }
+      var steadyErrs = function (act) {
+        var e = [], ei = [];
+        for (var q = win; q < N; q++) {
+          if (!fin(des[q]) || !fin(act[q]) || !fin(des[q - win]) || !rpmFloorOk(rpm, q, s.rpmFloor)) continue;
+          if (Math.abs(des[q] - des[q - win]) > s.desSteadyRate) continue;   // desired still moving: actuator lag, not control error
+          e.push(Math.abs(act[q] - des[q])); ei.push(q);
+        }
+        return { errs: e, idx: ei, median: e.length ? pct(e.slice().sort(fAsc), 0.5) : Infinity };
+      };
+      var desName = String(ctx.channelFor('desired_throttle') || ''), desSaysAngle = /angle/i.test(desName) || isDeg(desUnit), desSaysPct = /%/.test(desUnit) || /percent|position/i.test(desName) && !/angle/i.test(desName);
+      var candidates = [];
+      if (ang) candidates.push({ act: ang, role: 'throttle_angle', name: ctx.channelFor('throttle_angle'), unit: ctx.unitFor('throttle_angle'), pref: desSaysAngle ? 2 : desSaysPct ? 0 : 1 });
+      candidates.push({ act: thr, role: 'throttle_position', name: ctx.channelFor('throttle_position'), unit: ctx.unitFor('throttle_position'), pref: desSaysPct ? 2 : desSaysAngle ? 0 : 1 });
+      candidates.forEach(function (c) { c.fit = steadyErrs(c.act); });
+      // best fit first; the unit/name preference only breaks a near-tie (within 1 unit of median error)
+      candidates.sort(function (a, b) { var d = a.fit.median - b.fit.median; return Math.abs(d) <= 1 ? b.pref - a.pref : d; });
+      var chosen = candidates[0], act = chosen.act; actName = chosen.name;
+      var unitOk = !(desUnit && chosen.unit) || isDeg(desUnit) === isDeg(chosen.unit);
+      var derr = chosen.fit.errs, derrI = chosen.fit.idx;
+      if (chosen.role === 'throttle_position' && desSaysAngle) warnings.push(candidates.length > 1
+        ? 'Desired throttle is an angle but the percent blade position tracked it better; check the channels.'
+        : 'Desired throttle is an angle but the percent blade position is the only actual logged; the scales differ, so log Throttle Angle for a true comparison.');
       if (derr.length >= s.minSamples) {
         desMode = true; desN = derr.length;
         var dOrder = derr.map(function (x, k) { return k; }).sort(function (a, b) { return derr[a] - derr[b]; });
@@ -1007,7 +1023,7 @@
           label: 'Throttle not matching desired', message: 'Blade ' + round1(act[desMaxI]) + ' vs desired ' + round1(des[desMaxI]) + u + ' at worst; 95th percentile error ' + round1(desP95) + u + ' (steady desired only)', values: { p95: round1(desP95), worst: round1(desMax) } });
         details.push({ label: 'Desired vs actual', value: 'median ' + round1(derr[dOrder[Math.floor(dOrder.length / 2)]]) + ', 95th pct ' + round1(desP95) + ', worst ' + round1(desMax) + u + ' (' + grp(desN) + ' steady samples)', time: R.absT(desMaxI) });
         details.push({ label: 'Judged against', value: ctx.channelFor('desired_throttle') + ' vs ' + actName });
-        if (!unitOk) warnings.push('Desired throttle (' + (desUnit || 'no unit') + ') and the actual (' + (ctx.unitFor(act === ang ? 'throttle_angle' : 'throttle_position') || 'no unit') + ') are in different units — compare with care.');
+        if (!unitOk) warnings.push('Desired throttle (' + (desUnit || 'no unit') + ') and the actual (' + (chosen.unit || 'no unit') + ') are in different units — compare with care.');
       } else warnings.push('Desired throttle is logged but has too few steady samples to judge' + (ped ? ' — scored against the pedal instead.' : '.'));
     }
 
