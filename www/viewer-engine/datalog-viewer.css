@@ -110,6 +110,15 @@
 }
 .dlv-header:hover::after,
 .dlv-header:focus-within::after{opacity:0;}
+/* PINNED: a host with the room (BigData for Windows: no browser chrome, 920px+ windows) declares
+   window.ADL_HOST.pinHeader and the overlay gets .dlv-header-pinned -- the bar is simply a bar: no strip,
+   no hover band, no tab, no delays (Ken, 2026-09-09: "get rid of the auto hide on that top menu. it's
+   annoying. there is plenty of room to leave it expanded"). The website keeps the strip: a browser tab has
+   less height to give. Placed AFTER the hover rules on purpose -- equal specificity, last one wins. */
+.dlv-header-pinned .dlv-header{max-height:none;padding:10px 18px;border-top:none;transition:none;}
+.dlv-header-pinned .dlv-header > *{opacity:1;pointer-events:auto;transition:none;}
+.dlv-header-pinned .dlv-header::before,
+.dlv-header-pinned .dlv-header::after{display:none;}
 /* ---- Mode tabs: Graph / Gauges / Histograms, plus a Default/Custom sub-toggle inside Gauges ---
    Deliberately NOT part of .dlv-header's hover-collapse: that strip hides the controls you reach
    for occasionally (Analyze, Layout, view pickers) to save graph space, but mode-switching is the

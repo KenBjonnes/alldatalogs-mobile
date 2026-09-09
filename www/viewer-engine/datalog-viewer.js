@@ -238,6 +238,7 @@ function openViewerCore(fetchPromise, meta){
   VIEWER_VEHICLE_CONFIGS = Array.isArray(meta.vehicleConfigs) ? meta.vehicleConfigs : [];  // all car configs
   var overlay = document.getElementById('viewerOverlay');
   overlay.classList.add('dlv-fullscreen');
+  overlay.classList.toggle('dlv-header-pinned', hostPinsHeader());
   overlay.classList.add('open');
   // The floating support-chat bubble (chat-widget.js, #pbdChatPreview) is fixed bottom-right on
   // every page and would otherwise float on top of the full-viewport viewer -- hide it while open.
@@ -7187,4 +7188,11 @@ function viewerHost(){
 function hostHandlesFullscreen(){
   var h = viewerHost();
   return !!(h && h.handlesFullscreen);
+}
+// A host with room to spare (BigData for Windows: no browser chrome, 920px+ windows) keeps the header
+// bar open instead of the hover strip -- Ken, 2026-09-09: "get rid of the auto hide on that top menu.
+// it's annoying. there is plenty of room to leave it expanded". window.ADL_HOST.pinHeader = true.
+function hostPinsHeader(){
+  var h = viewerHost();
+  return !!(h && h.pinHeader);
 }
