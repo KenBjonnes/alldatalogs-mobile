@@ -459,22 +459,33 @@
       return '[' + pattern + ']';
     });
   }
-  function patternParam(p, concrete, pattern, counter) {
+  /** The name a {mathChannelId} parameter stands for: the caller's id -> name map when given, else the
+   *  label the picker stored (the channel's name at pick time). */
+  function mathNameOf(p, mathNames) {
+    if (!isObj(p) || p.mathChannelId == null) return null;
+    var nm = mathNames && mathNames[p.mathChannelId];
+    return nm || p.label || null;
+  }
+  function patternParam(p, concrete, pattern, counter, mathNames) {
     if (!isObj(p)) return p;
     var c = clone(p);
     if (sameChannelName(c.channel, concrete)) { c.channel = pattern; c.role = null; counter.n++; if (sameChannelName(c.label, concrete)) c.label = pattern; }
+    // A named math channel picked by id whose NAME is the family member ("Total Fuel Trim 1"): the param
+    // becomes a by-name reference to the pattern, and the resolvers map each page's concrete name back to
+    // the math channel of that name (Ken, 2026-09-09: pages over Total Fuel Trim 1 / 2).
+    else if (c.mathChannelId != null && sameChannelName(mathNameOf(c, mathNames), concrete)) { c.channel = pattern; c.mathChannelId = null; c.role = null; c.label = pattern; counter.n++; }
     if (typeof c.math === 'string') c.math = replaceRefs(c.math, concrete, pattern, counter);
     return c;
   }
-  function patternClauses(list, concrete, pattern, counter) {
+  function patternClauses(list, concrete, pattern, counter, mathNames) {
     if (!Array.isArray(list)) return list;
     return list.map(function (c) {
-      if (Array.isArray(c)) return patternClauses(c, concrete, pattern, counter);
+      if (Array.isArray(c)) return patternClauses(c, concrete, pattern, counter, mathNames);
       if (!isObj(c)) return c;
       var copy = clone(c);
-      if (Array.isArray(copy.group)) { copy.group = patternClauses(copy.group, concrete, pattern, counter); return copy; }
+      if (Array.isArray(copy.group)) { copy.group = patternClauses(copy.group, concrete, pattern, counter, mathNames); return copy; }
       if (typeof copy.param === 'string') { if (sameChannelName(copy.param, concrete)) { copy.param = pattern; copy.role = null; counter.n++; } }
-      else if (isObj(copy.param)) { var before = counter.n; copy.param = patternParam(copy.param, concrete, pattern, counter); if (counter.n > before) copy.role = null; }
+      else if (isObj(copy.param)) { var before = counter.n; copy.param = patternParam(copy.param, concrete, pattern, counter, mathNames); if (counter.n > before) copy.role = null; }
       return copy;
     });
   }
@@ -482,17 +493,17 @@
    *  inline math and filter expression references, simple-filter clauses); when `value` is given, a
    *  standalone occurrence of that number in the NAME becomes {n} too ("MP15 FT" -> "MP{n} FT").
    *  Returns { def, count } -- a deep copy and how many places changed. */
-  function applyPagePattern(def, concrete, pattern, value) {
+  function applyPagePattern(def, concrete, pattern, value, mathNames) {
     var counter = { n: 0 };
     if (!isObj(def)) return { def: def, count: 0 };
     var d = clone(def);
-    d.cellParameter = patternParam(d.cellParameter, concrete, pattern, counter);
-    d.weightParameter = patternParam(d.weightParameter, concrete, pattern, counter);
-    if (isObj(d.columnAxis)) d.columnAxis.parameter = patternParam(d.columnAxis.parameter, concrete, pattern, counter);
-    if (isObj(d.rowAxis)) d.rowAxis.parameter = patternParam(d.rowAxis.parameter, concrete, pattern, counter);
+    d.cellParameter = patternParam(d.cellParameter, concrete, pattern, counter, mathNames);
+    d.weightParameter = patternParam(d.weightParameter, concrete, pattern, counter, mathNames);
+    if (isObj(d.columnAxis)) d.columnAxis.parameter = patternParam(d.columnAxis.parameter, concrete, pattern, counter, mathNames);
+    if (isObj(d.rowAxis)) d.rowAxis.parameter = patternParam(d.rowAxis.parameter, concrete, pattern, counter, mathNames);
     if (isObj(d.filter)) {
       d.filter.expression = replaceRefs(d.filter.expression, concrete, pattern, counter);
-      d.filter.clauses = patternClauses(d.filter.clauses, concrete, pattern, counter);
+      d.filter.clauses = patternClauses(d.filter.clauses, concrete, pattern, counter, mathNames);
     }
     if (typeof d.name === 'string' && !hasPageVar(d.name)) {
       if (sameChannelName(d.name, concrete)) { d.name = pattern; counter.n++; }
@@ -504,12 +515,13 @@
     return { def: d, count: counter.n };
   }
   /** Every concrete channel name a def refers to (parameters, bracketed refs in math/filters, clauses). */
-  function channelStringsOf(def) {
+  function channelStringsOf(def, mathNames) {
     var out = [];
     var add = function (s) { if (typeof s === 'string' && s && out.indexOf(s) < 0) out.push(s); };
     var fromParam = function (p) {
       if (!isObj(p)) return;
       if (p.channel) add(p.channel);
+      if (p.mathChannelId != null) add(mathNameOf(p, mathNames));   // a named math channel counts by its name
       if (typeof p.math === 'string') p.math.replace(/\[([^\]]+)\]/g, function (_, ref) { add(ref.replace(/^\s+|\s+$/g, '')); return _; });
     };
     var walk = function (list) {
@@ -534,10 +546,10 @@
   }
   /** The concrete members of a def's page family still written out in full (e.g. "Mapped Point 15
    *  Weight" while the pattern is "Mapped Point {n} Weight") -- what "Replace with the pattern" acts on. */
-  function pageConcretes(def, pattern) {
+  function pageConcretes(def, pattern, mathNames) {
     var re = pageRegExp(pattern);
     if (!re) return [];
-    return channelStringsOf(def).filter(function (s) { return !hasPageVar(s) && re.test(s); });
+    return channelStringsOf(def, mathNames).filter(function (s) { return !hasPageVar(s) && re.test(s); });
   }
   /** Fold a list of defs that differ only by one number in a channel name (MP0 FT, MP1 FT, ... each
    *  filtering on its own "Mapped Point N Weight") into one paged def per family. Returns

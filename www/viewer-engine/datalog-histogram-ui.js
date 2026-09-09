@@ -337,6 +337,16 @@
       var name = resolveName(param);
       // a label makeParam auto-filled from the ROLE id ("engine_rpm") is not a display name; use the channel's
       if (name) return entry(name, (param.label && param.label !== param.role) ? param.label : name, (param.role && roles[param.role] === name) ? 'role' : 'channel');
+      // A by-NAME reference to a named math channel ({channel:'Total Fuel Trim 1'} -- what a paged
+      // "Total Fuel Trim {n}" parameter becomes once the page is filled in): not a column of this set,
+      // so resolve it through the math list exactly as lookup() does for expressions (Ken, 2026-09-09).
+      if (param.channel && !param.mathChannelId) {
+        var mcByName = getMathChannel(param.channel);
+        if (mcByName && mcByName.expression) {
+          var cmb = mathChannelValues(mcByName);
+          if (cmb) return { values: cmb.values, unit: (param.unit || mcByName.unit) || null, levels: null, label: (param.label && param.label !== param.role) ? param.label : (mcByName.name || param.channel), channel: null, source: 'mathChannel' };
+        }
+      }
       if (param.mathChannelId) {
         // Id, then the id as a name, then the param's LABEL (the picker stores the channel's name
         // there): an orphaned id from a reloaded layout still lands on the live channel of that name.
@@ -605,8 +615,18 @@
       function channelNames() {
         var data = null;
         try { data = ensureData(); } catch (e) { data = null; }
-        return data ? (data.channels || Object.keys(data.series || {})) : [];
+        var names = data ? (data.channels || Object.keys(data.series || {})).slice() : [];
+        // Named math channels page too -- "Total Fuel Trim {n}" over Total Fuel Trim 1 / 2 (Ken,
+        // 2026-09-09). They are not columns of the histogram data set, so add their names for {n}
+        // discovery; the resolver maps each page's name back to the math channel.
+        mathNames().forEach(function (nm) { if (names.indexOf(nm) < 0) names.push(nm); });
+        return names;
       }
+      function mathListSafe() {
+        try { return (glue.mathChannels && typeof glue.mathChannels.list === 'function') ? (glue.mathChannels.list() || []) : []; } catch (e) { return []; }
+      }
+      function mathNames() { return mathListSafe().map(function (m) { return m && m.name; }).filter(Boolean); }
+      function mathNameMap() { var out = {}; mathListSafe().forEach(function (m) { if (m && m.id != null) out[m.id] = m.name || ''; }); return out; }
       function pageInfo(def) {
         if (!def || !H().usesPages(def)) return null;
         var values = H().pageValues(def, channelNames());

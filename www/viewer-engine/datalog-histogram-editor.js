@@ -203,6 +203,17 @@
       if (!isObj(param)) return null;
       if (param.channel && series[param.channel]) return chanRec(param.channel, param.label);
       if (param.role && roles[param.role] && series[roles[param.role]]) return chanRec(roles[param.role], param.label);
+      // A by-NAME reference to a named math channel ({channel:'Total Fuel Trim 1'}, a paged parameter
+      // with its page filled in) -- same rule as HistogramUI's resolver (Ken, 2026-09-09).
+      if (param.channel && !param.mathChannelId) {
+        var mcn = findMathChannel(param.channel);
+        if (mcn && mcn.expression && !compilingMath[mcn.id]) {
+          compilingMath[mcn.id] = true;
+          var cmn;
+          try { cmn = compileExpr(mcn.expression); } finally { delete compilingMath[mcn.id]; }
+          if (cmn.values) return { values: cmn.values, unit: (param.unit || mcn.unit) || null, levels: null, label: param.label || mcn.name };
+        }
+      }
       if (param.mathChannelId) {
         var mc = findMathChannel(param.mathChannelId) || (param.label ? findMathChannel(param.label) : null);
         if (!mc || !mc.expression || compilingMath[mc.id]) return null;
@@ -472,7 +483,8 @@
       if (def.pages != null) {
         if (!isObj(def.pages) || !H0.hasPageVar(def.pages.pattern)) errors.push({ path: 'pages', message: 'Pages needs a series channel or a pattern containing {n} (e.g. Mapped Point {n} Weight)' });
         else {
-          var pchans = (ctx.data && ctx.data.channels) || [];
+          var pchans = ((ctx.data && ctx.data.channels) || []).slice();
+          (typeof ctx.mathNames === 'function' ? (ctx.mathNames() || []) : (ctx.mathNames || [])).forEach(function (nm) { if (pchans.indexOf(nm) < 0) pchans.push(nm); });
           var pvals = H0.pageValues(def, pchans), pcur = H0.currentPage(def, pvals);
           if (ctx.data && pchans.length && !pvals.length) warnings.push({ path: 'pages', message: 'No channel in this log matches "' + def.pages.pattern + '"' });
           if (!usesVar.length) warnings.push({ path: 'pages', message: 'Nothing in this histogram uses {n} — every page would show the same table' });
@@ -896,10 +908,22 @@
   // The editor works on the TEMPLATE (with {n}); every check that touches the log -- resolver, filter
   // pass count, math preview, "not in this log" -- substitutes the current page first, so the editor
   // reports exactly what the table will compute for the page on screen.
+  // Named math channels are page members too ("Total Fuel Trim {n}" over Total Fuel Trim 1 / 2 --
+  // Ken, 2026-09-09): every place the editor looks for {n} values or family members sees their names.
+  function edMathList(ed) {
+    try { var mc = ed && ed.opts && ed.opts.mathChannels; return (mc && typeof mc.list === 'function') ? (mc.list() || []) : []; } catch (e) { return []; }
+  }
+  function edMathNames(ed) { return edMathList(ed).map(function (m) { return m && m.name; }).filter(Boolean); }
+  function edMathNameMap(ed) { var out = {}; edMathList(ed).forEach(function (m) { if (m && m.id != null) out[m.id] = m.name || ''; }); return out; }
+  function pageChannelNames(ed) {
+    var names = ((ed && ed.data && ed.data.channels) || []).slice();
+    edMathNames(ed).forEach(function (nm) { if (names.indexOf(nm) < 0) names.push(nm); });
+    return names;
+  }
   function edPage(ed) {
     var w = ed && ed.work;
     if (!w || !H() || !H().usesPages(w)) return null;
-    return H().currentPage(w, H().pageValues(w, (ed.data && ed.data.channels) || []));
+    return H().currentPage(w, H().pageValues(w, pageChannelNames(ed)));
   }
   function pageSub(ed, s) { var v = edPage(ed); return v != null ? H().substitutePage(s, v) : s; }
   function pageAwareResolver(base, ed) {
@@ -918,7 +942,9 @@
     var w = ed.work;
     if (!H() || !H().usesPages(w)) return null;
     var concrete = pageSub(ed, w.pages.pattern);
-    return { name: w.pages.pattern, unit: (concrete && ed.units[concrete]) || '' };
+    var unit = (concrete && ed.units[concrete]) || '';
+    if (!unit && concrete) { var mcs = edMathList(ed); for (var i = 0; i < mcs.length; i++) if (mcs[i] && mcs[i].name === concrete) { unit = mcs[i].unit || ''; break; } }
+    return { name: w.pages.pattern, unit: unit };
   }
   function parsePageValues(text) {
     var out = [], seen = {};
@@ -952,7 +978,7 @@
     if (!c) { ed.toast('"' + name + '" has no number in it to page through'); ed.render(); return; }
     var w = ed.work;
     if (!isObj(w.pages)) w.pages = { pattern: '', values: null, label: null, current: null };
-    var r = H_.applyPagePattern(w, name, c.pattern, c.value);
+    var r = H_.applyPagePattern(w, name, c.pattern, c.value, edMathNameMap(ed));
     Object.keys(r.def).forEach(function (k) { w[k] = r.def[k]; });
     w.pages.pattern = c.pattern;
     w.pages.current = c.value;
@@ -968,9 +994,9 @@
         '<span>{n} works anywhere: filter conditions, cell / axis parameters, math, and the name.</span></div>' +
       row('Pages', '<label class="dlv-hg-chk"><input type="checkbox" data-toggle="pages"' + (p ? ' checked' : '') + '> Step this histogram through pages</label>');
     if (!p) return html + '</div>';
-    var chans = (ed.data && ed.data.channels) || [];
+    var chans = pageChannelNames(ed);
     var values = H_.pageValues(w, chans), cur = H_.currentPage(w, values);
-    var uses = H_.pageVarUses(w), concretes = H_.pageConcretes(w, p.pattern);
+    var uses = H_.pageVarUses(w), concretes = H_.pageConcretes(w, p.pattern, edMathNameMap(ed));
     var found;
     if (!H_.hasPageVar(p.pattern)) found = '<span class="dlv-hg-warn">Pick a series channel, or type a pattern with {n} in it.</span>';
     else if (!ed.data || !chans.length) found = '<span class="dlv-hg-faint">No log loaded — pages are found when a log is open.</span>';
@@ -1009,7 +1035,8 @@
     var resolver = typeof opts.resolver === 'function' ? opts.resolver : makeLocalResolver(data, opts.resolvedRoles, units, mcListFn0);
     var escapeHtml = typeof opts.escapeHtml === 'function' ? opts.escapeHtml : esc;
     var toast = typeof opts.toast === 'function' ? opts.toast : function (m) { if (global.console) console.log('[histogram editor] ' + m); };
-    var ctx = { data: data, unitByChannel: units, resolver: resolver, resolvedRoles: opts.resolvedRoles || {} };
+    var ctx = { data: data, unitByChannel: units, resolver: resolver, resolvedRoles: opts.resolvedRoles || {},
+      mathNames: function () { try { return mcListFn0 ? (mcListFn0() || []).map(function (m) { return m && m.name; }).filter(Boolean) : []; } catch (e) { return []; } } };
     var ed = {
       work: work, opts: opts, data: data, units: units, resolver: resolver, ctx: ctx, esc: escapeHtml, toast: toast,
       baseline: JSON.stringify(work), tab: SLOT_TAB[opts.focusSlot] || 'general',
@@ -1845,8 +1872,13 @@
       case 'pages-pick': {
         channelPicker(btn, {
           channels: (ed.data && ed.data.channels) || [], unitByChannel: ed.units, textLevels: (ed.data && ed.data.textLevels) || {},
-          resolvedRoles: ed.ctx.resolvedRoles, allowCategorical: false, allowMath: false, current: {},
-          onPick: function (param) { if (param && param.channel) adoptSeriesChannel(ed, param.channel, false); }
+          resolvedRoles: ed.ctx.resolvedRoles, allowCategorical: false, allowMath: true, mathChannels: edMathList(ed), current: {},
+          onPick: function (param) {
+            if (!param) return;
+            // a named math channel is a family member by its NAME ("Total Fuel Trim 1")
+            var nm = param.channel || (param.mathChannelId ? (edMathNameMap(ed)[param.mathChannelId] || param.label) : null);
+            if (nm) adoptSeriesChannel(ed, nm, false);
+          }
         });
         return;
       }
