@@ -70,17 +70,30 @@ function readLocal(): SavedLayout[] {
 }
 function writeLocal(list: SavedLayout[]) { try { localStorage.setItem(LS_KEY, JSON.stringify(list.slice(0, 200))); } catch { /* full */ } }
 function genId(): string { return 'ly_' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36); }
+// owner = the account (lower-case email) an entry is synced under; absent = saved while signed out. One
+// local list per device, so two sign-ins must not see / overwrite each other's rows (a push of another
+// account's row is refused by RLS and the save silently never reaches the cloud -- Ken, 2026-09-09).
+function ownerKey(): string | null { const e = (license.email || '').trim().toLowerCase(); return e || null; }
+function visibleLayouts(list: SavedLayout[]): SavedLayout[] { const o = ownerKey(); return list.filter((l) => !l.owner || l.owner === o); }
 function saveLayout(name: string, state: Dict): SavedLayout {
-  const list = readLocal(), now = Date.now();
-  const existing = list.find((l) => l.name.toLowerCase() === name.toLowerCase());
+  const list = readLocal(), now = Date.now(), owner = ownerKey();
+  const existing = visibleLayouts(list).find((l) => l.name.toLowerCase() === name.toLowerCase());
   let entry: SavedLayout;
-  if (existing) { existing.state = state; existing.updatedAt = now; entry = existing; }
-  else { entry = { id: genId(), name, state, updatedAt: now }; list.push(entry); }
+  if (existing) { existing.state = state; existing.updatedAt = now; if (owner) existing.owner = owner; entry = existing; }
+  else { entry = owner ? { id: genId(), name, state, updatedAt: now, owner } : { id: genId(), name, state, updatedAt: now }; list.push(entry); }
   writeLocal(list);
   return entry;
 }
+let lastPullAt = 0;
+const PULL_THROTTLE_MS = 8000;
+function mergeCloudRows(rows: SavedLayout[]) {
+  const owner = ownerKey();
+  const byId = new Map(readLocal().map((l) => [l.id, l]));
+  for (const row of rows) byId.set(row.id, owner ? { ...row, owner } : row);
+  writeLocal([...byId.values()]);
+}
 const layoutProvider = {
-  list() { return readLocal().sort((a, b) => b.updatedAt - a.updatedAt).map((l) => ({ id: l.id, name: l.name, kind: typeof (l.state as { kind?: unknown }).kind === 'string' ? (l.state as { kind: string }).kind : undefined })); },
+  list() { return visibleLayouts(readLocal()).sort((a, b) => b.updatedAt - a.updatedAt).map((l) => ({ id: l.id, name: l.name, kind: typeof (l.state as { kind?: unknown }).kind === 'string' ? (l.state as { kind: string }).kind : undefined })); },
   save(state: Dict, name?: string): boolean {
     const chosen = name != null && name !== '' ? name : (window.prompt('Name this layout:', '') || '');
     const trimmed = chosen.trim();
@@ -91,17 +104,24 @@ const layoutProvider = {
   },
   apply(id: string): Dict | undefined { return readLocal().find((l) => l.id === id)?.state; },
   remove(id: string): void { writeLocal(readLocal().filter((l) => l.id !== id)); if (lic.isPro()) removeLayout(id).catch(() => {}); },
+  // On-demand cloud pull when the layout picker opens (throttled); resolves true when rows arrived.
+  refresh(): Promise<boolean> {
+    if (!lic.isPro() || !license.email) return Promise.resolve(false);
+    const now = Date.now();
+    if (now - lastPullAt < PULL_THROTTLE_MS) return Promise.resolve(false);
+    lastPullAt = now;
+    return pullLayouts().then((r) => { if (r.ok && r.rows.length) { mergeCloudRows(r.rows); return true; } return false; }).catch(() => false);
+  },
+  account(): { email: string; synced: boolean } | null { return license.email ? { email: license.email, synced: lic.isPro() } : null; },
 };
 let pulledFor: string | null = null;
 function maybePullLayouts(s: LicenseState) {
   if (s.pro !== true || !s.email || pulledFor === s.email) return;
   pulledFor = s.email;
+  lastPullAt = Date.now();
   pullLayouts().then((r) => {
-    if (!r.ok || !r.rows.length) return;
-    const byId = new Map(readLocal().map((l) => [l.id, l]));
-    for (const row of r.rows) byId.set(row.id, row);
-    writeLocal([...byId.values()]);
-    return window.reloadViewerLayouts?.();
+    if (r.ok && r.rows.length) mergeCloudRows(r.rows);
+    return window.reloadViewerLayouts?.();   // re-list either way: the visible set is per account
   }).catch(() => {});
 }
 

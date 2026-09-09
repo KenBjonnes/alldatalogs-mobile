@@ -183,6 +183,9 @@
 .dlv-vrow-del{width:26px;height:26px;flex-shrink:0;border:none;background:none;color:var(--text-faint, #5c5c66);cursor:pointer;border-radius:6px;font-size:13px;line-height:1;padding:0;}
 .dlv-vrow-del:hover{background:var(--bg-elev, #111114);color:var(--red, #d1132e);}
 .dlv-vpick-grouplabel{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint, #5c5c66);padding:5px 9px 2px;font-weight:700;}
+/* whose cloud the saved lists come from (a sign-in mismatch looks like a lost save otherwise) */
+.dlv-vpick-account{font-size:10px;color:var(--text-faint, #5c5c66);padding:0 9px 6px;margin-top:-2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;}
+.dlv-vpick-account b{font-weight:600;color:var(--text-dim, #9a9aa2);}
 .dlv-close{width:32px;height:32px;border-radius:8px;background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
 .dlv-close:hover{border-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
 

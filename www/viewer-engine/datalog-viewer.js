@@ -5193,21 +5193,25 @@ function applyVehicleConfig(id){
 }
 // Layout / Custom Gauges pickers -- a native <select> can't carry a per-item delete button. Reuses the
 // header-menu shell (VIEWER_HDR_MENU + its document-click / Escape closers).
-function openViewPicker(anchor, which){
-  var key = 'vpick:' + which;
-  var already = VIEWER_HDR_MENU && VIEWER_HDR_MENU.__which === key;
-  closeHdrMenu();
-  if(typeof closePerfMenu === 'function') closePerfMenu();
-  if(typeof closeGaugeMenu === 'function') closeGaugeMenu();
-  closeGraphMenu();
-  if(already) return;   // second click on the same button closes it
+// Which account the host's layouts provider syncs to, for the picker's account line. A provider may
+// expose account() -> { email, synced } | null (null = not signed in). Ken, 2026-09-09: layouts saved
+// at home under one sign-in "weren't there" at the shop under another -- the picker now says whose
+// cloud it is showing, so an account mismatch is visible instead of looking like a lost save.
+function viewsAccountLine(){
+  var lp = viewsProvider();
+  if(!lp || typeof lp.account !== 'function') return '';
+  var a = null; try { a = lp.account(); } catch(e){ a = null; }
+  if(a && a.email){
+    return '<div class="dlv-vpick-account" title="' + (a.synced ? 'Saved layouts sync to this account across your devices' : 'Sign in with Pro to sync saved layouts across devices') + '">' +
+      (a.synced ? 'Synced to <b>' + escapeHtml(a.email) + '</b>' : 'This device only · <b>' + escapeHtml(a.email) + '</b> (not Pro)') + '</div>';
+  }
+  return '<div class="dlv-vpick-account" title="Sign in with Pro to sync saved layouts across devices">This device only · not signed in</div>';
+}
+function viewPickerHtml(which){
   var cur = (which === 'gauges' ? VIEWER_CURRENT_GAUGES : VIEWER_CURRENT_LAYOUT) || {};
-  var m = document.createElement('div');
-  m.className = 'dlv-gmenu dlv-hdr-menu dlv-vpick-menu';
-  m.__which = key;
   var html = '';
   if(which === 'view'){
-    html += '<h4>Layout</h4>';
+    html += '<h4>Layout</h4>' + viewsAccountLine();
     // PBD layouts assigned to this vehicle -- the default is auto-loaded; the rest are switchable here.
     var vveh = VIEWER_VEHICLE_CONFIGS.filter(function(c){ return (c.kind || 'view') !== 'gauges'; });
     if(vveh.length){
@@ -5222,7 +5226,7 @@ function openViewPicker(anchor, which){
     html += '<div class="dlv-menu-sep"></div>';
     html += saved.length ? saved.map(function(r){ return viewPickRowHtml(r, 'view'); }).join('') : '<div class="dlv-gmenu-hint">No saved layouts yet.</div>';
   } else {
-    html += '<h4>Custom Gauges</h4>';
+    html += '<h4>Custom Gauges</h4>' + viewsAccountLine();
     var gveh = VIEWER_VEHICLE_CONFIGS.filter(function(c){ return (c.kind || 'view') === 'gauges'; });
     if(gveh.length){
       html += '<div class="dlv-vpick-grouplabel">For this car</div>';
@@ -5234,12 +5238,52 @@ function openViewPicker(anchor, which){
     html += '<div class="dlv-vrow"><button type="button" class="act clear dlv-vrow-pick' + (viewerIsPro() ? '' : ' dlv-pro-locked') + '" data-newdash="1">+ Build custom gauges</button></div>';
     if(libraryAvailable()) html += '<div class="dlv-vrow"><button type="button" class="act clear dlv-vrow-pick" data-library="gauges">Browse the library…</button></div>';
   }
-  m.innerHTML = html;
-  document.body.appendChild(m);
+  return html;
+}
+function positionHdrMenu(m, anchor){
   var rc = anchor.getBoundingClientRect(), pad = 8;
   m.style.top = (rc.bottom + 6) + 'px';
   m.style.left = Math.max(pad, Math.min(rc.left, window.innerWidth - m.offsetWidth - pad)) + 'px';
+}
+function openViewPicker(anchor, which){
+  var key = 'vpick:' + which;
+  var already = VIEWER_HDR_MENU && VIEWER_HDR_MENU.__which === key;
+  closeHdrMenu();
+  if(typeof closePerfMenu === 'function') closePerfMenu();
+  if(typeof closeGaugeMenu === 'function') closeGaugeMenu();
+  closeGraphMenu();
+  if(already) return;   // second click on the same button closes it
+  var m = document.createElement('div');
+  m.className = 'dlv-gmenu dlv-hdr-menu dlv-vpick-menu';
+  m.__which = key;
+  m.innerHTML = viewPickerHtml(which);
+  document.body.appendChild(m);
+  positionHdrMenu(m, anchor);
   VIEWER_HDR_MENU = m;
+  wireViewPicker(m, which);
+  // Cloud refresh on open: the host pulled its cloud layouts when it started, but a save made since
+  // then on another device (or in another browser) only shows up after another pull. A provider that
+  // exposes refresh() (a throttled pull; resolves true when rows arrived) gets called here, and the
+  // still-open picker is re-rendered in place with the fresh list.
+  var lp = viewsProvider();
+  if(lp && typeof lp.refresh === 'function'){
+    var p = null;
+    try { p = lp.refresh(); } catch(e){ p = null; }
+    if(p && typeof p.then === 'function'){
+      p.then(function(changed){
+        if(changed === false) return;
+        return loadSavedViews().then(function(){
+          refreshViewSelect();
+          if(VIEWER_HDR_MENU !== m || !m.parentNode) return;   // closed meanwhile
+          m.innerHTML = viewPickerHtml(which);
+          wireViewPicker(m, which);
+          positionHdrMenu(m, anchor);
+        });
+      }).catch(function(){});
+    }
+  }
+}
+function wireViewPicker(m, which){
   m.querySelectorAll('[data-pick]').forEach(function(btn){
     btn.addEventListener('click', function(){
       var v = btn.getAttribute('data-pick'); closeHdrMenu();

@@ -22969,24 +22969,41 @@ ${suffix}`;
   function genId() {
     return "ly_" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
   }
+  function ownerKey() {
+    const e = (license.email || "").trim().toLowerCase();
+    return e || null;
+  }
+  function visibleLayouts(list) {
+    const o = ownerKey();
+    return list.filter((l) => !l.owner || l.owner === o);
+  }
   function saveLayout(name, state2) {
-    const list = readLocal(), now = Date.now();
-    const existing = list.find((l) => l.name.toLowerCase() === name.toLowerCase());
+    const list = readLocal(), now = Date.now(), owner = ownerKey();
+    const existing = visibleLayouts(list).find((l) => l.name.toLowerCase() === name.toLowerCase());
     let entry;
     if (existing) {
       existing.state = state2;
       existing.updatedAt = now;
+      if (owner) existing.owner = owner;
       entry = existing;
     } else {
-      entry = { id: genId(), name, state: state2, updatedAt: now };
+      entry = owner ? { id: genId(), name, state: state2, updatedAt: now, owner } : { id: genId(), name, state: state2, updatedAt: now };
       list.push(entry);
     }
     writeLocal(list);
     return entry;
   }
+  var lastPullAt = 0;
+  var PULL_THROTTLE_MS = 8e3;
+  function mergeCloudRows(rows) {
+    const owner = ownerKey();
+    const byId = new Map(readLocal().map((l) => [l.id, l]));
+    for (const row of rows) byId.set(row.id, owner ? { ...row, owner } : row);
+    writeLocal([...byId.values()]);
+  }
   var layoutProvider = {
     list() {
-      return readLocal().sort((a, b) => b.updatedAt - a.updatedAt).map((l) => ({ id: l.id, name: l.name, kind: typeof l.state.kind === "string" ? l.state.kind : void 0 }));
+      return visibleLayouts(readLocal()).sort((a, b) => b.updatedAt - a.updatedAt).map((l) => ({ id: l.id, name: l.name, kind: typeof l.state.kind === "string" ? l.state.kind : void 0 }));
     },
     save(state2, name) {
       const chosen = name != null && name !== "" ? name : window.prompt("Name this layout:", "") || "";
@@ -23004,17 +23021,32 @@ ${suffix}`;
       writeLocal(readLocal().filter((l) => l.id !== id));
       if (isPro()) removeLayout(id).catch(() => {
       });
+    },
+    // On-demand cloud pull when the layout picker opens (throttled); resolves true when rows arrived.
+    refresh() {
+      if (!isPro() || !license.email) return Promise.resolve(false);
+      const now = Date.now();
+      if (now - lastPullAt < PULL_THROTTLE_MS) return Promise.resolve(false);
+      lastPullAt = now;
+      return pullLayouts().then((r) => {
+        if (r.ok && r.rows.length) {
+          mergeCloudRows(r.rows);
+          return true;
+        }
+        return false;
+      }).catch(() => false);
+    },
+    account() {
+      return license.email ? { email: license.email, synced: isPro() } : null;
     }
   };
   var pulledFor = null;
   function maybePullLayouts(s) {
     if (s.pro !== true || !s.email || pulledFor === s.email) return;
     pulledFor = s.email;
+    lastPullAt = Date.now();
     pullLayouts().then((r) => {
-      if (!r.ok || !r.rows.length) return;
-      const byId = new Map(readLocal().map((l) => [l.id, l]));
-      for (const row of r.rows) byId.set(row.id, row);
-      writeLocal([...byId.values()]);
+      if (r.ok && r.rows.length) mergeCloudRows(r.rows);
       return window.reloadViewerLayouts?.();
     }).catch(() => {
     });
