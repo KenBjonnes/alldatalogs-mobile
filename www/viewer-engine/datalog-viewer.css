@@ -212,7 +212,24 @@
 .dlv-channel-panel.dlv-collapsed .dlv-channel-inner{display:none;}
 .dlv-channel-collapse-btn{width:26px;height:26px;border-radius:6px;background:var(--bg-elev, #111114);border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);cursor:pointer;font-size:11px;flex-shrink:0;}
 .dlv-channel-collapse-btn:hover{color:var(--text, #f2f2f4);border-color:var(--red, #d1132e);}
-.dlv-channel-toolbar{display:flex;align-items:center;gap:6px;padding:10px;border-bottom:1px solid var(--card-border, #26262c);flex-shrink:0;}
+.dlv-channel-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:10px;border-bottom:1px solid var(--card-border, #26262c);flex-shrink:0;}
+/* Kind filter under the search box (Ken, 2026-09-09): ◉ logged | ƒ math | ≈ calculated, each with its
+   count, icon-only so the buttons read the same as the row badges. Lit = show only that kind (several lit
+   = their union); a kind the log doesn't have is greyed out. */
+.dlv-kind-bar{flex:1 0 100%;display:flex;gap:6px;min-width:0;}
+.dlv-kind-btn{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--card-border, #26262c);background:var(--bg-elev, #111114);color:var(--text-dim, #9a9aa2);cursor:pointer;font-size:12px;line-height:1;transition:border-color .12s,background .12s;}
+.dlv-kind-btn:disabled{opacity:.35;cursor:default;}
+.dlv-kind-btn:not(:disabled):hover{border-color:var(--text-dim, #9a9aa2);color:var(--text, #f2f2f4);}
+.dlv-kind-ico{font-weight:800;font-size:13px;}
+.dlv-kind-math .dlv-kind-ico{color:var(--amber, #f5a623);font-style:italic;}
+.dlv-kind-calc .dlv-kind-ico{color:#38bdf8;}
+.dlv-kind-n{font-size:10px;color:var(--text-faint, #5c5c66);font-variant-numeric:tabular-nums;}
+.dlv-kind-btn.active{border-color:var(--amber, #f5a623);background:rgba(245,166,35,.14);color:var(--text, #f2f2f4);}
+.dlv-kind-calc.active{border-color:#38bdf8;background:rgba(56,189,248,.14);}
+.dlv-kind-btn.active .dlv-kind-n{color:var(--text, #f2f2f4);}
+.dlv-mobile .dlv-kind-btn{padding:7px 13px;font-size:15px;}
+.dlv-mobile .dlv-kind-ico{font-size:16px;}
+.dlv-mobile .dlv-kind-n{font-size:12px;}
 .dlv-channel-search{flex:1;padding:7px 10px;border-radius:7px;border:1px solid var(--card-border, #26262c);background:var(--bg-elev, #111114);color:var(--text, #f2f2f4);font-size:12px;min-width:0;}
 /* Filter box + its clear (x) button, shown only when there's text (dlv-has-text toggled in JS). */
 .dlv-search-wrap{flex:1;position:relative;display:flex;min-width:0;}
@@ -304,17 +321,24 @@ table.dlv-channel-table tbody tr.dlv-row-selected{background:rgba(209,19,46,0.06
    value is visible at a glance (not just selected/graphed ones), updated on every cursor move via
    updateAtCursor()'s textContent-only pass over VIEWER_CHANNEL_VALUE_ELS. */
 .dlv-ch-cell{min-width:0;}
-.dlv-ch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim, #9a9aa2);cursor:default;line-height:1.3;font-size:13px;}
+/* Name row is a flex line: badge | label (the only part that shrinks, ellipsised) | tools (⚙ ∿, never
+   clipped). The buttons used to be inline after the text inside the ellipsis, so a long channel name hid
+   them -- Ken, 2026-09-09: "the ~ doesn't show on longer titles". */
+.dlv-ch-name{display:flex;align-items:center;min-width:0;white-space:nowrap;color:var(--text-dim, #9a9aa2);cursor:default;line-height:1.3;font-size:13px;}
+.dlv-ch-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dlv-ch-tools{flex:0 0 auto;display:inline-flex;align-items:center;margin-left:2px;}
 .dlv-row-selected .dlv-ch-name{color:var(--text, #f2f2f4);font-weight:600;}
 /* Marks a channel as computed (a math channel injected into the list, not a real log column) --
    Ken, 2026-09-08: "math channels are not showing up in the channels list to the left". */
 .dlv-ch-math-badge{display:inline-block;margin-right:4px;font-style:italic;font-weight:800;
   color:var(--amber, #f5a623);}
 /* calculated Vehicle Dynamics channels (estimated acceleration) + their settings gear */
-.dlv-ch-calc-badge{display:inline-block;margin-right:4px;font-weight:800;color:#38bdf8;}
-.dlv-ch-cfg{background:none;border:none;color:var(--text-faint, #5c5c66);cursor:pointer;font-size:12px;line-height:1;padding:0 3px;margin-left:4px;vertical-align:middle;}
-/* per-channel smoothing: shows on row hover, stays visible (with the window) once set */
-.dlv-ch-smooth{background:none;border:none;color:var(--text-faint, #5c5c66);cursor:pointer;font-size:13px;line-height:1;padding:0 3px;margin-left:3px;vertical-align:middle;opacity:0;transition:opacity .12s;}
+.dlv-ch-calc-badge{flex:0 0 auto;margin-right:4px;font-weight:800;color:#38bdf8;}
+.dlv-ch-math-badge{flex:0 0 auto;}
+.dlv-ch-cfg{background:none;border:none;color:var(--text-faint, #5c5c66);cursor:pointer;font-size:12px;line-height:1;padding:0 3px;margin-left:2px;}
+/* per-channel smoothing: faint so the control is discoverable on every row, full strength on hover and
+   (cyan, with the window) once set */
+.dlv-ch-smooth{background:none;border:none;color:var(--text-faint, #5c5c66);cursor:pointer;font-size:13px;line-height:1;padding:0 3px;margin-left:2px;opacity:.45;transition:opacity .12s;}
 .dlv-ch-smooth small{font-size:9px;margin-left:1px;font-weight:700;}
 tr:hover .dlv-ch-smooth,.dlv-ch-smooth.on{opacity:1;}
 .dlv-ch-smooth.on{color:#38bdf8;} .dlv-ch-smooth:hover{color:var(--amber, #f5a623);}

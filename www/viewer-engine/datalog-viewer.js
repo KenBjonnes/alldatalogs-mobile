@@ -900,7 +900,54 @@ function groupsMatchingSearch(q){
   });
   return hit;
 }
+// Channel KIND filter -- icon buttons under the search box (Ken, 2026-09-09: "some button filters that can
+// sort by logged parameter, math channel or these new ones. use their icon as the filter button"). The icons
+// are the row badges themselves: ◉ logged (recorded by the scanner), ƒ math channel, ≈ calculated (Vehicle
+// Dynamics). Empty set = every kind; several lit together = their union. Session-only, like the search text,
+// and applied on top of it.
+var VIEWER_KIND_FILTER = {};
+var CHANNEL_KINDS = [
+  ['logged', '&#9673;', 'Logged channels -- recorded by the scanner'],
+  ['math',   '&fnof;',  'Math channels -- computed from a formula, not logged'],
+  ['calc',   '&asymp;', 'Calculated channels -- Vehicle Dynamics, estimated from this log\'s speed channels']
+];
+function channelKind(c){ return isMathChannel(c) ? 'math' : isAccelChannel(c) ? 'calc' : 'logged'; }
+function kindFilterActive(){ return Object.keys(VIEWER_KIND_FILTER).some(function(k){ return !!VIEWER_KIND_FILTER[k]; }); }
+function channelPassesKind(c){ return !kindFilterActive() || !!VIEWER_KIND_FILTER[channelKind(c)]; }
+function kindCounts(){
+  var n = { logged: 0, math: 0, calc: 0 };
+  if(VIEWER_DATA && VIEWER_DATA.channels) VIEWER_DATA.channels.forEach(function(c){ n[channelKind(c)]++; });
+  return n;
+}
+function renderKindBarHtml(){
+  var n = kindCounts();
+  return '<div class="dlv-kind-bar" id="dlvKindBar" role="group" aria-label="Show only">' + CHANNEL_KINDS.map(function(k){
+    var on = !!VIEWER_KIND_FILTER[k[0]], cnt = n[k[0]];
+    return '<button type="button" class="dlv-kind-btn dlv-kind-' + k[0] + (on ? ' active' : '') + '" data-kind="' + k[0] + '"' +
+      (cnt ? '' : ' disabled') + ' aria-pressed="' + (on ? 'true' : 'false') + '" title="' + k[2] + (cnt ? ' (' + cnt + ')' : ' -- none in this log') +
+      (cnt ? (on ? '. Click to show every kind again' : '. Click to show only these') : '') + '">' +
+      '<span class="dlv-kind-ico">' + k[1] + '</span><span class="dlv-kind-n">' + cnt + '</span></button>';
+  }).join('') + '</div>';
+}
+function toggleKindFilter(kind){
+  if(VIEWER_KIND_FILTER[kind]) delete VIEWER_KIND_FILTER[kind]; else VIEWER_KIND_FILTER[kind] = true;
+  var bar = document.getElementById('dlvKindBar');
+  if(bar) Array.prototype.forEach.call(bar.querySelectorAll('[data-kind]'), function(b){
+    var on = !!VIEWER_KIND_FILTER[b.getAttribute('data-kind')];
+    b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  rerenderChannelRows();
+}
+function wireKindBar(){
+  var bar = document.getElementById('dlvKindBar'); if(!bar) return;
+  bar.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('[data-kind]') : null;
+    if(!b || b.disabled) return;
+    toggleKindFilter(b.getAttribute('data-kind'));
+  });
+}
 function channelMatchesSearch(c, q, groupHits){
+  if(!channelPassesKind(c)) return false;
   if(!q) return true;
   if(c.toLowerCase().indexOf(q) !== -1) return true;
   return !!groupHits[channelGroupFor(c).id];
@@ -1072,7 +1119,7 @@ function sortRows(rows){
 function sortedFilteredChannels(){
   var q = VIEWER_SEARCH.toLowerCase();
   var gaugeSet = gaugeChannelSet();
-  var rows = VIEWER_DATA.channels.filter(function(c){ return !q || c.toLowerCase().indexOf(q) !== -1; });
+  var rows = VIEWER_DATA.channels.filter(function(c){ return channelPassesKind(c) && (!q || c.toLowerCase().indexOf(q) !== -1); });
   var col = VIEWER_SORT.col, dir = VIEWER_SORT.dir;
   rows.sort(function(a, b){
     var av, bv;
@@ -1115,6 +1162,7 @@ function renderChannelPanelHtml(){
             (chanModeGrouped() ? 'Grouped list -- click for a flat list' : 'Flat list -- click to group') +
             '">' + (chanModeGrouped() ? '&#9776;' : '&#8801;') + '</button>'
         : '') +
+      renderKindBarHtml() +
     '</div>' +
     (isMobileViewer() ? renderKeypadHtml() : '') +
     '<div class="dlv-channel-inner">' +
@@ -2760,6 +2808,7 @@ function wireChannelPanelEvents(){
     renderViewerBody();
   });
   wireKeypad();
+  wireKindBar();
   // Tapping a channel means you've found what you were filtering for -- give the list its space
   // back without making the user hunt for Done.
   var bodyEl = document.getElementById('dlvChannelBody');
@@ -2856,12 +2905,17 @@ function renderOneChannelRow(c, pinnedRow){
           (pinnedRow ? '&#9679;' : '&#8593;') + '</button></td>'
       : '') +
     '<td class="dlv-ch-cell">' +
+      // Name row = [badge] [label ...ellipsis...] [tools]. The label is the only part that shrinks, so the ⚙ / ∿
+      // buttons always sit at the right edge of the cell -- Ken, 2026-09-09: "the ~ doesn't show on longer
+      // titles" (they used to be inline after the text, inside the ellipsis, so any long name clipped them).
       '<div class="dlv-ch-name" title="' + escapeHtml(c) + (isMathChannel(c) ? ' -- a math channel (computed, not logged)' : isAccelChannel(c) ? ' -- calculated (Vehicle Dynamics): estimated from this log\'s speed channels' : '') + '">' +
         (isMathChannel(c) ? '<span class="dlv-ch-math-badge" title="Math channel -- computed, not logged">&fnof;</span>' : '') +
         (isAccelChannel(c) ? '<span class="dlv-ch-calc-badge" title="Calculated · Vehicle Dynamics -- estimated from this log\'s speed channels">&asymp;</span>' : '') +
-        escapeHtml(c) +
-        (isAccelChannel(c) ? '<button type="button" class="dlv-ch-cfg" data-accel-cfg="1" title="Estimated acceleration settings: speed source, filtering, wheel-spin correction">&#9881;</button>' : '') +
-        (isTextChannel(c) ? '' : '<button type="button" class="dlv-ch-smooth' + (smoothingFor(c) ? ' on' : '') + '" data-smooth-ch="' + escapeHtml(c) + '" title="' + (smoothingFor(c) ? 'Smoothing: ' + smoothingFor(c) + ' ms' : 'Smooth this channel') + '">&#8767;' + (smoothingFor(c) ? '<small>' + (smoothingFor(c) >= 1000 ? (smoothingFor(c) / 1000) + 's' : smoothingFor(c)) + '</small>' : '') + '</button>') +
+        '<span class="dlv-ch-label">' + escapeHtml(c) + '</span>' +
+        '<span class="dlv-ch-tools">' +
+          (isAccelChannel(c) ? '<button type="button" class="dlv-ch-cfg" data-accel-cfg="1" title="Estimated acceleration settings: speed source, filtering, wheel-spin correction">&#9881;</button>' : '') +
+          (isTextChannel(c) ? '' : '<button type="button" class="dlv-ch-smooth' + (smoothingFor(c) ? ' on' : '') + '" data-smooth-ch="' + escapeHtml(c) + '" title="' + (smoothingFor(c) ? 'Smoothing: ' + smoothingFor(c) + ' ms' : 'Smooth this channel') + '">&#8767;' + (smoothingFor(c) ? '<small>' + (smoothingFor(c) >= 1000 ? (smoothingFor(c) / 1000) + 's' : smoothingFor(c)) + '</small>' : '') + '</button>') +
+        '</span>' +
         '</div>' +
       '<div class="dlv-ch-value"><span class="dlv-ch-value-num' + (isTextChannel(c) ? ' dlv-ch-value-text' : '') + '" data-ch-value="' + escapeHtml(c) + '">--</span>' + (unit && unit !== 'na' ? '<span class="dlv-ch-value-unit">' + escapeHtml(unit) + '</span>' : '') + '</div>' +
     '</td>' +
