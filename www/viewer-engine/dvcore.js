@@ -485,6 +485,7 @@ var DVCore = (() => {
   // ../../../../websites/Alldatalogs/packages/datalog-core/src/hpl/hpl-to-csv.ts
   var HPL_PID_NAMES = {
     3: "Fuel System #1 Status (SAE)",
+    4: "Calculated Engine Load (SAE)",
     5: "Engine Coolant Temp (SAE)",
     6: "Short Term Fuel Trim Bank 1 (SAE)",
     7: "Long Term Fuel Trim Bank 1 (SAE)",
@@ -498,21 +499,41 @@ var DVCore = (() => {
     15: "Intake Air Temp (SAE)",
     16: "Mass Airflow (SAE)",
     17: "Throttle Position (SAE)",
+    20: "O2 Voltage B1S1 (SAE)",
+    21: "O2 Voltage B1S2 (SAE)",
+    24: "O2 Voltage B2S1 (SAE)",
+    25: "O2 Voltage B2S2 (SAE)",
     35: "Fuel Rail Pressure (SAE)",
     47: "Fuel Level Input (SAE)",
     51: "Barometric Pressure (SAE)",
-    52: "WB EQ Ratio 1 (SAE)",
-    56: "WB EQ Ratio 5 (SAE)",
+    52: "WB EQ Ratio 1 (SAE) (2)",
+    56: "WB EQ Ratio 5 (SAE) (2)",
+    60: "Catalyst Temp B1S1 (SAE)",
+    61: "Catalyst Temp B2S1 (SAE)",
     66: "Control Module Voltage (SAE)",
     67: "Absolute Load (SAE)",
     68: "Equivalence Ratio Commanded (SAE)",
     69: "Relative Throttle Position (SAE)",
     70: "Ambient Air Temp (SAE)",
     73: "Accelerator Position D (SAE)",
+    74: "Accelerator Position E (SAE)",
     76: "Commanded Throttle Actuator (SAE)",
+    82: "Ethanol Fuel % (SAE)",
+    94: "Engine Fuel Rate (SAE)",
+    99: "Engine Reference Torque (SAE)",
+    259: "Fuel System #2 Status (SAE)",
     403: "Relative Throttle Position A (SAE)",
     404: "Relative Throttle Position B (SAE)",
+    407: "Commanded Throttle Actuator A (SAE)",
+    408: "Commanded Throttle Actuator B (SAE)",
+    411: "Mass Airflow A (SAE)",
+    412: "Mass Airflow B (SAE)",
+    594: "Monitor Status: Fuel System (SAE)",
+    597: "Monitor Status: Oxygen Sensor Heater (SAE)",
+    598: "Monitor Status: Oxygen Sensor (SAE)",
     2100: "Control Module Voltage",
+    2107: "Throttle Position Sensor 2",
+    2110: "Throttle Position Sensor",
     2111: "Throttle Position",
     2114: "Accelerator Pedal Position",
     2118: "Accelerator Pedal Position Sensor 1",
@@ -520,38 +541,103 @@ var DVCore = (() => {
     2120: "Engine Oil Pressure",
     2124: "Engine Coolant Temp",
     2125: "Ambient Air Temp",
+    2126: "Manifold Air Temp",
     2127: "Intake Air Temp",
+    2128: "Intake Air Temp 2",
+    2131: "Engine Run Time",
+    2133: "Engine Oil Pressure Sensor",
     2135: "Engine RPM",
+    2136: "Engine Oil Temp",
+    2149: "Aircharge Temperature",
+    2154: "Aircharge",
     2161: "Throttle Desired Angle",
+    2162: "Throttle Angle",
+    2163: "Regulator Voltage",
+    2164: "Intake Air Temp Sensor",
     2165: "Cylinder Head Temp",
     2170: "Intake Cam Des Angle",
     2172: "Intake Cam Angle",
     2173: "Intake Cam 2 Angle",
+    2174: "Intake Cam Error",
+    2175: "Intake Cam 2 Error",
     2176: "Exhaust Cam Des Angle",
     2178: "Exhaust Cam Angle",
     2179: "Exhaust Cam 2 Angle",
+    2180: "Exhaust Cam Error",
+    2181: "Exhaust Cam 2 Error",
     2182: "Intake Cam DC",
     2183: "Intake Cam 2 DC",
     2184: "Exhaust Cam DC",
     2185: "Exhaust Cam 2 DC",
     2210: "Idle Desired RPM",
+    2216: "Relative Throttle",
+    2219: "Mass Airflow Sensor 1",
     2240: "Idle Adapt (STIT)",
     2261: "Throttle Desired Angle (Flow Model)",
+    2262: "Throttle Angle Feedback Adder",
     2263: "Throttle Angle Predicted (TQ Control)",
+    2264: "Aircharge Temperature Sensor",
+    2298: "Throttle Body Airflow",
     2300: "Mass Airflow",
+    2301: "Mass Airflow Sensor",
+    2302: "Mass Airflow Sensor",
+    2305: "Base Volumetric Efficiency Bank 1",
+    2311: "Volumetric Efficiency Airflow",
+    2313: "Total Airflow",
+    2316: "Desired Engine Airflow",
+    2321: "Cylinder Airmass",
     2323: "Air Load",
+    2324: "Intake Manifold Runner Control Sensor",
     2331: "Manifold Absolute Pressure",
+    2332: "Manifold Absolute Pressure Sensor",
+    2336: "Boost Pressure",
+    2337: "Pressure Ratio",
     2340: "Barometric Pressure",
+    2342: "Calculated Manifold Absolute Pressure",
     2343: "Supercharger Inlet Pressure",
+    2354: "Turbo Bypass DC",
+    2362: "Brake Pressure",
+    2396: "Idle Torque Base Correction",
+    2397: "Idle Torque Instant Correction",
+    2398: "Idle RPM Error",
+    2399: "Idle Torque Corr. Integral Term",
+    2400: "Idle Torque Corr. Proportional Term",
+    2401: "Idle Torque Corr. Derivative Term",
+    2402: "Idle Torque Instant Corr. Prop. Term",
     2408: "MAP Maximum Achievable (Current Conditions)",
     2409: "Load Maximum Achievable (Current Conditions)",
+    2410: "Barometric Pressure - Hi Res",
     2418: "Load Maximum Calibrated (Current Conditions)",
+    2429: "Supercharger Inlet Pressure (Inferred)",
     2500: "Timing Advance",
     2501: "Drive Mode Requested",
+    2513: "IAT Advance",
     2517: "Torque Mgt Advance",
+    2605: "Knock Sensor 1",
+    2606: "Knock Sensor 2",
     2630: "Knock Retard",
+    2631: "Total Knock Retard",
+    2632: "Knock Retard Short Term",
     2649: "Knock Correction (+Adv/-Ret)",
     2702: "Desired Brake Torque",
+    2706: "Actual Torque",
+    2707: "Expected Torque",
+    2795: "Supercharger Bypass Stable Open",
+    2796: "Supercharger Bypass Stable Closed",
+    2797: "Supercharger Inlet Pressure for Bypass Open",
+    2798: "Supercharger Inlet Pressure for Bypass Closed",
+    3018: "Throttle Position ADC (Relative)",
+    3100: "Misfire Current Cylinder #1",
+    3101: "Misfire Current Cylinder #2",
+    3102: "Misfire Current Cylinder #3",
+    3103: "Misfire Current Cylinder #4",
+    3104: "Misfire Current Cylinder #5",
+    3105: "Misfire Current Cylinder #6",
+    3106: "Misfire Current Cylinder #7",
+    3107: "Misfire Current Cylinder #8",
+    3130: "Total Misfires",
+    3136: "Total Misfires Since Key-on",
+    3203: "Relative Pedal",
     4024: "Clutch A Temp",
     4025: "Clutch B Temp",
     4028: "Clutch A Slip",
@@ -559,12 +645,20 @@ var DVCore = (() => {
     4050: "Clutch A Pressure (Corrected)",
     4051: "Clutch B Pressure (Corrected)",
     4100: "Trans Fluid Temp",
+    4103: "Rear Diff Fluid Temp",
     4110: "Trans Input Shaft RPM",
     4111: "Trans Output Shaft RPM",
     4112: "Trans Turbine RPM",
     4115: "Trans Input Shaft RPM B",
+    4117: "Trans Slip RPM",
+    4190: "Clutch A Pressure",
+    4191: "Clutch B Pressure",
+    4192: "Clutch C Pressure",
+    4193: "Clutch D Pressure",
+    4194: "Clutch E Pressure",
     4205: "Line Pressure Desired",
     4210: "Line Pressure",
+    4221: "Trans Calculated Gear Ratio",
     4254: "Shift Solenoid A Current",
     4255: "Shift Solenoid B Current",
     4256: "Shift Solenoid C Current",
@@ -578,54 +672,157 @@ var DVCore = (() => {
     4265: "Shift Solenoid F Pressure",
     4267: "Line Pressure Solenoid Current",
     4268: "Shift Solenoid F Current",
+    4300: "TCC PWM Duty Cycle",
     4311: "TCC Slip",
     4313: "TCC Desired Slip",
     4340: "TCC Line Pressure",
     4353: "Mass Airflow Period",
+    4402: "Driver Demand Torque",
+    5100: "Clutch Engine Pressure",
+    5101: "Clutch F Pressure",
+    5102: "Clutch G Pressure",
+    5103: "Clutch H Pressure",
+    5556: "Sonic Air Flow",
     6005: "Equivalence Ratio Commanded - Bank 1",
+    6006: "Equivalence Ratio Commanded - Bank 2",
+    6020: "Alcohol Percent",
+    6023: "Desired Lambda B1",
+    6040: "Desired FA Ratio Cyl 1",
+    6100: "O2 Voltage B1S1",
+    6102: "O2 Voltage B2S1",
     6160: "WB EQ Ratio Bank 1",
     6161: "WB EQ Ratio Bank 2",
+    6179: "Injector Pulse Width Bank 1",
+    6181: "WB EQ Ratio 1",
     6202: "Injector Pulse Width Cyl 1",
+    6203: "Injector Pulse Width Cyl 2",
+    6204: "Injector Pulse Width Cyl 3",
+    6205: "Injector Pulse Width Cyl 4",
+    6206: "Injector Pulse Width Cyl 5",
+    6207: "Injector Pulse Width Cyl 6",
+    6208: "Injector Pulse Width Cyl 7",
+    6209: "Injector Pulse Width Cyl 8",
+    6253: "Injector Pulse Width Average",
+    6255: "Fuel Mass Cyl 1",
     6304: "Short Term Fuel Trim Bank 1",
     6305: "Long Term Fuel Trim Bank 1",
     6306: "Short Term Fuel Trim Bank 2",
     6307: "Long Term Fuel Trim Bank 2",
+    6319: "Injector Pulse Width",
+    6348: "DI Injector Effective Pulse Width Int.",
+    6349: "DI Injector Effective Pulse Width Comp.",
     6376: "PFI Injector Maximum Pulse",
     6403: "Fuel Tank Level",
+    6461: "Injector Pulse Width (24 MHz 216K EEC-V)",
+    6485: "Low Fuel Pressure Desired",
+    6501: "Desired Fuel Pressure",
     6506: "Fuel Pump Commanded DC",
     6509: "Fuel Flow Rate",
     6586: "Fuel Pump Actual",
+    6587: "Fuel Pump Voltage Table X Axis Input",
+    6588: "Fuel Pump Voltage Table Y Axis Input",
     6629: "Fuel Rail Temperature",
+    6751: "Exhaust Gas Temperature B1S1",
+    6755: "Fuel Rail Pressure",
+    6831: "Average Fuel Mass",
+    7101: "AC Pressure Sensor",
+    7188: "Indicated Torque",
+    7189: "Max Indicated Torque",
+    7222: "Engine Load",
+    7226: "Desired Charging Voltage",
     7282: "Battery Voltage",
+    7323: "Charge Air Temp",
     7375: "Fuel Rail Pressure Sensor",
+    7398: "Charge Pressure",
     7447: "TCC Speed Ratio",
+    7480: "Turbo Speed Bank 1",
+    7481: "Turbo Speed Bank 2",
+    7912: "DI End Of Pulse Injection Angle (Intake) Firing Cyl 1",
+    7924: "DI Start Of Injection Angle (Intake)",
+    7925: "DI End Of Injection Angle (Compression)",
+    7990: "Actual Spark",
     8e3: "Vehicle Speed",
     8022: "Torque Airlimit Source",
     8023: "DI/PI Blend Mode",
     8024: "DI/PI Blend",
+    8029: "DI End Of Injection Angle",
+    8205: "Desired Lambda",
+    8215: "Actual Lambda B1",
+    8216: "Actual Lambda B2",
     9309: "Torque Max Source",
     9310: "Torque Max Protection Source",
     9311: "Fuel Lift Pump Pressure Desired",
     9312: "Fuel Lift Pump Pressure Actual",
+    9389: "Torque Limitation Engine Request",
+    9392: "Max Load (Max Injection Time)",
+    9393: "Max Load (Fuel System)",
+    9394: "Max Load (Turbo Component Protection)",
+    9395: "Max Load (Fuel Supply)",
+    9397: "Max Load (Max Calibrated Torque)",
+    9398: "Max Load (Reduced)",
+    9399: "Max Load (Engine Derated)",
+    9400: "Max Load (Camshaft Adaption)",
+    9401: "Max Load (Rich/Lean Limit Comp. Prot.)",
+    9402: "Max Load (Turbo Speed Limit)",
+    9403: "Max Load (Final)",
+    9404: "Max Load (Without Intervention)",
+    10114: "Base Spark (Exh Cam Ref., Int Cam High Ext.)",
+    12142: "Accelerator Pedal Position Fail Mode",
     12145: "RPM Limit Source",
     12146: "Trans Protect RPM Limit Source",
     12147: "Trans Protect Group ID",
     12148: "Trans Protect RPM Limit",
     12149: "Engine Speed Limiting Source",
     12200: "Idle Speed Control Mode",
+    12304: "Throttle Control TPS State",
     12529: "Engine Indicated Torque Reference",
     12533: "Knock Octane Modifier",
+    12534: "Knock Preignition Modifier",
+    12535: "Knock Learned Average",
+    12536: "Inferred Octane",
+    12539: "Wastegate DC Proportional Term",
+    12540: "Wastegate DC Integral Term",
+    12600: "Crank Sensor Period",
     12700: "Torque Source",
+    12701: "Throttle Torque Source",
+    12824: "Accumulated Airmass",
     12861: "Fuel Cut",
+    12864: "Hot Enrichment",
+    12865: "Power Enrichment",
+    12878: "Mass Airflow Fail",
+    12913: "Injector 1 Fault",
+    12961: "Knock Cyl A",
+    12962: "Knock Cyl B",
+    12963: "Knock Cyl C",
+    12964: "Knock Cyl D",
+    12965: "Knock Cyl E",
+    12966: "Knock Cyl F",
+    12967: "Knock Cyl G",
+    12968: "Knock Cyl H",
+    12971: "Cat Overtemp (COT)",
+    12986: "Transbrake State",
+    12987: "Transbrake Active",
     12993: "TR Command Spark Retard",
     12994: "TR Command Final",
+    12995: "TR Command Cylinder Cutout",
+    12996: "TR Command Fuel Enleanment",
+    12997: "TR Authority Fuel Enleanment Clip",
     12998: "TR Authority Spark Clip",
     12999: "Burble Active",
+    13011: "Antilag Activated",
+    13012: "Antilag In Use",
+    13013: "Desired Airmass from Antilag",
     13017: "Desired Airmass Arbitration Source",
     13018: "Desired Airmass Arbitration Multiplier",
     13020: "Speed Limit Maximum (Hard Limit)",
+    13024: "OL Hard Rev Limit Active",
+    13025: "OL Injector Cut Tq Control Active",
+    13026: "OL Partial Injector Cut Active",
+    13027: "OL Injector Cut Non Tq Control Active",
     14100: "Trans Current Gear",
     14103: "Trans Commanded Gear",
+    14104: "Trans Selected Gear",
+    14200: "Trans Shift Mode",
     14211: "Shift Map Current",
     14212: "Shift Scheduling State",
     14213: "SST Mode",
@@ -634,11 +831,54 @@ var DVCore = (() => {
     14410: "TCC State Commanded",
     14411: "TCC State Actual",
     14412: "TCC Status",
+    14510: "Trans In Gear",
+    14511: "Neutral Gear",
     14524: "TCC Current",
+    14573: "TCC Locked",
+    14574: "TCC Unlocked",
+    14575: "TCC Slip Normal",
+    14576: "TCC Slip AC",
+    14994: "TIP Desired Max for Lubrication",
+    14995: "TIP Desired Max for Comp. Outlet Pressure",
+    14996: "TIP Desired Max for Comp. Outlet Temperature",
+    14997: "TIP Desired Max for Turbo Speed",
+    14999: "TIP Base from Desired Airmass",
+    15002: "MAP from Desired Airmass",
+    15003: "Throttle Inlet Pressure Desired",
+    15004: "Throttle Inlet Pressure Actual",
+    15005: "Throttle Inlet Pressure Error",
+    15006: "Turbo Speed Desired",
+    15007: "Turbo Speed Inferred",
+    15008: "Turbo Speed Error",
+    15009: "Turbo Airflow",
+    15010: "Turbo Airflow Desired",
+    15011: "Turbo Compressor Pressure Ratio",
+    15012: "Turbo Exhaust Mass Flow Estimated",
+    15013: "Turbo Desired Mass Fraction Exhaust Flow",
+    15015: "Turbo Overboost Detected",
+    15016: "Turbo Overboost Counter",
+    15017: "Wastegate Duty Cycle",
+    15018: "Wastegate Duty Cycle Desired",
+    15019: "Wastegate Canister Pressure",
+    15020: "Wastegate Canister Pressure Desired",
     15021: "Fuel Rail Pressure Actual",
     15022: "Fuel Rail Pressure Desired",
+    15026: "Accelerator Pedal Position (Filtered)",
+    15029: "Electronic Wastegate Command",
+    15040: "Cruise Control Status",
+    15534: "Electronic Wastegate A Position",
+    15575: "Wastegate Position Actual (Bank 1)",
+    15576: "Wastegate Position Actual (Bank 2)",
+    15577: "Reduced Mass Flow Pre Turbo",
+    16201: "Injector Pulse Mode",
     16204: "Fuel Pump",
     16205: "Fuel Pump Out Fail",
+    16408: "Mass Airflow AD Counts",
+    16409: "High Pressure Fuel Pump Regulator DC",
+    16530: "Trans Fast Torque Reduction Source",
+    16532: "Trans Persistant Torque Reduction Source",
+    16533: "Trans Slow Torque Reduction Source",
+    16535: "Trans Hardware Protection Source",
     17006: "Knock Cyl 1 (+Adv/-Ret)",
     17007: "Knock Cyl 2 (+Adv/-Ret)",
     17008: "Knock Cyl 3 (+Adv/-Ret)",
@@ -686,14 +926,67 @@ var DVCore = (() => {
     19053: "VCT Exhaust Cam Phase Angle",
     19054: "VCT Intake Cam Phase Angle",
     19055: "Manifold Charge Temp",
+    19056: "Average Air Mass",
     19057: "Engine Brake Torque",
     19059: "ETC Torque Request",
+    19061: "MBT Advance",
     19063: "ETC FMEM Mode",
     19068: "Scheduled Torque",
+    19069: "IPC Wheel Torque Error",
+    19070: "Aircharge Fault",
+    19071: "Aircharge MIL Status",
     19073: "Borderline Modifier KOM",
     19074: "Borderline Knock",
+    19075: "ETC Throttle Angle Error",
     19076: "Desired Load",
-    19077: "Desired Airmass"
+    19077: "Desired Airmass",
+    19078: "Manifold Vacuum (ETC Model)",
+    19079: "Effective Throttle Area (ETC Model)",
+    19081: "Fuel Source (Torque Reduction)",
+    19095: "Torque Request from Charge",
+    30011: "MPVI2 PL A/D Input 1 (Red)",
+    30012: "MPVI2 PL A/D Input 2 (Blue)",
+    40001: "MPVI2.1 -> AEM 30-(03x0,2340,5130)",
+    40101: "MPVI2.1 -> AEM 30-(03x0,2340,5130)",
+    41102: "MPVI2.1 -> AEM (PN 30-2130-50) 50 PSIa (3 bar)",
+    41104: "MPVI2.2 -> AEM (PN 30-2130-100) 100 PSIg"
+  };
+  var HPL_UNIT_CODES = {
+    0: "",
+    10: "V",
+    33: "in\xB2",
+    50: "Hz",
+    56: "rpm",
+    71: "g/s",
+    72: "lb/h",
+    73: "lb/min",
+    75: "kg/h",
+    91: "kPa",
+    92: "MPa",
+    97: "inHg",
+    98: "psi",
+    99: "bar",
+    110: "m/s",
+    113: "km/h",
+    114: "mph",
+    120: "N m",
+    127: "lb\xB7ft",
+    141: "L/h",
+    150: "",
+    155: "",
+    156: "%",
+    161: "\xB0",
+    180: "A",
+    182: "mA",
+    223: "g",
+    224: "mg",
+    237: "lb",
+    238: "\u03BB",
+    241: "\xB0C",
+    242: "\xB0F",
+    248: "s",
+    254: "ms",
+    255: "\xB5s"
   };
   var NID = 65536;
   function hplValueWidth(tag) {
@@ -822,6 +1115,9 @@ var DVCore = (() => {
     const version = headerless ? buf[4] === 115 ? 7 : 9 : buf[5];
     if (version === 7) {
       return convertV7(buf, { periodMs, interpolate, startOffsetSec, usUnits });
+    }
+    if (version === 6 || version === 8) {
+      return convertV68(buf, inflateRaw, { periodMs, interpolate, startOffsetSec, usUnits, warnings: o.warnings });
     }
     if (version !== 9) {
       throw new Error(
@@ -1124,7 +1420,120 @@ var DVCore = (() => {
       outUnit[id] = "lb" + MIDDOT + "ft";
     }
   }
+  function findV68Chain(buf, dv) {
+    const n = buf.length;
+    let best = -1;
+    let bestEnd = -1;
+    for (let k = 6; k + 8 <= n && k < 8192; k++) {
+      let o = k;
+      let links = 0;
+      while (o + 4 <= n) {
+        const len = dv.getUint32(o, true);
+        if (len < 1 || o + 4 + len > n) break;
+        o += 4 + len;
+        links++;
+      }
+      if (links >= 2 && o === n) return { start: k, truncated: false };
+      if (links >= 3 && o > bestEnd) {
+        best = k;
+        bestEnd = o;
+      }
+    }
+    return best >= 0 && bestEnd > n * 0.9 ? { start: best, truncated: true } : null;
+  }
+  function convertV68(buf, inflateRaw, o) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const chain = findV68Chain(buf, dv);
+    if (!chain) throw new Error("Could not find the data streams in this log.");
+    let truncated = chain.truncated;
+    const chans = [];
+    let pos = chain.start;
+    while (pos + 4 <= buf.length) {
+      const len = dv.getUint32(pos, true);
+      if (len < 1 || pos + 4 + len > buf.length) {
+        if (pos !== buf.length) truncated = true;
+        break;
+      }
+      let d;
+      try {
+        d = inflateRaw(buf.subarray(pos + 4, pos + 4 + len));
+      } catch {
+        truncated = true;
+        break;
+      }
+      pos += 4 + len;
+      if (!d || d.length < 14) continue;
+      const ddv = new DataView(d.buffer, d.byteOffset, d.byteLength);
+      const pidv = ddv.getUint32(0, true);
+      const code = d[5];
+      const ord = ddv.getUint32(6, true);
+      const cnt = ddv.getUint32(10, true);
+      const isStr = code === 0 || d.length - 14 !== cnt * 16;
+      const times = [];
+      const nums = isStr ? null : [];
+      const strs = isStr ? [] : null;
+      let q = 14;
+      for (let i = 0; i < cnt && q + 9 <= d.length; i++) {
+        const lo = ddv.getUint32(q, true);
+        const hi = ddv.getUint32(q + 4, true);
+        q += 8;
+        if (isStr) {
+          const sl = d[q];
+          q += 1;
+          if (q + sl > d.length) break;
+          strs.push(asciiSlice(d, q, q + sl));
+          q += sl;
+        } else {
+          if (q + 8 > d.length) break;
+          nums.push(ddv.getFloat64(q, true));
+          q += 8;
+        }
+        times.push(hi * 4294967296 + lo);
+      }
+      chans.push({ pid: pidv, code, ord, isStr, times, nums, strs });
+    }
+    if (truncated && o.warnings) o.warnings.push("Log ends mid-stream; the channels that could be decoded are shown.");
+    if (!chans.length) throw new Error("No channels found.");
+    chans.sort((a, b) => a.ord - b.ord);
+    let base = Infinity;
+    for (const c of chans) if (c.times.length && c.times[0] < base) base = c.times[0];
+    if (!isFinite(base)) throw new Error("No data rows found in this file.");
+    const n = chans.length;
+    const name = new Array(n).fill(null);
+    const unit = new Array(n).fill("");
+    const isEnum = new Array(n).fill(false);
+    const order = [];
+    const sTime = new Array(n);
+    const sNum = new Array(n);
+    const sStr = new Array(n);
+    const pidOf = new Array(n).fill(0);
+    let maxMs = 0;
+    chans.forEach((c, id) => {
+      name[id] = HPL_PID_NAMES[c.pid] || `Channel ${c.pid}`;
+      unit[id] = c.isStr ? "" : HPL_UNIT_CODES[c.code] || "";
+      isEnum[id] = c.isStr;
+      pidOf[id] = c.pid;
+      order.push(id);
+      const t = c.times.map((x) => (x - base) / 1e4);
+      sTime[id] = t;
+      if (c.isStr) sStr[id] = c.strs;
+      else sNum[id] = c.nums;
+      if (t.length && t[t.length - 1] > maxMs) maxMs = t[t.length - 1];
+    });
+    const mul = new Float64Array(n).fill(1);
+    const add = new Float64Array(n);
+    const outUnit = new Array(n).fill("");
+    for (const id of order) {
+      outUnit[id] = unit[id] ?? "";
+      if (o.usUnits) applyUsUnit(id, unit[id] || "", mul, add, outUnit);
+    }
+    return emitCsv(
+      { order, name, outUnit, isEnum, sTime, sNum, sStr, mul, add, maxMs, pid: pidOf },
+      { periodMs: o.periodMs, interpolate: o.interpolate, startOffsetSec: o.startOffsetSec }
+    );
+  }
   var V7_TAG_U8 = 2;
+  var V7_TAG_U16 = 4;
   var V7_TAG_F32 = 9;
   var V7_TAG_F64 = 10;
   var V7_TAG_STR = 11;
@@ -1145,7 +1554,7 @@ var DVCore = (() => {
       p += 5;
       const tg = buf[p];
       p += 1;
-      if (tg !== V7_TAG_U8 && tg !== V7_TAG_F32 && tg !== V7_TAG_F64 && tg !== V7_TAG_STR) {
+      if (tg !== V7_TAG_U8 && tg !== V7_TAG_U16 && tg !== V7_TAG_F32 && tg !== V7_TAG_F64 && tg !== V7_TAG_STR) {
         p -= 6;
         break;
       }
@@ -1201,6 +1610,49 @@ var DVCore = (() => {
       }
     }
     blocks.push({ start, end: buf.length });
+    let maxId = 0;
+    for (const oid of order) if (oid > maxId) maxId = oid;
+    const v7Dry = (blk, w) => {
+      let q = blk.start;
+      let frames = 0;
+      while (q + 4 <= blk.end) {
+        const count = buf[q + 3];
+        q += 4;
+        if (count < 1 || count > order.length) break;
+        for (let u = 0; u < count; u++) {
+          if (q + w > blk.end) return false;
+          let id;
+          let unchanged;
+          if (w === 1) {
+            const b = buf[q];
+            q += 1;
+            unchanged = b >= 128;
+            id = unchanged ? b - 128 : b;
+          } else {
+            const b = dv.getUint16(q, true);
+            q += 2;
+            unchanged = (b & 32768) !== 0;
+            id = unchanged ? b & 32767 : b;
+          }
+          if (name[id] == null) return false;
+          if (unchanged) continue;
+          if (isEnum[id]) {
+            if (q >= blk.end) return false;
+            const sl = buf[q];
+            q += 1 + sl;
+          } else q += tag[id] === V7_TAG_U8 ? 1 : tag[id] === V7_TAG_U16 ? 2 : tag[id] === V7_TAG_F64 ? 8 : 4;
+          if (q > blk.end) return false;
+        }
+        frames++;
+      }
+      return frames > 0;
+    };
+    let idWidth = maxId >= 128 ? 2 : 1;
+    const firstBlk = blocks.find((bk) => bk.end - bk.start >= 8) || blocks[0];
+    if (!v7Dry(firstBlk, idWidth)) {
+      const alt = idWidth === 1 ? 2 : 1;
+      if (v7Dry(firstBlk, alt)) idWidth = alt;
+    }
     const sTime = new Array(NID);
     const sNum = new Array(NID);
     const sStr = new Array(NID);
@@ -1222,14 +1674,23 @@ var DVCore = (() => {
         if (count < 1 || count > order.length) break;
         let bad = false;
         for (let u = 0; u < count; u++) {
-          if (q >= blk.end) {
+          if (q + idWidth > blk.end) {
             bad = true;
             break;
           }
-          const b = buf[q];
-          q += 1;
-          const unchanged = b >= 128;
-          const id = unchanged ? b - 128 : b;
+          let id;
+          let unchanged;
+          if (idWidth === 1) {
+            const b = buf[q];
+            q += 1;
+            unchanged = b >= 128;
+            id = unchanged ? b - 128 : b;
+          } else {
+            const b = dv.getUint16(q, true);
+            q += 2;
+            unchanged = (b & 32768) !== 0;
+            id = unchanged ? b & 32767 : b;
+          }
           if (name[id] == null) {
             bad = true;
             break;
@@ -1268,6 +1729,13 @@ var DVCore = (() => {
               }
               v = buf[q] / scale[id] + offset[id];
               q += 1;
+            } else if (tag[id] === V7_TAG_U16) {
+              if (q + 2 > blk.end) {
+                bad = true;
+                break;
+              }
+              v = dv.getUint16(q, true) / scale[id] + offset[id];
+              q += 2;
             } else if (tag[id] === V7_TAG_F64) {
               if (q + 8 > blk.end) {
                 bad = true;
@@ -1335,6 +1803,7 @@ var DVCore = (() => {
     };
     const firstMs = Math.round(o.startOffsetSec * 1e3);
     const rows = Math.floor((maxMs - firstMs) / o.periodMs) + 1;
+    if (!(rows >= 1) || rows > 5e7) throw new Error(`This log decodes to an implausible span (${Math.round((maxMs - firstMs) / 1e3)} s); the file is probably corrupt.`);
     const cur = new Int32Array(NID);
     const lines = [];
     const pid = d.pid;

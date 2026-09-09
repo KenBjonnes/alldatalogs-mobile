@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-09-09T18:31:47.490Z",
+  "builtAt": "2026-09-09T21:20:34.391Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
     "siteRepo": "C:/websites/Alldatalogs",
-    "siteCommit": "d5695d1"
+    "siteCommit": "7956b75"
   },
   "files": {
     "viewer-engine/datalog-viewer.css": {
@@ -128,8 +128,8 @@
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/app.css"
     },
     "viewer-engine/dvcore.js": {
-      "sha256": "3882c292109925df727c1bdd21f8f17cba16a6c5ac45aa758b957c4b3e287c47",
-      "bytes": 68196,
+      "sha256": "3c91cac8a66c5a2369aaeedf7da5846612cfb343355754b0c0a8690b5c6657d8",
+      "bytes": 84898,
       "from": "C:/websites/Alldatalogs/packages/datalog-core/browser/entry.ts (esbuild)"
     },
     "glue.js": {
@@ -138,8 +138,8 @@
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/glue.ts (esbuild)"
     },
     "parse-worker.js": {
-      "sha256": "4b7892e2eceed85c1a2893c4b25224b074817752c51f70e57bf245ab391f27c8",
-      "bytes": 149391,
+      "sha256": "9b42e66572ffd829829f25f6cd393700e30a4cbc07a683a3cb8e5495c406b748",
+      "bytes": 166093,
       "from": "apps/web/public/parse-worker.js (esbuild)"
     },
     "index.html": {
