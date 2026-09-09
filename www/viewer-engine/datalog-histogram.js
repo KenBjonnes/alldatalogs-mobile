@@ -884,7 +884,11 @@
       firstIdx: new Int32Array(cells), lastIdx: new Int32Array(cells), minIdx: new Int32Array(cells), maxIdx: new Int32Array(cells),
       // weighted: Σweight and Σ(weight × value) per cell; `weighted` flips true when a weight parameter
       // resolved, so statValue('weighted') knows whether these mean anything.
-      wsum: new Float64Array(cells), wvsum: new Float64Array(cells), weighted: false
+      wsum: new Float64Array(cells), wvsum: new Float64Array(cells), weighted: false,
+      // "action" in the cell: Σ|value| and the number of samples with a non-zero value -- what the
+      // owner map ranks pages by when the cell parameter itself is paged (Knock Cyl {n}: which
+      // cylinder produced the knock here, not which one had the most samples).
+      asum: new Float64Array(cells), nz: new Int32Array(cells)
     };
     for (var k = 0; k < cells; k++) {
       a.min[k] = NaN; a.max[k] = NaN; a.first[k] = NaN; a.last[k] = NaN;
@@ -1135,6 +1139,7 @@
     // ---- hot loop: no allocation, no closures ----------------------------------------------------
     var cellVals = cellP.values, colVals = colP.values, rowVals = rowP ? rowP.values : null;
     var wVals = wP ? wP.values : null, wsum = acc.wsum, wvsum = acc.wvsum, wv = 0, wMax = 0;
+    var asum = acc.asum, nz = acc.nz;
     var colAxis = colR.axis, rowAxis = rowR ? rowR.axis : null;
     var colCat = colR.catMap, rowCat = rowR ? rowR.catMap : null, colCatLen = colR.catLen, rowCatLen = rowR ? rowR.catLen : 0;
     var is2D = rowR !== null, drop = def.outOfRange === 'drop';
@@ -1176,6 +1181,8 @@
       last[k] = cv; lastIdx[k] = i;
       sum[k] += cv; count[k]++;
       if (wVals !== null) { wsum[k] += wv; wvsum[k] += wv * cv; }
+      asum[k] += cv < 0 ? -cv : cv;
+      if (cv !== 0) nz[k]++;
       binned++;
       if (sampleCell !== null) sampleCell[i] = k;
     }
@@ -1378,6 +1385,7 @@
       weightSum: a.weighted ? a.wsum[k] : NaN,
       weightedAverage: a.weighted ? (a.wsum[k] > 0 ? a.wvsum[k] / a.wsum[k] : NaN) : (n > 0 ? a.sum[k] / n : NaN),
       effectiveHits: a.weighted ? a.wsum[k] / (result.weightScale || 1) : n,
+      absSum: a.asum ? a.asum[k] : NaN, nonzero: a.nz ? a.nz[k] : n,
       min: n > 0 ? a.min[k] : NaN, max: n > 0 ? a.max[k] : NaN,
       first: n > 0 ? a.first[k] : NaN, last: n > 0 ? a.last[k] : NaN,
       firstIdx: a.firstIdx[k], lastIdx: a.lastIdx[k], minIdx: a.minIdx[k], maxIdx: a.maxIdx[k],
@@ -1449,6 +1457,7 @@
       b.count[j] = a.count[k]; b.sum[j] = a.sum[k]; b.min[j] = a.min[k]; b.max[j] = a.max[k]; b.first[j] = a.first[k]; b.last[j] = a.last[k];
       b.firstIdx[j] = a.firstIdx[k]; b.lastIdx[j] = a.lastIdx[k]; b.minIdx[j] = a.minIdx[k]; b.maxIdx[j] = a.maxIdx[k];
       b.wsum[j] = a.wsum[k]; b.wvsum[j] = a.wvsum[k];
+      b.asum[j] = a.asum[k]; b.nz[j] = a.nz[k];
     }
     b.weighted = !!a.weighted;
     out.cells = b;
@@ -1479,8 +1488,30 @@
    *     hits: Float64Array (total effective hits, for min-hits dimming), skipped:[page] (shape
    *     mismatch), breakdown(k) -> [{index, page, label, mass, share}] largest first }.
    */
-  function ownerTable(pages) {
-    var out = { shape: null, pages: [], owner: null, share: null, mass: null, hits: null, skipped: [], breakdown: function () { return []; } };
+  // What a page's "mass" in a cell is, for the owner map (opts.mass):
+  //   weight  Σweight (sample count when the def has no weight parameter) -- mapped-point blends
+  //   count   samples binned on that page -- pages that differ by their FILTER
+  //   sum     Σ|value| -- pages that differ by their CELL PARAMETER (Knock Cyl {n}: who knocked here)
+  //   max     the largest |value| seen -- the worst single event per page
+  //   active  samples with a non-zero value -- how often the page did anything here
+  var OWNER_MODES = ['weight', 'count', 'sum', 'max', 'active'];
+  function ownerMassFn(mode) {
+    switch (mode) {
+      case 'count': return function (res, k) { return res.cells.count[k]; };
+      case 'sum': return function (res, k) { return res.cells.asum ? res.cells.asum[k] : 0; };
+      case 'max': return function (res, k) {
+        var a = res.cells;
+        if (a.count[k] === 0) return 0;
+        var lo = a.min[k] < 0 ? -a.min[k] : a.min[k], hi = a.max[k] < 0 ? -a.max[k] : a.max[k];
+        return lo > hi ? lo : hi;
+      };
+      case 'active': return function (res, k) { return res.cells.nz ? res.cells.nz[k] : res.cells.count[k]; };
+      default: return function (res, k) { return res.cells.weighted ? res.cells.wsum[k] : res.cells.count[k]; };
+    }
+  }
+  function ownerTable(pages, opts) {
+    var mode = (isObj(opts) && OWNER_MODES.indexOf(opts.mass) >= 0) ? opts.mass : 'weight';
+    var out = { mode: mode, shape: null, pages: [], owner: null, share: null, mass: null, hits: null, skipped: [], breakdown: function () { return []; } };
     var list = (Array.isArray(pages) ? pages : []).filter(function (p) { return p && hasCells(p.result); });
     if (!list.length) return out;
     var shape = list[0].result.shape, cells = shape.rows * shape.cols, used = [];
@@ -1488,7 +1519,7 @@
       if (p.result.shape.rows !== shape.rows || p.result.shape.cols !== shape.cols) { out.skipped.push(p.page); return; }
       used.push(p);
     });
-    var massOf = function (res, k) { return res.cells.weighted ? res.cells.wsum[k] : res.cells.count[k]; };
+    var massOf = ownerMassFn(mode);
     var hitsOf = function (res, k) { return res.cells.weighted ? res.cells.wsum[k] / (res.weightScale || 1) : res.cells.count[k]; };
     var owner = new Int32Array(cells), share = new Float64Array(cells), mass = new Float64Array(cells), hits = new Float64Array(cells);
     for (var k = 0; k < cells; k++) {
@@ -1597,7 +1628,7 @@
     // compute + result helpers
     compute: compute, cellIndex: cellIndex, cellStat: cellStat, cellInfo: cellInfo, statTable: statTable,
     lowCountMask: lowCountMask, valueRange: valueRange, transposeResult: transposeResult, toRows: toRows, diff: diff,
-    effectiveHits: effectiveHits, ownerTable: ownerTable,
+    effectiveHits: effectiveHits, ownerTable: ownerTable, OWNER_MODES: OWNER_MODES,
     distributionValues: distributionValues, normalizeStat: normalizeStat, statLabel: statLabel
   };
   global.Histogram = Histogram;

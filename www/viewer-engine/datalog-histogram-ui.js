@@ -523,7 +523,10 @@
               '<button type="button" class="dlv-hist-ibtn dlv-hist-page-arrow" data-a="pageprev" title="Previous page (←)">◀</button>' +
               '<button type="button" class="dlv-hist-page-lbl" data-a="pagemenu" title="Click to jump to a page"><b class="dlv-hist-page-name"></b><span class="dlv-hist-page-count"></span></button>' +
               '<button type="button" class="dlv-hist-ibtn dlv-hist-page-arrow" data-a="pagenext" title="Next page (→)">▶</button>' +
-              '<button type="button" class="dlv-hist-pill dlv-hist-page-owner" data-a="pageowner" title="Owner map: which page carries the most weight (or samples) in each cell, across every page">Owners</button>' +
+              '<button type="button" class="dlv-hist-pill dlv-hist-page-owner" data-a="pageowner" title="Owner map: which page dominates each cell, across every page">Owners</button>' +
+              '<select class="dlv-hist-mini dlv-hist-owner-by" data-f="ownerby" title="What decides the owner of a cell" hidden>' +
+                '<option value="weight">by weight</option><option value="count">by samples</option><option value="sum">by total value</option>' +
+                '<option value="max">by peak value</option><option value="active">by active samples</option></select>' +
             '</span>' +
             '<span class="dlv-hist-grp"><span class="dlv-hist-lbl">Statistic</span><span class="dlv-hist-seg" data-seg="stat">' + stat + '</span></span>' +
             '<span class="dlv-hist-grp"><span class="dlv-hist-lbl">Range</span><span class="dlv-hist-seg" data-seg="range">' +
@@ -658,6 +661,26 @@
       }
       // ---- owner map: which page dominates each cell -------------------------------------------------
       function ownerModeOf(def) { return !!(def && isObj(def.display) && def.display.pageView === 'owner'); }
+      // What "owns" a cell (Histogram.OWNER_MODES): the def's saved choice, else a default from its
+      // shape -- a weight parameter means blend weights; a paged CELL parameter (Knock Cyl {n})
+      // means the page's own value is the action; pages that differ only by filter mean samples.
+      function defaultOwnerBy(def) {
+        if (def.weightParameter) return 'weight';
+        if (H().pageVarUses(def).indexOf('cell parameter') >= 0) return 'sum';
+        return 'count';
+      }
+      function ownerByOf(def) {
+        var m = def && isObj(def.display) ? def.display.ownerBy : null;
+        return (m && H().OWNER_MODES.indexOf(m) >= 0) ? m : defaultOwnerBy(def);
+      }
+      var OWNER_BY_TEXT = { weight: 'most weight in the cell', count: 'most samples in the cell', sum: 'largest total |value| in the cell', max: 'highest peak |value| in the cell', active: 'most samples with a non-zero value' };
+      function ownerMassText(b, mode, unit) {
+        var u = unit ? ' ' + esc(displayUnit(unit)) : '';
+        if (mode === 'sum') return 'Σ ' + fmtK(Number(b.mass.toFixed(b.mass >= 100 ? 0 : 1))) + u;
+        if (mode === 'max') return 'peak ' + formatValue(b.mass, b.mass >= 100 ? 0 : 2) + u;
+        if (mode === 'weight') return 'Σw ' + fmtK(Math.round(b.mass));
+        return fmtK(b.mass) + ' sample' + (b.mass === 1 ? '' : 's');
+      }
       function setOwnerMode(def, on) {
         if (!def) return;
         if (!isObj(def.display)) def.display = {};
@@ -682,7 +705,7 @@
           pages.push({ page: v, label: H().pageLabel(def, v), result: view, entry: e });
         }
         if (!pages.length) { statePanel('dlv-hist-missing', 'No page could be computed', esc(skipped.join(' · ')), '<button type="button" class="dlv-hist-btn primary" data-a="edit">Edit…</button>'); return; }
-        var owner = H().ownerTable(pages), first = pages[0].result;
+        var owner = H().ownerTable(pages, { mass: ownerByOf(def) }), first = pages[0].result;
         var sameShape = S.view && S.owner && S.R === first.shape.rows && S.C === first.shape.cols;
         var keepSel = sameShape ? S.sel : null;
         S.base = first;
@@ -707,7 +730,9 @@
         S.statTable = null; S.scale = null; S.dec = 0;
         for (var k = 0; k < S.cells.length; k++) {
           var td = S.cells[k], i = o.owner[k], cls = '', text = '—', bg = '';
-          if (i < 0) cls = 'dlv-hist-cell-empty';
+          // samples landed on some page but none of them carried any value/weight (no knock here)
+          if (i < 0 && o.hits[k] > 0) { cls = 'dlv-hist-cell-low'; text = '0'; }
+          else if (i < 0) cls = 'dlv-hist-cell-empty';
           else {
             text = o.pages[i].label;
             cls = 'dlv-hist-cell-owner';
@@ -722,8 +747,7 @@
       function renderOwnerLegend() {
         var o = S.owner, present = {}, k;
         for (k = 0; k < o.owner.length; k++) if (o.owner[k] >= 0) present[o.owner[k]] = (present[o.owner[k]] || 0) + 1;
-        var weighted = S.ownerPages.length && S.ownerPages[0].result.cells.weighted;
-        var html = '<span class="dlv-hist-legend-stat">Owner · most ' + (weighted ? 'weight' : 'samples') + ' in the cell</span>';
+        var html = '<span class="dlv-hist-legend-stat">Owner · ' + esc(OWNER_BY_TEXT[o.mode] || OWNER_BY_TEXT.count) + '</span>';
         var idx = Object.keys(present).map(Number).sort(function (a, b) { return a - b; });
         idx.slice(0, 16).forEach(function (i) { html += '<span class="dlv-hist-legend-sw"><i style="background:' + ownerColor(i, 1) + '"></i>' + esc(o.pages[i].label) + '<small>' + present[i] + '</small></span>'; });
         if (idx.length > 16) html += '<span class="dlv-hist-legend-c">+' + (idx.length - 16) + ' more</span>';
@@ -733,20 +757,20 @@
       function ownerTooltipHtml(r, c) {
         var view = S.view, k = r * S.C + c, o = S.owner;
         var head = '<div class="dlv-hist-tip-head">' + axisText(view, 'col', c) + (view.rows ? '<br>' + axisText(view, 'row', r) : '') + '</div>';
-        if (o.owner[k] < 0) return head + '<div class="dlv-hist-tip-row">No samples on any page</div>';
+        if (o.owner[k] < 0) return head + '<div class="dlv-hist-tip-row">' + (o.hits[k] > 0 ? 'Samples on ' + fmtK(Math.round(o.hits[k])) + ' hits, but no value on any page' : 'No samples on any page') + '</div>';
         var mh = minHitsOf(activeDef());
         return head + '<div class="dlv-hist-tip-grid">' +
-          o.breakdown(k).slice(0, 6).map(function (b) { return '<span>' + esc(b.label) + '</span><b>' + Math.round(b.share * 100) + '%</b>'; }).join('') +
+          o.breakdown(k).slice(0, 6).map(function (b) { return '<span>' + esc(b.label) + '</span><b>' + Math.round(b.share * 100) + '% <i>' + ownerMassText(b, o.mode, view.cellUnit) + '</i></b>'; }).join('') +
           '<span>Hits</span><b>' + fmtK(Math.round(o.hits[k])) + (o.hits[k] < mh ? ' <i>(below ' + mh + ')</i>' : '') + '</b></div>';
       }
       function ownerDetails(r, c) {
         var view = S.view, k = r * S.C + c, o = S.owner;
         S.detail = { r: r, c: c };
         var html = '<span class="dlv-hist-d-axis">' + axisText(view, 'col', c) + (view.rows ? ' · ' + axisText(view, 'row', r) : '') + '</span>';
-        if (o.owner[k] < 0) { D.details.innerHTML = html + '<span class="dlv-hist-d-hint">No samples in this cell on any page</span>'; return; }
+        if (o.owner[k] < 0) { D.details.innerHTML = html + '<span class="dlv-hist-d-hint">' + (o.hits[k] > 0 ? 'Samples here on ' + fmtK(Math.round(o.hits[k])) + ' hits, but no page carried a value' : 'No samples in this cell on any page') + '</span>'; return; }
         var rows = o.breakdown(k);
         rows.slice(0, 8).forEach(function (b) {
-          html += '<span class="dlv-hist-d-owner"><i style="background:' + ownerColor(b.index, 1) + '"></i><b>' + esc(b.label) + '</b>' + Math.round(b.share * 100) + '%' +
+          html += '<span class="dlv-hist-d-owner"><i style="background:' + ownerColor(b.index, 1) + '"></i><b>' + esc(b.label) + '</b>' + Math.round(b.share * 100) + '% <span class="dlv-hist-d-hint">' + ownerMassText(b, o.mode, view.cellUnit) + '</span>' +
             '<button type="button" class="dlv-hist-link" data-gopage="' + esc(String(b.page)) + '" title="Show this page\'s table">open</button></span>';
         });
         if (rows.length > 8) html += '<span class="dlv-hist-d-hint">+' + (rows.length - 8) + ' more</span>';
@@ -1635,6 +1659,13 @@
           var ob = D.tb.querySelector('[data-a="pageowner"]');
           ob.classList.toggle('on', ownerOn); ob.disabled = pi.values.length < 2 && !ownerOn;
         }
+        var obs = D.tb.querySelector('[data-f="ownerby"]');
+        obs.hidden = !ownerOn;
+        if (ownerOn) {
+          obs.value = ownerByOf(def);
+          var wopt = obs.querySelector('option[value="weight"]');
+          if (wopt) wopt.disabled = !def.weightParameter;
+        }
         var wb = D.tb.querySelector('[data-seg="stat"] [data-v="weighted"]');
         if (wb) wb.hidden = !(has && def.weightParameter);
         setSeg('stat', has ? statOf(def) : '');
@@ -1751,7 +1782,8 @@
         if (miss != null && S.missing) { applyReplacement(S.missing[parseInt(miss, 10)], t.value); return; }
         var f = t.getAttribute && t.getAttribute('data-f');
         if (!f || !def) return;
-        if (f === 'redend') { if (!isObj(def.colorScale)) def.colorScale = {}; def.colorScale.higherIsWorse = t.value === 'high' ? true : (t.value === 'low' ? false : null); changed(); applyCells(); }
+        if (f === 'ownerby') { if (!isObj(def.display)) def.display = {}; def.display.ownerBy = t.value; changed(); S.owner = null; renderActive('ownerby'); }
+        else if (f === 'redend') { if (!isObj(def.colorScale)) def.colorScale = {}; def.colorScale.higherIsWorse = t.value === 'high' ? true : (t.value === 'low' ? false : null); changed(); applyCells(); }
         else if (f === 'cmin' || f === 'cmax' || f === 'ccenter') {
           if (!isObj(def.colorScale)) def.colorScale = { mode: 'manual' };
           var num = t.value === '' ? null : parseFloat(t.value);
@@ -1878,6 +1910,7 @@
         pageInfo: function () { return pageInfo(activeDef()); },
         combinePages: combinePagesInList,
         setOwnerMode: function (on) { var d = activeDef(); if (d) setOwnerMode(d, !!on); },
+        setOwnerBy: function (mode) { var d = activeDef(); if (!d) return; if (!isObj(d.display)) d.display = {}; d.display.ownerBy = mode; changed(); S.owner = null; renderActive('ownerby'); },
         ownerTable: function () { return S.owner; },
         setStatistic: setStatistic,
         setRangeMode: setRangeMode,
