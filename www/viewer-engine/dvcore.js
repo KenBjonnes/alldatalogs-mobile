@@ -696,6 +696,15 @@ var DVCore = (() => {
     19077: "Desired Airmass"
   };
   var NID = 65536;
+  function hplValueWidth(tag) {
+    return tag === 2 ? 1 : tag === 4 ? 2 : tag === 9 ? 4 : 8;
+  }
+  function hplTableStartFromHeader(buf) {
+    for (let i = 0; i < 40 && i + 25 < buf.length; i++) {
+      if (buf[i] === 83 && buf[i + 1] === 67 && buf[i + 2] === 0 && buf[i + 3] === 0 && buf[i + 4] === 1) return i + 21;
+    }
+    return -1;
+  }
   function findChannelTableStart(buf, pos) {
     const known = pos - 5;
     for (let s = 0; s < known; s++) {
@@ -710,7 +719,7 @@ var DVCore = (() => {
         p += 5;
         const tag = buf[p];
         p += 1;
-        if (tag !== 10 && tag !== 11) {
+        if (tag !== 10 && tag !== 11 && tag !== 2 && tag !== 4 && tag !== 9) {
           ok = false;
           break;
         }
@@ -750,7 +759,7 @@ var DVCore = (() => {
     }
     return known;
   }
-  function dryParse(d, idWidth, valid, isEnum, tMax) {
+  function dryParse(d, idWidth, valid, isEnum, tMax, tagOf) {
     const n = d.length;
     let q = 2;
     let frames = 0;
@@ -782,8 +791,9 @@ var DVCore = (() => {
             if (q + sl > n) return false;
             q += sl;
           } else {
-            if (q + 8 > n) return false;
-            q += 8;
+            const w = hplValueWidth(tagOf[id]);
+            if (q + w > n) return false;
+            q += w;
           }
         }
       }
@@ -805,10 +815,11 @@ var DVCore = (() => {
     const usUnits = !!o.usUnits;
     const buf = input instanceof Uint8Array ? input : new Uint8Array(input);
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-    if (buf.length < 8 || buf[0] !== 72 || buf[1] !== 80 || buf[2] !== 84) {
+    const headerless = buf.length >= 8 && buf[0] === 83 && buf[1] === 83 && buf[2] === 0 && buf[3] === 0 && (buf[4] === 83 && buf[5] === 89 && buf[6] === 78 && buf[7] === 67 || buf[4] === 115 && buf[5] === 121 && buf[6] === 110 && buf[7] === 99);
+    if (!headerless && (buf.length < 8 || buf[0] !== 72 || buf[1] !== 80 || buf[2] !== 84)) {
       throw new Error("Not an HP Tuners .hpl file (missing 'HPT' signature).");
     }
-    const version = buf[5];
+    const version = headerless ? buf[4] === 115 ? 7 : 9 : buf[5];
     if (version === 7) {
       return convertV7(buf, { periodMs, interpolate, startOffsetSec, usUnits });
     }
@@ -824,15 +835,23 @@ var DVCore = (() => {
         break;
       }
     }
-    if (pos < 0) throw new Error("Could not locate channel table.");
+    let p;
+    if (pos >= 0) p = findChannelTableStart(buf, pos);
+    else {
+      p = hplTableStartFromHeader(buf);
+      if (p < 0) throw new Error("Could not locate channel table.");
+    }
     const valid = new Array(NID).fill(false);
     const isEnum = new Array(NID).fill(false);
     const name = new Array(NID).fill(null);
     const unit = new Array(NID).fill("");
     const pidOf = new Array(NID).fill(0);
+    const tagOf = new Uint8Array(NID);
+    const scaleOf = new Float64Array(NID).fill(1);
+    const offOf = new Float64Array(NID);
     const order = [];
     let maxId = 0;
-    let p = findChannelTableStart(buf, pos);
+    let typed = false;
     while (true) {
       if (p + 5 >= buf.length) break;
       const id = dv.getUint16(p, true);
@@ -840,6 +859,8 @@ var DVCore = (() => {
       p += 5;
       const tag = buf[p];
       p += 1;
+      const sc = dv.getFloat64(p, true);
+      const off = dv.getFloat64(p + 8, true);
       p += 16;
       const nl = buf[p];
       p += 1;
@@ -868,6 +889,10 @@ var DVCore = (() => {
         unit[id] = un;
         pidOf[id] = pid;
         isEnum[id] = tag === 11;
+        tagOf[id] = tag;
+        scaleOf[id] = sc || 1;
+        offOf[id] = off || 0;
+        if (tag === 2 || tag === 4 || tag === 9) typed = true;
         order.push(id);
         if (id > maxId) maxId = id;
       }
@@ -925,10 +950,13 @@ var DVCore = (() => {
     const baseTick = blockTicks.find((t) => t != null) ?? null;
     const tMax = order.length;
     let idWidth = maxId >= 128 ? 2 : 1;
-    if (!dryParse(blocks[0], idWidth, valid, isEnum, tMax)) {
+    if (!dryParse(blocks[0], idWidth, valid, isEnum, tMax, tagOf)) {
       const alt = idWidth === 1 ? 2 : 1;
-      if (dryParse(blocks[0], alt, valid, isEnum, tMax)) idWidth = alt;
+      if (dryParse(blocks[0], alt, valid, isEnum, tMax, tagOf)) idWidth = alt;
     }
+    let ms24Base = 0;
+    let prevMs24 = 0;
+    let typedMax = 0;
     const sTime = new Array(NID);
     const sNum = new Array(NID);
     const sStr = new Array(NID);
@@ -961,15 +989,24 @@ var DVCore = (() => {
         const t = d[q + 3];
         q += 4;
         if (t < 1 || t > tMax) break;
-        if (firstC < 0) {
-          firstC = c;
+        let gms;
+        if (typed) {
+          const ms24 = d[q - 4] | d[q - 3] << 8 | d[q - 2] << 16;
+          if (ms24 < prevMs24 - 8388608) ms24Base += 16777216;
+          prevMs24 = ms24;
+          gms = ms24Base + ms24;
+          if (gms > typedMax) typedMax = gms;
+        } else {
+          if (firstC < 0) {
+            firstC = c;
+            prevC = c;
+          }
+          if (c < prevC) baseC += 256;
           prevC = c;
+          const unwrap = baseC + c - firstC;
+          lastUnwrap = unwrap;
+          gms = blockStartMs + unwrap;
         }
-        if (c < prevC) baseC += 256;
-        prevC = c;
-        const unwrap = baseC + c - firstC;
-        lastUnwrap = unwrap;
-        const gms = blockStartMs + unwrap;
         let bad = false;
         for (let u = 0; u < t; u++) {
           if (q + idWidth > n) {
@@ -1017,12 +1054,13 @@ var DVCore = (() => {
               sTime[id].push(gms);
               sStr[id].push(sv);
             } else {
-              if (q + 8 > n) {
+              const w = hplValueWidth(tagOf[id]);
+              if (q + w > n) {
                 bad = true;
                 break;
               }
-              const dvv = ddv.getFloat64(q, true);
-              q += 8;
+              const dvv = w === 8 ? ddv.getFloat64(q, true) : w === 4 ? ddv.getFloat32(q, true) : w === 2 ? ddv.getUint16(q, true) / scaleOf[id] + offOf[id] : d[q] / scaleOf[id] + offOf[id];
+              q += w;
               prevD[id] = dvv;
               hasPrev[id] = true;
               sTime[id].push(gms);
@@ -1034,6 +1072,19 @@ var DVCore = (() => {
       }
       blockStartMs += lastUnwrap;
       if (blockStartMs > maxMs) maxMs = blockStartMs;
+    }
+    if (typed) {
+      let minMs = Infinity;
+      for (const id of order) {
+        const t = sTime[id];
+        if (t.length && t[0] < minMs) minMs = t[0];
+      }
+      if (!isFinite(minMs)) throw new Error("No data rows found in this file.");
+      for (const id of order) {
+        const t = sTime[id];
+        for (let z = 0; z < t.length; z++) t[z] = t[z] - minMs + originMs;
+      }
+      maxMs = typedMax - minMs + originMs;
     }
     return emitCsv(
       { order, name, outUnit, isEnum, sTime, sNum, sStr, mul, add, maxMs, pid: pidOf },
@@ -1049,6 +1100,9 @@ var DVCore = (() => {
       outUnit[id] = DEG + "F";
     } else if (u === "km/h") {
       mul[id] = 0.6213711922;
+      outUnit[id] = "mph";
+    } else if (u === "m/s") {
+      mul[id] = 2.2369362921;
       outUnit[id] = "mph";
     } else if (u === "kPa") {
       mul[id] = 0.1450377377;
@@ -1083,7 +1137,8 @@ var DVCore = (() => {
     const scale = new Float64Array(NID).fill(1);
     const offset = new Float64Array(NID);
     const order = [];
-    let p = 40;
+    let p = hplTableStartFromHeader(buf);
+    if (p < 0) p = 40;
     for (; ; ) {
       if (p + 24 >= buf.length) break;
       const id = dv.getUint16(p, true);

@@ -11,7 +11,7 @@
 import { buildViewerPayload } from '@site/viewerPayload';
 import * as native from './native.ts';
 import * as lic from './licensing.ts';
-import { buildLibraryProvider, pullLayouts, pushLayout, removeLayout, deleteAccount } from './supabase.ts';
+import { buildLibraryProvider, pullLayouts, pushLayout, removeLayout, deleteAccount, reportFailedLog } from './supabase.ts';
 import { openFromPicker, openFromUrl, openSample, listRecents, noteRecent, type LogSource, type RecentRow } from './files.ts';
 import { capBytes, fullBudgetCells, mergeCaps, fmtOf, fmtBytes, isLogName } from './caps.ts';
 import { DEFAULT_CAPS, MAX_POINTS, REMOTE_CONFIG_URL, ACCOUNT_URL, PRICING_URL, type Caps } from './config.ts';
@@ -156,8 +156,17 @@ async function runSyncJob(job: Job) {
   let ab: ArrayBuffer;
   try { ab = await job.src.file.arrayBuffer(); } catch { showError('Could not read that file.'); hideLoader(); return; }
   if (cancelled || job.id !== jobSeq) { hideLoader(); return; }
-  try { openParsed(decodeSync(job.fmt, ab), job.src); } catch (e) { showError(errMsg(e, 'Could not open this file.')); }
+  try { openParsed(decodeSync(job.fmt, ab), job.src); }
+  catch (e) { const msg = errMsg(e, 'Could not open this file.'); showError(msg); void reportOpenFailure(job.src, job.fmt, msg); }
   finishJob();
+}
+// A log that would not open: PBD reporters (Ken, anyone @pbdyno.com) send the bytes + error to the
+// failed-logs queue for troubleshooting; everyone else just sees the error (Ken, 2026-09-09).
+async function reportOpenFailure(src: LogSource, fmt: string, msg: string) {
+  if (src.origin === 'sample') return;
+  const engine = (window.DVCore && (window.DVCore as { HPL_CONVERTER_VERSION?: string }).HPL_CONVERTER_VERSION) || '';
+  const r = await reportFailedLog({ name: src.name, bytes: src.file, error: msg, format: fmt, engine });
+  if (r === 'sent') window.showToast('Sent to PBD for troubleshooting.');
 }
 function finishJob() { hideLoader(); void native.prefRemove(OPEN_MARK); dropWorker(); }
 function dropWorker() { if (worker) { try { worker.terminate(); } catch { /* ignore */ } worker = null; } }
@@ -165,7 +174,8 @@ function onWorkerMessage(data: any) {
   if (!data || cancelled || data.jobId !== jobSeq) return;
   const p = pending; pending = null;
   if (!p) return;
-  if (data.ok) openParsed(data.parsed, p.src); else showError(data.error || 'Could not open this file.');
+  if (data.ok) openParsed(data.parsed, p.src);
+  else { const msg = data.error || 'Could not open this file.'; showError(msg); void reportOpenFailure(p.src, p.fmt, msg); }
   finishJob();
 }
 function getWorker(): Worker | null {

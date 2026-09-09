@@ -22545,6 +22545,48 @@ ${suffix}`;
       return { ok: false, error: e?.message || String(e) };
     }
   }
+  var FAILED_LOG_REPORTERS = ["kenbjonnes@gmail.com"];
+  var FAILED_LOG_DOMAINS = ["pbdyno.com"];
+  function isTroubleshootReporter(email) {
+    const e = String(email || "").trim().toLowerCase();
+    if (!e) return false;
+    if (FAILED_LOG_REPORTERS.includes(e)) return true;
+    return FAILED_LOG_DOMAINS.includes(e.split("@")[1] || "");
+  }
+  async function reportFailedLog(r) {
+    try {
+      const s = await getSession();
+      if (!s || !isTroubleshootReporter(s.user?.email)) return "skipped";
+      const blob = r.bytes instanceof Blob ? r.bytes : new Blob([new Uint8Array(r.bytes)], { type: "application/octet-stream" });
+      let headHex = "";
+      try {
+        headHex = Array.from(new Uint8Array(await blob.slice(0, 64).arrayBuffer())).map((x) => x.toString(16).padStart(2, "0")).join("");
+      } catch {
+      }
+      const url = `${SUPABASE_URL}/functions/v1/report-failed-log`;
+      const headers = { "Content-Type": "application/json", Authorization: `Bearer ${s.access_token}`, apikey: SUPABASE_ANON_KEY };
+      const begin = await fetch(url, { method: "POST", headers, body: JSON.stringify({
+        action: "begin",
+        fileName: r.name,
+        sizeBytes: blob.size,
+        format: r.format || "",
+        error: r.error,
+        app: "mobile-" + platform,
+        appVersion: "0.1.0",
+        engine: r.engine || "",
+        headHex
+      }) });
+      const b = await begin.json().catch(() => null);
+      if (begin.status === 403) return "skipped";
+      if (!begin.ok || !b || !b.ok || !b.signedUrl) return "failed";
+      const put2 = await fetch(b.signedUrl, { method: "PUT", headers: { "Content-Type": "application/octet-stream", apikey: SUPABASE_ANON_KEY }, body: blob });
+      if (!put2.ok) return "failed";
+      await fetch(url, { method: "POST", headers, body: JSON.stringify({ action: "done", id: b.id }) }).catch(() => null);
+      return "sent";
+    } catch {
+      return "failed";
+    }
+  }
   async function pullLayouts() {
     if (!await getSession()) return { ok: false, rows: [] };
     const { data, error } = await sb().from("viewer_layouts").select("id,name,state,updated_at").order("updated_at", { ascending: false });
@@ -23097,9 +23139,17 @@ ${suffix}`;
     try {
       openParsed(decodeSync(job.fmt, ab), job.src);
     } catch (e) {
-      showError(errMsg(e, "Could not open this file."));
+      const msg = errMsg(e, "Could not open this file.");
+      showError(msg);
+      void reportOpenFailure(job.src, job.fmt, msg);
     }
     finishJob();
+  }
+  async function reportOpenFailure(src, fmt, msg) {
+    if (src.origin === "sample") return;
+    const engine = window.DVCore && window.DVCore.HPL_CONVERTER_VERSION || "";
+    const r = await reportFailedLog({ name: src.name, bytes: src.file, error: msg, format: fmt, engine });
+    if (r === "sent") window.showToast("Sent to PBD for troubleshooting.");
   }
   function finishJob() {
     hideLoader();
@@ -23121,7 +23171,11 @@ ${suffix}`;
     pending = null;
     if (!p) return;
     if (data.ok) openParsed(data.parsed, p.src);
-    else showError(data.error || "Could not open this file.");
+    else {
+      const msg = data.error || "Could not open this file.";
+      showError(msg);
+      void reportOpenFailure(p.src, p.fmt, msg);
+    }
     finishJob();
   }
   function getWorker() {

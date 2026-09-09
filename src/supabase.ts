@@ -106,6 +106,41 @@ export async function deleteAccount(): Promise<{ ok: boolean; error?: string }> 
   } catch (e) { return { ok: false, error: (e as Error)?.message || String(e) }; }
 }
 
+// ---- failed-log reporting (Ken, 2026-09-09) ---------------------------------------------------------
+// A log that would not open: for PBD reporters (Ken's gmail, anyone @pbdyno.com) the original bytes and
+// the error go to the private failed-logs bucket through the report-failed-log edge function, where the
+// troubleshooting job on Ken's PC picks them up. Anyone else: no network call (the reporter check runs
+// here first; the function enforces it again). Never throws.
+const FAILED_LOG_REPORTERS = ['kenbjonnes@gmail.com'];
+const FAILED_LOG_DOMAINS = ['pbdyno.com'];
+export function isTroubleshootReporter(email: string | null | undefined): boolean {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return false;
+  if (FAILED_LOG_REPORTERS.includes(e)) return true;
+  return FAILED_LOG_DOMAINS.includes(e.split('@')[1] || '');
+}
+export async function reportFailedLog(r: { name: string; bytes: Blob | ArrayBuffer; error: string; format?: string; engine?: string }): Promise<'sent' | 'skipped' | 'failed'> {
+  try {
+    const s = await getSession();
+    if (!s || !isTroubleshootReporter(s.user?.email)) return 'skipped';
+    const blob = r.bytes instanceof Blob ? r.bytes : new Blob([new Uint8Array(r.bytes)], { type: 'application/octet-stream' });
+    let headHex = '';
+    try { headHex = Array.from(new Uint8Array(await blob.slice(0, 64).arrayBuffer())).map((x) => x.toString(16).padStart(2, '0')).join(''); } catch { /* ignore */ }
+    const url = `${SUPABASE_URL}/functions/v1/report-failed-log`;
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${s.access_token}`, apikey: SUPABASE_ANON_KEY };
+    const begin = await fetch(url, { method: 'POST', headers, body: JSON.stringify({
+      action: 'begin', fileName: r.name, sizeBytes: blob.size, format: r.format || '', error: r.error,
+      app: 'mobile-' + platform, appVersion: __APP_VERSION__, engine: r.engine || '', headHex }) });
+    const b = await begin.json().catch(() => null);
+    if (begin.status === 403) return 'skipped';
+    if (!begin.ok || !b || !b.ok || !b.signedUrl) return 'failed';
+    const put = await fetch(b.signedUrl, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', apikey: SUPABASE_ANON_KEY }, body: blob });
+    if (!put.ok) return 'failed';
+    await fetch(url, { method: 'POST', headers, body: JSON.stringify({ action: 'done', id: b.id }) }).catch(() => null);
+    return 'sent';
+  } catch { return 'failed'; }
+}
+
 // ---- cloud layouts (viewer_layouts, RLS owner-CRUD) ------------------------------------------------
 export interface SavedLayout { id: string; name: string; state: Record<string, unknown>; updatedAt: number }
 

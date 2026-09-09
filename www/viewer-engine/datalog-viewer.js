@@ -108,7 +108,12 @@ var PREFS_KEY = 'pbdDatalogViewerPrefs';
 function loadViewerPrefs(){
   try{
     var raw = sessionStorage.getItem(PREFS_KEY);
-    if(!raw) return;
+    if(!raw){
+      // No session yet (fresh tab / app start): the Default-vs-Custom choice also lives in localStorage
+      // so the desktop app comes back on the dash you had open (Ken, 2026-09-09).
+      try { var m = window.localStorage ? localStorage.getItem('pbdDatalogViewerDashMode.v1') : null; if(m === 'custom' || m === 'default') VIEWER_GAUGE_SUBMODE = m; } catch(e2){}
+      return;
+    }
     var p = JSON.parse(raw);
     if(p.viewMode) VIEWER_VIEW_MODE = p.viewMode;
     if(p.presetOverride !== undefined) VIEWER_MANUAL_PRESET_OVERRIDE = p.presetOverride;
@@ -135,6 +140,7 @@ function saveViewerPrefs(){
       lastSaved: VIEWER_LAST_SAVED,
     }));
   } catch(e){ /* ignore */ }
+  try { if(window.localStorage) localStorage.setItem('pbdDatalogViewerDashMode.v1', VIEWER_GAUGE_SUBMODE); } catch(e){ /* ignore */ }
 }
 
 // A single Chart.js plugin instance, registered once, draws a shared vertical crosshair line on
@@ -351,6 +357,9 @@ function openViewerCore(fetchPromise, meta){
       var dashStillValid = VIEWER_DASH.gauges.some(function(g){ return !!gaugeChannelFor(g); });
       if(!dashStillValid){ VIEWER_DASH = null; VIEWER_CURRENT_GAUGES = null; VIEWER_GAUGES_DIRTY = false; }
     }
+    // A fresh tab / app start, or a dash that was just dropped as stale: the last custom dash comes back
+    // when it fits this log, so a remembered Custom sub-view shows the dash you had, not the builder.
+    if(!(VIEWER_DASH && VIEWER_DASH.gauges && VIEWER_DASH.gauges.length) && viewerIsPro()) restoreLastDash();
     // The gauges behind the Histograms tab follow the same rule: a log opened mid-edit keeps the work
     // (restored silently; this flow renders on its own), a set none of whose gauges resolve is stale.
     if(VIEWER_DASH_TARGET === 'hist') finishHistGaugesEdit(true, true);
@@ -3299,10 +3308,46 @@ function dashRound(v, span){ return span >= 40 ? Math.round(v) : +v.toFixed(1); 
 // FINALIZED (you're coming back to look at/tweak something you already built) -- only a still-empty
 // dash opens straight into build mode, since there's nothing to look at yet (Ken, 2026-09-08: this
 // used to always force build mode, even for a dash you'd already finished).
+// ---- Last custom dash: remembered across logs AND app restarts (localStorage) ---------------------
+// Ken, 2026-09-09: "it should remember what dash you had open. And, if you switch from default to
+// custom dash, it should go to the last custom dash you used. right now it goes to the builder."
+// The dash itself (its gauges + which saved set it is) is stored whenever it is finalized, saved or
+// loaded; enterCustomGauges() and the log-open flow bring it back when it is empty, provided at least
+// one of its gauges resolves a channel in the open log (same test the open flow already applies to a
+// carried-over dash). Deleting / discarding the dash forgets it.
+var VIEWER_LAST_DASH_KEY = 'pbdDatalogViewerLastDash.v1';
+function rememberLastDash(){
+  if(VIEWER_DASH_TARGET === 'hist') return;
+  if(!VIEWER_DASH || !VIEWER_DASH.gauges || !VIEWER_DASH.gauges.length) return;
+  try {
+    if(window.localStorage) localStorage.setItem(VIEWER_LAST_DASH_KEY, JSON.stringify({
+      gauges: VIEWER_DASH.gauges, current: VIEWER_CURRENT_GAUGES || null, savedAt: Date.now() }));
+  } catch(e){}
+}
+function forgetLastDash(){ try { if(window.localStorage) localStorage.removeItem(VIEWER_LAST_DASH_KEY); } catch(e){} }
+function loadLastDash(){
+  try {
+    var raw = window.localStorage ? localStorage.getItem(VIEWER_LAST_DASH_KEY) : null;
+    var o = raw ? JSON.parse(raw) : null;
+    return (o && Array.isArray(o.gauges) && o.gauges.length) ? o : null;
+  } catch(e){ return null; }
+}
+// Returns true when the remembered dash was put back (VIEWER_DASH / VIEWER_CURRENT_GAUGES set).
+function restoreLastDash(){
+  var o = loadLastDash(); if(!o) return false;
+  var gauges = o.gauges.map(function(g){ return JSON.parse(JSON.stringify(g)); });
+  if(typeof dashMigrateScorecards === 'function') dashMigrateScorecards(gauges);
+  if(!gauges.some(function(g){ return !!gaugeChannelFor(g); })) return false;   // not for this car
+  VIEWER_DASH = { gauges: gauges };
+  VIEWER_CURRENT_GAUGES = (o.current && o.current.kind) ? o.current : null;
+  VIEWER_GAUGES_DIRTY = false;
+  return true;
+}
 function enterCustomGauges(){
   if(!viewerIsPro()) return;
   adlTrack('gauge_designer_used', { action: 'open' });
   if(!VIEWER_DASH) VIEWER_DASH = { gauges: [] };
+  if(!VIEWER_DASH.gauges.length) restoreLastDash();   // the last custom dash, not the builder
   VIEWER_DASH_PALETTE_POS = null;   // a fresh dash re-centres the palette (Ken); drags still stick after
   VIEWER_VIEW_MODE = 'gauge';
   VIEWER_GAUGE_SUBMODE = 'custom';
@@ -3625,13 +3670,19 @@ function accelSampleToDisplay(fullT, dispT, arr){
 function injectAccelChannels(){
   if(!VIEWER_DATA) return;
   var full = (VIEWER_DATA.full && VIEWER_DATA.full.series && VIEWER_DATA.full.time) ? VIEWER_DATA.full : null;
+  // A recompute (⚙ change) replaces the series but must NOT change what is on the graphs -- Ken,
+  // 2026-09-09: "if I change the filtering on a parameter that is graphed, it removes it from the graph".
+  // Remember each estimated channel's selection + panel and put it back once the channel is re-injected;
+  // only a channel that does not come back (e.g. the speed source vanished) loses its place.
+  var keepSel = {}, keepPanel = {};
   VIEWER_ACCEL_NAMES.forEach(function(name){
     accelRemoveChannel(VIEWER_DATA, name);
     if(full) accelRemoveChannel(full, name);
     delete VIEWER_UNIT_BY_CHANNEL[name];
     delete VIEWER_RAW_SERIES[name]; delete VIEWER_RAW_FULL_SERIES[name];   // the series are being replaced
     var si = VIEWER_SELECTED.indexOf(name);
-    if(si !== -1) VIEWER_SELECTED.splice(si, 1);
+    if(si !== -1){ keepSel[name] = si; VIEWER_SELECTED.splice(si, 1); }
+    if(VIEWER_PANEL_ASSIGN[name] !== undefined) keepPanel[name] = VIEWER_PANEL_ASSIGN[name];
     delete VIEWER_PANEL_ASSIGN[name];
   });
   VIEWER_ACCEL_NAMES = [];
@@ -3653,6 +3704,8 @@ function injectAccelChannels(){
     accelAddChannel(VIEWER_DATA, c.name, c.unit, vals);
     VIEWER_UNIT_BY_CHANNEL[c.name] = c.unit || null;
     VIEWER_ACCEL_NAMES.push(c.name);
+    if(keepSel[c.name] !== undefined && VIEWER_SELECTED.indexOf(c.name) === -1) VIEWER_SELECTED.splice(Math.min(keepSel[c.name], VIEWER_SELECTED.length), 0, c.name);
+    if(keepPanel[c.name] !== undefined) VIEWER_PANEL_ASSIGN[c.name] = keepPanel[c.name];
   });
   VIEWER_CHANNEL_STATS = computeChannelStats(VIEWER_DATA);
   applyAllSmoothing();   // a smoothed estimated channel stays smoothed after a recompute
@@ -4270,6 +4323,7 @@ function dashFinalize(){
   adlTrack('gauge_designer_used', { action: 'save' });
   dashNormalize();
   VIEWER_DASH_EDIT = false;
+  rememberLastDash();
   VIEWER_DASH_H = null;      // start finalized hugged (Ken's design); the splitter re-adjusts from there
   VIEWER_DASH_ZOOM = null;   // and at authored gauge size (zoom 1)
   renderViewerBody();
@@ -5404,6 +5458,7 @@ function applyGaugesConfig(cfg, meta, opts){
   VIEWER_DASH_EDIT = VIEWER_DASH_TARGET === 'hist' ? true : !!opts.edit;   // "Load gauges" while building the histogram set stays in the designer
   VIEWER_CURRENT_GAUGES = { kind: meta.kind, id: meta.id, name: meta.name, readOnly: !!meta.readOnly };
   VIEWER_GAUGES_DIRTY = !!opts.dirty;
+  rememberLastDash();
   saveViewerPrefs();
   renderViewerBody();
   if(opts.toast && window.showToast) showToast(opts.toast);
@@ -5642,6 +5697,7 @@ function wireViewPicker(m, which){
 // Drops the dash and its saved-gauges slot back to "nothing loaded" -- used when the currently-loaded
 // Custom Gauges set is deleted, or an unsaved dash is discarded. Never touches the Layout.
 function clearCurrentGauges(){
+  forgetLastDash();
   VIEWER_DASH = null;
   VIEWER_CURRENT_GAUGES = null;
   VIEWER_GAUGES_DIRTY = false;
@@ -5719,7 +5775,7 @@ function saveConfigPrompt(kind){
 function persistConfig(kind, name, updateId){
   var cfg = buildConfig(kind);
   var setCurrent = function(id, savedName){
-    if(kind === 'gauges'){ VIEWER_CURRENT_GAUGES = { kind: 'saved', id: id, name: savedName }; VIEWER_GAUGES_DIRTY = false; }
+    if(kind === 'gauges'){ VIEWER_CURRENT_GAUGES = { kind: 'saved', id: id, name: savedName }; VIEWER_GAUGES_DIRTY = false; rememberLastDash(); }
     else { VIEWER_CURRENT_LAYOUT = { kind: 'saved', id: id, name: savedName }; VIEWER_LAYOUT_DIRTY = false; }
   };
   var lp = viewsProvider();
