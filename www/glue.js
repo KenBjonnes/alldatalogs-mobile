@@ -743,10 +743,10 @@
         constructor() {
           super();
           this.handleOnline = () => {
-            const connectionType = translatedConnection();
+            const connectionType2 = translatedConnection();
             const status = {
               connected: true,
-              connectionType
+              connectionType: connectionType2
             };
             this.notifyListeners("networkStatusChange", status);
           };
@@ -767,10 +767,10 @@
             throw this.unavailable("Browser does not support the Network Information API");
           }
           const connected = window.navigator.onLine;
-          const connectionType = translatedConnection();
+          const connectionType2 = translatedConnection();
           const status = {
             connected,
-            connectionType: connected ? connectionType : "none"
+            connectionType: connected ? connectionType2 : "none"
           };
           return status;
         }
@@ -1540,6 +1540,11 @@
       if (s.connected) cb();
     }), void 0);
     window.addEventListener("online", cb);
+  }
+  async function connectionType() {
+    const s = await quiet(Network2.getStatus(), null);
+    if (s && s.connectionType) return s.connectionType;
+    return navigator.onLine === false ? "none" : "unknown";
   }
   async function pickLog() {
     try {
@@ -22957,10 +22962,186 @@ ${suffix}`;
     }
   }
   async function noteRecent(src, who) {
-    if (src.origin === "sample") return;
+    if (src.origin === "sample" || src.origin === "cloud") return;
     const rows = (await listRecents(who)).filter((r) => !(r.name === src.name && r.size === src.size));
     rows.unshift({ name: src.name, size: src.size, format: fmtOf(src.name), openedAt: (/* @__PURE__ */ new Date()).toISOString(), uri: src.uri });
     await prefSet(recentsKey(who), JSON.stringify(rows.slice(0, RECENTS_MAX)));
+  }
+
+  // ../../../../websites/Alldatalogs/apps/web/lib/history.ts
+  var HISTORY_BUCKET = "datalogs";
+  var COLS = "id, name, format, size_bytes, storage_path, created_at, last_opened_at, opens, origin, content_hash";
+  function rowToHistory(r) {
+    return {
+      id: r.id,
+      name: r.name,
+      format: r.format,
+      sizeBytes: Number(r.size_bytes) || 0,
+      storagePath: r.storage_path,
+      createdAt: r.created_at,
+      lastOpenedAt: r.last_opened_at || r.created_at,
+      opens: Number(r.opens) || 1,
+      origin: r.origin === "auto" ? "auto" : "manual",
+      contentHash: r.content_hash || null
+    };
+  }
+  function uidPart() {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+  function safeFileName(name) {
+    return (name || "log").replace(/[^\w.\-]+/g, "_").slice(0, 120) || "log";
+  }
+  async function sha256Hex(bytes) {
+    try {
+      const subtle2 = globalThis.crypto && globalThis.crypto.subtle;
+      if (!subtle2) return null;
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const d = await subtle2.digest("SHA-256", u8);
+      return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    } catch {
+      return null;
+    }
+  }
+  async function currentUid(sb2) {
+    try {
+      const { data } = await sb2.auth.getUser();
+      return data && data.user ? data.user.id : null;
+    } catch {
+      return null;
+    }
+  }
+  async function listHistory(sb2, limit = 60) {
+    try {
+      if (!sb2) return [];
+      const { data, error } = await sb2.from("saved_logs").select(COLS).order("last_opened_at", { ascending: false }).limit(limit);
+      if (error || !data) return [];
+      return data.map(rowToHistory);
+    } catch {
+      return [];
+    }
+  }
+  async function touchOpened(sb2, id) {
+    try {
+      const { data } = await sb2.from("saved_logs").select("opens").eq("id", id).maybeSingle();
+      const opens = data && Number(data.opens) || 0;
+      const { error } = await sb2.from("saved_logs").update({ last_opened_at: (/* @__PURE__ */ new Date()).toISOString(), opens: opens + 1 }).eq("id", id);
+      return !error;
+    } catch {
+      return false;
+    }
+  }
+  async function openHistory(sb2, id) {
+    try {
+      const { data: row } = await sb2.from("saved_logs").select("name, format, storage_path").eq("id", id).maybeSingle();
+      if (!row || !row.storage_path) return null;
+      const { data: blob, error } = await sb2.storage.from(HISTORY_BUCKET).download(row.storage_path);
+      if (error || !blob) return null;
+      void touchOpened(sb2, id);
+      return { name: row.name, format: row.format, buffer: await blob.arrayBuffer() };
+    } catch {
+      return null;
+    }
+  }
+  async function evictAutoSaved(sb2, bytesNeeded) {
+    let freed = 0;
+    try {
+      const { data } = await sb2.from("saved_logs").select("id, size_bytes, storage_path").eq("origin", "auto").order("last_opened_at", { ascending: true }).limit(200);
+      for (const r of data || []) {
+        if (freed >= bytesNeeded) break;
+        if (r.storage_path) await sb2.storage.from(HISTORY_BUCKET).remove([r.storage_path]);
+        const { error } = await sb2.from("saved_logs").delete().eq("id", r.id);
+        if (!error) freed += Number(r.size_bytes) || 0;
+      }
+    } catch {
+    }
+    return freed;
+  }
+  var isLimitError = (e) => /STORAGE_LIMIT/i.test(`${e && e.message || ""} ${e && e.details || ""}`);
+  async function autoSaveLog(sb2, bytes, name, format, opts) {
+    const origin = opts && opts.origin === "manual" ? "manual" : "auto";
+    try {
+      if (!sb2) return { ok: false, error: "not_connected", skipped: true };
+      const uid = await currentUid(sb2);
+      if (!uid) return { ok: false, error: "signed_out", skipped: true };
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const size = u8.byteLength;
+      const hash = opts && opts.hash !== void 0 ? opts.hash : await sha256Hex(u8);
+      let existing = null;
+      if (hash) {
+        const { data } = await sb2.from("saved_logs").select(COLS).eq("content_hash", hash).maybeSingle();
+        existing = data || null;
+      }
+      if (!existing) {
+        const { data } = await sb2.from("saved_logs").select(COLS).eq("name", name).eq("size_bytes", size).order("last_opened_at", { ascending: false }).limit(1);
+        existing = data && data[0] ? data[0] : null;
+      }
+      if (existing) {
+        const patch = { last_opened_at: (/* @__PURE__ */ new Date()).toISOString(), opens: (Number(existing.opens) || 0) + 1 };
+        if (origin === "manual" && existing.origin !== "manual") patch.origin = "manual";
+        if (hash && !existing.content_hash) patch.content_hash = hash;
+        const { data: upd } = await sb2.from("saved_logs").update(patch).eq("id", existing.id).select(COLS).maybeSingle();
+        return { ok: true, id: existing.id, deduped: true, row: rowToHistory(upd || { ...existing, ...patch }) };
+      }
+      const storagePath = `${uid}/${uidPart()}-${safeFileName(name)}`;
+      const insertRow = { user_id: uid, name: name || "log", format, size_bytes: size, storage_path: storagePath, origin, content_hash: hash, last_opened_at: (/* @__PURE__ */ new Date()).toISOString(), opens: 1 };
+      let ins = await sb2.from("saved_logs").insert(insertRow).select(COLS).single();
+      if (ins.error && isLimitError(ins.error)) {
+        const freed = await evictAutoSaved(sb2, size);
+        if (freed > 0) ins = await sb2.from("saved_logs").insert(insertRow).select(COLS).single();
+      }
+      if (ins.error || !ins.data) {
+        const limit = !!ins.error && isLimitError(ins.error);
+        return { ok: false, limit, error: limit ? "limit" : ins.error && ins.error.message || "Could not save." };
+      }
+      const blob = new Blob([u8], { type: "application/octet-stream" });
+      const { error: upErr } = await sb2.storage.from(HISTORY_BUCKET).upload(storagePath, blob, { contentType: "application/octet-stream", upsert: false });
+      if (upErr) {
+        await sb2.from("saved_logs").delete().eq("id", ins.data.id);
+        return { ok: false, error: upErr.message || "Upload failed." };
+      }
+      return { ok: true, id: ins.data.id, deduped: false, row: rowToHistory(ins.data) };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Could not save." };
+    }
+  }
+
+  // src/history.ts
+  var KEY = "bigdata.historySync";
+  async function getSyncMode() {
+    const v = await prefGet(KEY);
+    return v === "always" || v === "off" ? v : "wifi";
+  }
+  async function setSyncMode(m) {
+    await prefSet(KEY, m);
+  }
+  async function maySyncNow() {
+    const m = await getSyncMode();
+    if (m === "off") return false;
+    if (m === "always") return true;
+    return await connectionType() !== "cellular";
+  }
+  async function autoSaveOpened(file, name, format, isPro2) {
+    try {
+      if (!isPro2 || !await getSession() || !await maySyncNow()) return null;
+      return await autoSaveLog(sb(), await file.arrayBuffer(), name, format);
+    } catch {
+      return null;
+    }
+  }
+  async function listAccountHistory(isPro2) {
+    try {
+      if (!isPro2 || !await getSession()) return [];
+      return await listHistory(sb());
+    } catch {
+      return [];
+    }
+  }
+  async function openAccountLog(id) {
+    try {
+      return await openHistory(sb(), id);
+    } catch {
+      return null;
+    }
   }
 
   // src/glue.ts
@@ -23105,8 +23286,11 @@ ${suffix}`;
       return false;
     }
     const data = buildViewerPayload(parsed, { maxPoints: MAX_POINTS, budgetCells: fullBudgetCells(device, caps), bucketDecimate: window.DVCore.bucketDecimate });
-    window.openViewerFromPromise(Promise.resolve({ ok: true, data }), { fileName: src.name, source: src.origin === "sample" ? "sample" : "local" });
+    window.openViewerFromPromise(Promise.resolve({ ok: true, data }), { fileName: src.name, source: src.origin === "sample" ? "sample" : src.origin === "cloud" ? "cloud" : "local" });
     void noteRecent(src, currentUserId()).then(refreshRecents);
+    if (src.origin !== "sample" && src.origin !== "cloud") void autoSaveOpened(src.file, src.name, fmtOf(src.name), isPro()).then((r) => {
+      if (r && r.ok) void refreshRecents();
+    });
     return true;
   }
   function decodeSync(fmt, buf) {
@@ -23298,9 +23482,37 @@ ${suffix}`;
     } catch {
       rows = [];
     }
+    const cloud = await listAccountHistory(isPro());
+    const seen = new Set(cloud.map((c) => (c.name || "").toLowerCase() + "|" + (c.sizeBytes || 0)));
+    rows = rows.filter((r) => !seen.has((r.name || "").toLowerCase() + "|" + (r.size || 0)));
     const ul = $("recentList");
     ul.textContent = "";
-    $("recentEmpty").hidden = rows.length > 0;
+    $("recentEmpty").hidden = cloud.length + rows.length > 0;
+    for (const c of cloud) {
+      const li = document.createElement("li");
+      li.className = "cloud";
+      const name = document.createElement("div");
+      name.className = "rname";
+      name.textContent = c.name;
+      const meta = document.createElement("div");
+      meta.className = "rmeta";
+      meta.textContent = [c.format, fmtBytes(c.sizeBytes || 0), "account", fmtWhen(c.lastOpenedAt)].filter(Boolean).join(" \xB7 ");
+      li.append(name, meta);
+      li.addEventListener("click", () => {
+        void openWith(async () => {
+          showLoader(c.name);
+          const r = await openAccountLog(c.id);
+          if (!r) {
+            hideLoader();
+            showError("Could not open that log from your account.");
+            return null;
+          }
+          return { name: r.name, size: r.buffer.byteLength, file: new File([r.buffer], r.name), origin: "cloud" };
+        }).catch(() => {
+        });
+      });
+      ul.appendChild(li);
+    }
     for (const r of rows) {
       const li = document.createElement("li");
       const name = document.createElement("div");
@@ -23383,6 +23595,10 @@ ${suffix}`;
     }
     $("accountEmail").textContent = license.email || "";
     $("accountPlan").textContent = planLine(license);
+    void getSyncMode().then((m) => {
+      const sel = document.getElementById("historySync");
+      if (sel) sel.value = m;
+    });
     $("btnGetPro").hidden = !(license.pro !== true && proLinkAllowed());
   }
   function renderDiag() {
@@ -23555,6 +23771,10 @@ ${suffix}`;
     applyLicense(await initLicensing());
     onChange(applyLicense);
     void refreshRecents();
+    const syncSel = document.getElementById("historySync");
+    if (syncSel) syncSel.addEventListener("change", () => {
+      void setSyncMode(syncSel.value);
+    });
     void loadRemoteConfig();
     await hideSplash();
     booted = true;

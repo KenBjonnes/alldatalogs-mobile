@@ -13,6 +13,7 @@ import * as native from './native.ts';
 import * as lic from './licensing.ts';
 import { buildLibraryProvider, pullLayouts, pushLayout, removeLayout, deleteAccount, reportFailedLog } from './supabase.ts';
 import { openFromPicker, openFromUrl, openSample, listRecents, noteRecent, type LogSource, type RecentRow } from './files.ts';
+import { autoSaveOpened, listAccountHistory, openAccountLog, getSyncMode, setSyncMode, type SyncMode } from './history.ts';
 import { capBytes, fullBudgetCells, mergeCaps, fmtOf, fmtBytes, isLogName } from './caps.ts';
 import { DEFAULT_CAPS, MAX_POINTS, REMOTE_CONFIG_URL, ACCOUNT_URL, PRICING_URL, type Caps } from './config.ts';
 import type { LicenseState } from './license.ts';
@@ -137,8 +138,10 @@ const OPEN_MARK = 'bigdata.opening';
 function openParsed(parsed: any, src: LogSource): boolean {
   if (!parsed || !Array.isArray(parsed.channelNames) || !parsed.channelNames.length) { showError('No numeric channels found in this file.'); return false; }
   const data = buildViewerPayload(parsed, { maxPoints: MAX_POINTS, budgetCells: fullBudgetCells(device, caps), bucketDecimate: window.DVCore.bucketDecimate });
-  window.openViewerFromPromise(Promise.resolve({ ok: true, data }), { fileName: src.name, source: src.origin === 'sample' ? 'sample' : 'local' });
+  window.openViewerFromPromise(Promise.resolve({ ok: true, data }), { fileName: src.name, source: src.origin === 'sample' ? 'sample' : src.origin === 'cloud' ? 'cloud' : 'local' });
   void noteRecent(src, lic.currentUserId()).then(refreshRecents);
+  // Account history (Pro): the log goes to the account so it shows up in History on every device.
+  if (src.origin !== 'sample' && src.origin !== 'cloud') void autoSaveOpened(src.file, src.name, fmtOf(src.name), lic.isPro()).then((r) => { if (r && r.ok) void refreshRecents(); });
   return true;
 }
 function decodeSync(fmt: string, buf: ArrayBuffer): any {
@@ -255,8 +258,28 @@ function fmtWhen(iso: string) {
 async function refreshRecents() {
   let rows: RecentRow[] = [];
   try { rows = await listRecents(lic.currentUserId()); } catch { rows = []; }
+  const cloud = await listAccountHistory(lic.isPro());
+  const seen = new Set(cloud.map((c) => (c.name || '').toLowerCase() + '|' + (c.sizeBytes || 0)));
+  rows = rows.filter((r) => !seen.has((r.name || '').toLowerCase() + '|' + (r.size || 0)));
   const ul = $('recentList'); ul.textContent = '';
-  $('recentEmpty').hidden = rows.length > 0;
+  $('recentEmpty').hidden = cloud.length + rows.length > 0;
+  for (const c of cloud) {
+    const li = document.createElement('li');
+    li.className = 'cloud';
+    const name = document.createElement('div'); name.className = 'rname'; name.textContent = c.name;
+    const meta = document.createElement('div'); meta.className = 'rmeta';
+    meta.textContent = [c.format, fmtBytes(c.sizeBytes || 0), 'account', fmtWhen(c.lastOpenedAt)].filter(Boolean).join(' · ');
+    li.append(name, meta);
+    li.addEventListener('click', () => {
+      void openWith(async () => {
+        showLoader(c.name);
+        const r = await openAccountLog(c.id);
+        if (!r) { hideLoader(); showError('Could not open that log from your account.'); return null; }
+        return { name: r.name, size: r.buffer.byteLength, file: new File([r.buffer], r.name), origin: 'cloud' as const };
+      }).catch(() => {});
+    });
+    ul.appendChild(li);
+  }
   for (const r of rows) {
     const li = document.createElement('li');
     const name = document.createElement('div'); name.className = 'rname'; name.textContent = r.name;
@@ -328,6 +351,7 @@ function renderAccount() {
   if (!signedIn) { $('signinIntro').textContent = license.reason === 'activate_offline' ? 'Connect to the internet and sign in so BigData can check your membership.' : 'Sign in with your alldatalogs.com account to unlock Pro on this device.'; return; }
   $('accountEmail').textContent = license.email || '';
   $('accountPlan').textContent = planLine(license);
+  void getSyncMode().then((m) => { const sel = document.getElementById('historySync') as HTMLSelectElement | null; if (sel) sel.value = m; });
   $('btnGetPro').hidden = !(license.pro !== true && proLinkAllowed());
 }
 function renderDiag() {
@@ -433,6 +457,8 @@ async function boot() {
   applyLicense(await lic.initLicensing());
   lic.onChange(applyLicense);
   void refreshRecents();
+  const syncSel = document.getElementById('historySync') as HTMLSelectElement | null;
+  if (syncSel) syncSel.addEventListener('change', () => { void setSyncMode(syncSel.value as SyncMode); });
   void loadRemoteConfig();
   await native.hideSplash();
   booted = true;

@@ -100,6 +100,12 @@ export async function isOnline(): Promise<boolean> {
   const s = await quiet(Network.getStatus(), null as { connected?: boolean } | null);
   return s ? !!s.connected : navigator.onLine !== false;
 }
+/** 'wifi' | 'cellular' | 'none' | 'unknown' -- history sync defaults to Wi-Fi only. */
+export async function connectionType(): Promise<string> {
+  const s = await quiet(Network.getStatus(), null as { connected?: boolean; connectionType?: string } | null);
+  if (s && s.connectionType) return s.connectionType;
+  return navigator.onLine === false ? 'none' : 'unknown';
+}
 
 // ---- Files -----------------------------------------------------------------------------------------
 export interface PickedLog { name: string; size: number; blob?: Blob; webPath?: string; path?: string }

@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-09-09T23:18:48.258Z",
+  "builtAt": "2026-09-09T23:55:32.942Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
@@ -133,8 +133,8 @@
       "from": "C:/websites/Alldatalogs/packages/datalog-core/browser/entry.ts (esbuild)"
     },
     "glue.js": {
-      "sha256": "5bbf45d31b249e35118432880cf2a5373f7ebd0f1022219917da7d804b9dc74e",
-      "bytes": 894056,
+      "sha256": "a63ddb45904cbd5b6a71f82a2b66958ac9d7d26c04930539dd16401c63191539",
+      "bytes": 903523,
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/glue.ts (esbuild)"
     },
     "parse-worker.js": {
@@ -143,8 +143,8 @@
       "from": "apps/web/public/parse-worker.js (esbuild)"
     },
     "index.html": {
-      "sha256": "7d2bea9731056a9e37522db07e99804a6540397d4b7bf21ec7ef7cb77481be39",
-      "bytes": 7675,
+      "sha256": "c4ac701469c6091cf7793a8548f4810af246e3678372da22ae98c690158f4687",
+      "bytes": 8024,
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/index.html (version stamped)"
     }
   }

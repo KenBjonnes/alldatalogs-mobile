@@ -66,6 +66,7 @@ const COPIES = [
 const ALIASES = {
   '@site/viewerPayload': join(SITE, 'apps/web/lib/viewerPayload.ts'),
   '@site/jws': join(SITE, 'supabase/functions/_shared/jws.ts'),
+  '@site/history': join(SITE, 'apps/web/lib/history.ts'),
   '@site/dvcore': join(SITE, 'packages/datalog-core/browser/entry.ts'),
 };
 

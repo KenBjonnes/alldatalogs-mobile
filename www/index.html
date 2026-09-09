@@ -40,9 +40,9 @@
         <p class="muted small" id="capNote"></p>
       </div>
       <aside class="recent">
-        <h2>Recent</h2>
+        <h2>History</h2>
         <ul id="recentList"></ul>
-        <p class="muted small" id="recentEmpty">Logs you open will show up here.</p>
+        <p class="muted small" id="recentEmpty">Logs you open will show up here — and on every device you sign in to.</p>
       </aside>
     </main>
     <footer class="foot">
@@ -80,6 +80,8 @@
       <div class="banner" id="accountBanner" hidden></div>
       <div class="stack">
         <button type="button" class="btn btn-primary" id="btnGetPro" data-ext="https://alldatalogs.com/pricing/?src=mobile" hidden>Get Pro</button>
+        <label class="muted small" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">Save opened logs to my account
+          <select id="historySync"><option value="wifi">Wi-Fi only</option><option value="always">Always</option><option value="off">Off</option></select></label>
         <button type="button" class="btn" data-ext="https://alldatalogs.com/account/">Manage subscription</button>
         <button type="button" class="btn" id="btnRefresh">Check membership again</button>
         <button type="button" class="btn" id="btnSignOut">Sign out</button>

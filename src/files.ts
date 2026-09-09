@@ -7,7 +7,7 @@
 import { pickLog, webPathOf, prefGet, prefSet } from './native.ts';
 import { fmtOf, isLogName } from './caps.ts';
 
-export interface LogSource { name: string; size: number; file: File; origin: 'picker' | 'open-with' | 'share' | 'recent' | 'sample'; uri?: string }
+export interface LogSource { name: string; size: number; file: File; origin: 'picker' | 'open-with' | 'share' | 'recent' | 'sample' | 'cloud'; uri?: string }
 export interface RecentRow { name: string; size: number; format: string; openedAt: string; uri?: string }
 
 const RECENTS_KEY = 'bigdata.recents.v1';
@@ -53,7 +53,7 @@ export async function listRecents(who: string | null): Promise<RecentRow[]> {
   try { const a = JSON.parse((await prefGet(recentsKey(who))) || '[]'); return Array.isArray(a) ? a.filter((r) => r && r.name) : []; } catch { return []; }
 }
 export async function noteRecent(src: LogSource, who: string | null): Promise<void> {
-  if (src.origin === 'sample') return;
+  if (src.origin === 'sample' || src.origin === 'cloud') return;   // the account list already has it
   const rows = (await listRecents(who)).filter((r) => !(r.name === src.name && r.size === src.size));
   rows.unshift({ name: src.name, size: src.size, format: fmtOf(src.name), openedAt: new Date().toISOString(), uri: src.uri });
   await prefSet(recentsKey(who), JSON.stringify(rows.slice(0, RECENTS_MAX)));
