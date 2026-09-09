@@ -44,6 +44,11 @@ var NORMALIZED_CHANNEL_ROLES = {
   manifold_absolute_pressure: { label: 'MAP',             aliases: ['MAP', 'Manifold Absolute Pressure', 'Manifold Pressure', 'Measured Manifold Pressure'] },
   barometric_pressure:     { label: 'Baro',               aliases: ['BARO', 'Barometric Pressure', 'Baro Pressure', 'Ambient Pressure'] },
   throttle_position:       { label: 'Throttle',           aliases: ['TPS_PCT', 'Throttle Position', 'Throttle Angle', 'TPS', 'throttle position absolute'] },
+  // The blade in DEGREES (Ford logs carry both 'Throttle Position' % and 'Throttle Angle' deg) -- the actual that pairs
+  // with a desired throttle logged in degrees. 'Throttle Angle' stays an alias of throttle_position as well.
+  throttle_angle:          { label: 'Throttle Angle',     aliases: ['Throttle Angle', 'Throttle Angle Actual', 'Throttle Actual Angle', 'ETC Angle', 'TP Angle', 'Throttle Blade Angle'] },
+  // What the PCM asked the blade to do -- 'the ultimate test' for throttle control (Ken, 2026-09-09).
+  desired_throttle:        { label: 'Desired TP',         aliases: ['Throttle Desired Angle', 'Desired Throttle Angle', 'Throttle Angle Desired', 'Desired Throttle', 'Desired Throttle Position', 'Throttle Position Desired', 'Throttle Desired', 'TP Desired', 'TP_DSD', 'TPDSD', 'ETC Desired Angle', 'ETC Desired', 'Desired TP', 'Commanded Throttle', 'Commanded Throttle Position', 'Throttle Position Commanded', 'Throttle Commanded', 'TP_CMD', 'ETC_DSD'] },
   accelerator_pedal_position: { label: 'Pedal',           aliases: ['APP_PCT_PEDAL', 'Accelerator Pedal Position', 'Throttle Pedal', 'Pedal Position', 'accel pedal position relative', 'Pedal Position Source'] },
   spark_advance:           { label: 'Spark',              aliases: ['SPKSAF_SA', 'Timing Advance', 'Spark Advance', 'Ignition Timing', 'Ignition Angle'] },
   trans_temp:              { label: 'Trans Temp',         aliases: ['TFT', 'Trans Fluid Temp', 'Trans Temp', 'Transmission Fluid Temp', 'Line Temp', 'Transmission temperature', 'Transmission Oil Temperature'] },

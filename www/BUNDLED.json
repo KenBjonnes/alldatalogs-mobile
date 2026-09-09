@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-09-09T12:36:33.956Z",
+  "builtAt": "2026-09-09T12:45:09.649Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
     "siteRepo": "C:/websites/Alldatalogs",
-    "siteCommit": "9705836"
+    "siteCommit": "476edef"
   },
   "files": {
     "viewer-engine/datalog-viewer.css": {
@@ -23,8 +23,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram-editor.css"
     },
     "viewer-engine/datalog-presets.js": {
-      "sha256": "9ec54555b6972f8055c4b1bb4dabbf1ebb3e56918d26359692a328eb404e8000",
-      "bytes": 81939,
+      "sha256": "33fafd0cd55d06baf37b9a003bc6170aae2c09ad679a29a3d4b06e1ccf117055",
+      "bytes": 82918,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-presets.js"
     },
     "viewer-engine/datalog-gauges.js": {
@@ -38,8 +38,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-scorecard.js"
     },
     "viewer-engine/datalog-scorecard-evaluators.js": {
-      "sha256": "698824c5d2bf83f1d71a7808e1df4c523d0e1c77e788e41cb2fab16797c15429",
-      "bytes": 110987,
+      "sha256": "1c0897a9e2030effb31107f2f23db51d5a3e6fb3a97799dd9184ba75e1b27a39",
+      "bytes": 116613,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-scorecard-evaluators.js"
     },
     "viewer-engine/datalog-expr.js": {

@@ -947,6 +947,8 @@
   // ===============================================================================================
   var THROTTLE_DEFAULTS = {
     wotPedalMin: 95, wotThrottleMin: 85, settleSec: 0.3,
+    desTol: 3, desPerUnit: 6, desPenaltyMax: 60,   // desired vs actual (in the desired channel's unit: deg or %), steady samples only
+    desSteadyWindowSec: 0.2, desSteadyRate: 4,      // desired moved more than this over the window = tip-in, skipped (actuator lag)
     closureOnEcoBoost: false,   // Ken 2026-09-09: on EcoBoost the blade IS a boost / torque control actuator, so a
                                 // part-open blade at WOT is normal and not a criterion (tracking still scored)
     closurePerPct: 0.8, closurePenaltyMax: 50, deepClosurePct: 70,
@@ -955,6 +957,8 @@
   };
   var THROTTLE_META = {
     wotPedalMin: ['Flat pedal', '%', 'Pedal at/above this = wide open'], wotThrottleMin: ['Blade open enough', '%', 'Throttle below this with the pedal flat = closure'], settleSec: ['Settle', 's', 'Blade travel time after the pedal goes down'],
+    desTol: ['Desired-vs-actual free', 'deg or %', 'In the desired throttle channel\'s unit; 95th percentile error at/below this is free'], desPerUnit: ['Points per unit of error', 'pts'], desPenaltyMax: ['Desired-vs-actual penalty cap', 'pts'],
+    desSteadyWindowSec: ['Steady window', 's'], desSteadyRate: ['Steady desired change', 'units', 'Desired moving more than this over the window = tip-in, not scored'],
     closureOnEcoBoost: ['Judge closure on EcoBoost', '', 'Off: EcoBoost uses the blade for boost / torque control, so closure at WOT is normal and not scored'],
     closurePerPct: ['Points per % of WOT time closed', 'pts'], closurePenaltyMax: ['Closure penalty cap', 'pts'], deepClosurePct: ['Deep closure below', '%', 'Critical when the blade falls under this at WOT'],
     trackPedalMin: ['Tracking band low', '% pedal'], trackPedalMax: ['Tracking band high', '% pedal'], trackBoostMax: ['Tracking only below', 'psi', 'Off boost the blade should follow the pedal'],
@@ -964,30 +968,70 @@
   function computeThrottle(ctx) {
     var s = extend(THROTTLE_DEFAULTS, ctx.settings), R = rangeOf(ctx);
     var thr = ctx.rangeSeries('throttle_position'), ped = ctx.rangeSeries('accelerator_pedal_position');
+    var des = ctx.rangeSeries('desired_throttle'), ang = ctx.rangeSeries('throttle_angle');
     if (!thr) return notEval('Throttle position not logged.');
-    if (!ped) return notEval('Accelerator pedal not logged — the blade cannot be judged against driver demand.', 'Throttle Control compares the throttle blade with the pedal; log Accelerator Pedal Position.');
-    var N = thr.length, boost = ctx.rangeSeries('boost_pressure'), rpm = ctx.rangeSeries('engine_rpm');
-    // EcoBoost (card Type): the blade closes under boost by design -- closure is reported, never penalised
+    if (!ped && !des) return notEval('Neither desired throttle nor the accelerator pedal is logged — the blade has nothing to be judged against.', 'Throttle Control compares the blade with what the PCM asked for (desired throttle), or with the pedal; log one of them.');
+    var N = thr.length, boost = ctx.rangeSeries('boost_pressure'), rpm = ctx.rangeSeries('engine_rpm'), i;
+    var evidence = [], details = [], warnings = [], penalties = 0;
+    // EcoBoost (card Type): the blade closes under boost by design -- pedal-based closure is reported, never penalised
     var isEco = !!(ctx.profile && ctx.profile.induction === 'eco'), judgeClosure = !(isEco && !s.closureOnEcoBoost);
-    function flat(i) { return fin(ped[i]) && fin(thr[i]) && ped[i] >= s.wotPedalMin && rpmFloorOk(rpm, i, s.rpmFloor); }
-    var runs = runsWhere(N, flat, R.absT, s.settleSec, 0).filter(function (r) { return !r.brief; });
-    var settled = 0, closed = 0, deep = 0, worstI = -1, closedRuns = 0, i;
+
+    // ---- 1. THE ULTIMATE TEST (Ken): does the blade do what the PCM asked? Desired vs actual, in the desired
+    //         channel's own unit. Pair with the actual that shares that unit ('Throttle Angle' deg vs 'Throttle
+    //         Desired Angle' deg on Ford logs; % vs % elsewhere). Only STEADY desired samples are scored so
+    //         actuator lag on a tip-in (desired jumps, blade follows ~50-100 ms later) is not an error.
+    var desMode = false, desP95 = null, desMax = null, desMaxI = -1, desN = 0, actName = null, desUnit = String(ctx.unitFor('desired_throttle') || '');
+    if (des) {
+      var isDeg = function (u) { return /°|deg/i.test(String(u || '')); };
+      var act = thr, unitOk = true;
+      if (isDeg(desUnit) && ang && isDeg(ctx.unitFor('throttle_angle'))) { act = ang; actName = ctx.channelFor('throttle_angle'); }
+      else if (isDeg(desUnit) && isDeg(ctx.unitFor('throttle_position'))) { act = thr; actName = ctx.channelFor('throttle_position'); }
+      else if (!isDeg(desUnit) && !isDeg(ctx.unitFor('throttle_position'))) { act = thr; actName = ctx.channelFor('throttle_position'); }
+      else if (ang) { act = ang; actName = ctx.channelFor('throttle_angle'); unitOk = isDeg(ctx.unitFor('throttle_angle')) === isDeg(desUnit); }
+      else { act = thr; actName = ctx.channelFor('throttle_position'); unitOk = false; }
+      var win = Math.max(1, Math.round(s.desSteadyWindowSec / Math.max(0.001, (R.absT(1) - R.absT(0)) || 0.05)));
+      var derr = [], derrI = [];
+      for (i = win; i < N; i++) {
+        if (!fin(des[i]) || !fin(act[i]) || !fin(des[i - win]) || !rpmFloorOk(rpm, i, s.rpmFloor)) continue;
+        if (Math.abs(des[i] - des[i - win]) > s.desSteadyRate) continue;   // desired still moving: actuator lag, not control error
+        derr.push(Math.abs(act[i] - des[i])); derrI.push(i);
+      }
+      if (derr.length >= s.minSamples) {
+        desMode = true; desN = derr.length;
+        var dOrder = derr.map(function (x, k) { return k; }).sort(function (a, b) { return derr[a] - derr[b]; });
+        desP95 = derr[dOrder[Math.floor(dOrder.length * 0.95)]]; desMaxI = derrI[dOrder[dOrder.length - 1]]; desMax = derr[dOrder[dOrder.length - 1]];
+        var desPen = Math.min(s.desPenaltyMax, Math.max(0, desP95 - s.desTol) * s.desPerUnit);
+        penalties += desPen;
+        var u = desUnit ? ' ' + desUnit : '';
+        if (desPen > 0) evidence.push({ startTime: R.absT(desMaxI), peakTime: R.absT(desMaxI), severity: desP95 > s.desTol * 3 ? 'critical' : 'warning',
+          label: 'Throttle not matching desired', message: 'Blade ' + round1(act[desMaxI]) + ' vs desired ' + round1(des[desMaxI]) + u + ' at worst; 95th percentile error ' + round1(desP95) + u + ' (steady desired only)', values: { p95: round1(desP95), worst: round1(desMax) } });
+        details.push({ label: 'Desired vs actual', value: 'median ' + round1(derr[dOrder[Math.floor(dOrder.length / 2)]]) + ', 95th pct ' + round1(desP95) + ', worst ' + round1(desMax) + u + ' (' + grp(desN) + ' steady samples)', time: R.absT(desMaxI) });
+        details.push({ label: 'Judged against', value: ctx.channelFor('desired_throttle') + ' vs ' + actName });
+        if (!unitOk) warnings.push('Desired throttle (' + (desUnit || 'no unit') + ') and the actual (' + (ctx.unitFor(act === ang ? 'throttle_angle' : 'throttle_position') || 'no unit') + ') are in different units — compare with care.');
+      } else warnings.push('Desired throttle is logged but has too few steady samples to judge' + (ped ? ' — scored against the pedal instead.' : '.'));
+    }
+
+    // ---- 2. pedal-based checks (the fallback when no desired throttle is logged; informational otherwise)
+    function flat(i) { return ped && fin(ped[i]) && fin(thr[i]) && ped[i] >= s.wotPedalMin && rpmFloorOk(rpm, i, s.rpmFloor); }
+    var runs = ped ? runsWhere(N, flat, R.absT, s.settleSec, 0).filter(function (r) { return !r.brief; }) : [];
+    var settled = 0, closed = 0, deep = 0, worstI = -1, closedRuns = 0;
     runs.forEach(function (r) { var any = false; for (var k = r.settledI; k <= r.endI; k++) { settled++; if (thr[k] < s.wotThrottleMin) { closed++; any = true; } if (thr[k] < s.deepClosurePct) deep++; if (worstI < 0 || thr[k] < thr[worstI]) worstI = k; } if (any) closedRuns++; });
-    // part-throttle tracking, off boost
     var errs = [], errI = [];
-    for (i = 0; i < N; i++) {
+    if (ped) for (i = 0; i < N; i++) {
       if (!fin(ped[i]) || !fin(thr[i]) || ped[i] < s.trackPedalMin || ped[i] > s.trackPedalMax || !rpmFloorOk(rpm, i, s.rpmFloor)) continue;
       if (boost && fin(boost[i]) && boost[i] >= s.trackBoostMax) continue;
       errs.push(Math.abs(thr[i] - ped[i])); errI.push(i);
     }
-    if (!settled && errs.length < s.minSamples) return notEval('Neither a flat-pedal run nor enough part-throttle driving in range.', 'Throttle Control needs flat-pedal runs or part-throttle driving off boost.');
-    if (!judgeClosure && errs.length < s.minSamples) return notEval('Blade closure at WOT is not scored on EcoBoost (boost / torque control), and there is not enough part-throttle driving off boost to judge tracking.', 'Throttle Control on EcoBoost scores part-throttle tracking only; none found here.');
-    var evidence = [], details = [], warnings = [], penalties = 0;
+    if (!desMode) {
+      if (!ped) return notEval('Desired throttle has too few steady samples and no accelerator pedal is logged.', 'Throttle Control needs desired throttle or the pedal.');
+      if (!settled && errs.length < s.minSamples) return notEval('Neither a flat-pedal run nor enough part-throttle driving in range.', 'Throttle Control needs flat-pedal runs or part-throttle driving off boost.');
+      if (!judgeClosure && errs.length < s.minSamples) return notEval('Blade closure at WOT is not scored on EcoBoost (boost / torque control), and there is not enough part-throttle driving off boost to judge tracking.', 'Throttle Control on EcoBoost scores part-throttle tracking only; none found here.');
+    }
     var closedPct = settled ? closed / settled * 100 : 0;
-    if (settled && !judgeClosure) {
-      // informational only
+    if (settled && (desMode || !judgeClosure)) {
+      // informational only: desired throttle already says what the blade should do / EcoBoost closes it by design
       details.push({ label: 'Flat-pedal time', value: grp(settled) + ' samples over ' + runs.length + ' run' + (runs.length === 1 ? '' : 's') });
-      details.push({ label: 'Blade at WOT', value: 'not scored on EcoBoost (boost / torque control); lowest ' + round1(thr[worstI]) + ' %', time: R.absT(worstI) });
+      details.push({ label: 'Blade at WOT', value: (desMode ? 'not scored — judged against desired throttle; ' : 'not scored on EcoBoost (boost / torque control); ') + 'lowest ' + round1(thr[worstI]) + ' %', time: R.absT(worstI) });
     } else if (settled) {
       var closurePen = Math.min(s.closurePenaltyMax, closedPct * s.closurePerPct);
       penalties += closurePen;
@@ -999,30 +1043,33 @@
       details.push({ label: 'Flat-pedal time', value: grp(settled) + ' samples over ' + runs.length + ' run' + (runs.length === 1 ? '' : 's') });
       details.push({ label: 'Blade below ' + s.wotThrottleMin + ' % at WOT', value: Math.round(closedPct) + ' % of the time' + (deep ? ', ' + Math.round(deep / settled * 100) + ' % below ' + s.deepClosurePct : ''), time: worstI >= 0 ? R.absT(worstI) : null });
       details.push({ label: 'Lowest blade at WOT', value: round1(thr[worstI]) + ' %', time: R.absT(worstI) });
-    } else warnings.push('No flat-pedal run in range — throttle closure at WOT not judged.');
-    if (errs.length >= s.minSamples) {
-      var order = errs.map(function (e, k) { return k; }).sort(function (a, b) { return errs[a] - errs[b]; });
-      var p95 = errs[order[Math.floor(order.length * 0.95)]], maxK = order[order.length - 1];
+    } else if (ped && !desMode) warnings.push('No flat-pedal run in range — throttle closure at WOT not judged.');
+    var p95 = null;
+    if (!desMode && errs.length >= s.minSamples) {
+      var order = errs.map(function (x, k) { return k; }).sort(function (a, b) { return errs[a] - errs[b]; });
+      p95 = errs[order[Math.floor(order.length * 0.95)]]; var maxK = order[order.length - 1];
       var trackPen = Math.min(s.trackPenaltyMax, Math.max(0, p95 - s.trackTolPct) * s.trackPerPct);
       penalties += trackPen;
       if (trackPen > 0) evidence.push({ startTime: R.absT(errI[maxK]), peakTime: R.absT(errI[maxK]), severity: 'warning', label: 'Throttle not following pedal', message: '|throttle − pedal| ' + round1(p95) + ' % (95th percentile) at part throttle off boost; worst ' + round1(errs[maxK]) + ' %', values: { p95: round1(p95) } });
       details.push({ label: 'Part-throttle tracking', value: 'median ' + round1(errs[order[Math.floor(order.length / 2)]]) + ' %, 95th pct ' + round1(p95) + ' % (' + grp(errs.length) + ' samples)', time: R.absT(errI[maxK]) });
-    } else warnings.push('Not enough part-throttle driving off boost to judge tracking.');
+    } else if (!desMode) warnings.push('Not enough part-throttle driving off boost to judge tracking.');
     var score = fClamp(100 - penalties);
-    if (!boost) warnings.push('Boost not logged — tracking judged on all part-throttle samples.');
-    var trackTxt = errs.length >= s.minSamples ? (penalties > 0 && !settled ? 'Blade does not follow the pedal at part throttle.' : 'Blade follows the pedal at part throttle.') : '';
-    var summary = !judgeClosure
-      ? (trackTxt || 'Part-throttle tracking only.') + ' WOT closure not scored on EcoBoost (boost / torque control).'
-      : settled
-        ? (closedPct <= 5 ? 'Blade stays open with the pedal flat' : closedPct <= 30 ? 'Blade closes at WOT some of the time' : 'Blade closes at WOT most of the time') + ' (lowest ' + round1(thr[worstI]) + ' %' + (deep ? ', torque / boost limiting' : '') + ').'
-        : 'Part-throttle tracking only (no flat-pedal run).';
-    return { score: score, confidence: Math.min(1, (settled + errs.length) / (s.minSamples * 5)), summary: summary, details: details, evidence: evidence, warnings: warnings, evaluatedSampleCount: settled + errs.length, evaluatedTimeRange: R.range };
+    if (!boost && !desMode) warnings.push('Boost not logged — tracking judged on all part-throttle samples.');
+    if (!desMode && ped) warnings.push('Desired throttle not logged — judged against the pedal (log the PCM\'s desired throttle for the definitive test).');
+    var summary;
+    if (desMode) summary = (desP95 <= s.desTol ? 'Blade does what the PCM asks' : desP95 <= s.desTol * 3 ? 'Blade misses the PCM\'s request at times' : 'Blade does not follow the PCM\'s request') + ' — 95th percentile error ' + round1(desP95) + (desUnit ? ' ' + desUnit : '') + ' vs desired throttle.';
+    else if (!judgeClosure) summary = (p95 != null ? (penalties > 0 ? 'Blade does not follow the pedal at part throttle.' : 'Blade follows the pedal at part throttle.') : 'Part-throttle tracking only.') + ' WOT closure not scored on EcoBoost (boost / torque control).';
+    else if (settled) summary = (closedPct <= 5 ? 'Blade stays open with the pedal flat' : closedPct <= 30 ? 'Blade closes at WOT some of the time' : 'Blade closes at WOT most of the time') + ' (lowest ' + round1(thr[worstI]) + ' %' + (deep ? ', torque / boost limiting' : '') + ').';
+    else summary = 'Part-throttle tracking only (no flat-pedal run).';
+    var n = desMode ? desN : settled + errs.length;
+    return { score: score, confidence: Math.min(1, n / (s.minSamples * 5)) * (desMode ? 1 : 0.8), summary: summary, details: details, evidence: evidence, warnings: warnings, evaluatedSampleCount: n, evaluatedTimeRange: R.range };
   }
   SC.registerEvaluator({
-    id: 'throttle', name: 'Throttle Control', status: 'experimental', evaluatorVersion: '0.9.0',
-    description: 'Throttle blade vs pedal: closure at wide-open pedal (torque / boost limiting; not scored on EcoBoost) and part-throttle tracking off boost.',
-    requiredChannels: [{ role: 'throttle_position', label: 'Throttle Position' }, { role: 'accelerator_pedal_position', label: 'Accelerator Pedal' }],
-    optionalChannels: [{ role: 'boost_pressure' }, { role: 'engine_rpm' }],
+    id: 'throttle', name: 'Throttle Control', status: 'experimental', evaluatorVersion: '0.9.1',
+    description: 'Throttle blade vs what the PCM asked for (desired throttle) when logged; otherwise closure at wide-open pedal (not on EcoBoost) and part-throttle tracking vs the pedal.',
+    requiredChannels: [{ role: 'throttle_position', label: 'Throttle Position' }],
+    requiredAnyOf: [{ label: 'Desired throttle or accelerator pedal', roles: ['desired_throttle', 'accelerator_pedal_position'] }],
+    optionalChannels: [{ role: 'desired_throttle' }, { role: 'throttle_angle' }, { role: 'accelerator_pedal_position' }, { role: 'boost_pressure' }, { role: 'engine_rpm' }],
     defaultSettings: extend(THROTTLE_DEFAULTS, null), settingsMeta: THROTTLE_META, evaluate: computeThrottle
   });
 
