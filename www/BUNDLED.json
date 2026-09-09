@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-09-09T00:23:36.657Z",
+  "builtAt": "2026-09-09T10:37:07.469Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
     "siteRepo": "C:/websites/Alldatalogs",
-    "siteCommit": "70a5bca"
+    "siteCommit": "25e94cb"
   },
   "files": {
     "viewer-engine/datalog-viewer.css": {
@@ -13,8 +13,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.css"
     },
     "viewer-engine/datalog-histogram.css": {
-      "sha256": "c697698a716f7a4d27d547d6d1e7061cdcbe43d7bdbca3d6c528acc5d120a802",
-      "bytes": 18958,
+      "sha256": "0e0a0eee4d2de9596e6e91615c014c022ec8948552ba37bdde65ceb3e640d06d",
+      "bytes": 19618,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram.css"
     },
     "viewer-engine/datalog-histogram-editor.css": {
@@ -23,8 +23,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram-editor.css"
     },
     "viewer-engine/datalog-presets.js": {
-      "sha256": "5876fa7dc6c488bcaf6b807512211c700cce2901313532b4006dc8ab98917a00",
-      "bytes": 78137,
+      "sha256": "331096b4ffee77e48dae59590655e9eaf3cb9d47eef9eaf91f8e943ea87a6ceb",
+      "bytes": 79805,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-presets.js"
     },
     "viewer-engine/datalog-gauges.js": {
@@ -53,8 +53,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram.js"
     },
     "viewer-engine/datalog-histogram-ui.js": {
-      "sha256": "94d7cf0d55a7a62f37691762d084957e2617c0f5339824024e4ac0649bfea9d7",
-      "bytes": 132183,
+      "sha256": "e3334d77bd9a7784b058b59782ad4a475c779c311e70e78ece0deada32995fc6",
+      "bytes": 132935,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram-ui.js"
     },
     "viewer-engine/datalog-histogram-editor.js": {
@@ -83,8 +83,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-vehicles.js"
     },
     "viewer-engine/datalog-viewer.js": {
-      "sha256": "f24cee23e316b8cb42900e4c7e0bf1ee98ef9dec510650712751d0f6ec4f1114",
-      "bytes": 380042,
+      "sha256": "b37b8f6a08a31faf46e441cdf4ac88c9c9d7295ae255bb21562bdf4038a52ae8",
+      "bytes": 390168,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.js"
     },
     "viewer-engine/runtime.js": {
@@ -128,8 +128,8 @@
       "from": "C:/websites/Alldatalogs/packages/datalog-core/browser/entry.ts (esbuild)"
     },
     "glue.js": {
-      "sha256": "8650e135c544daf13ab252b40001b55c74254dbb7fbcb63413103009d21b905c",
-      "bytes": 890283,
+      "sha256": "b40169b05c38ef7ce10dde4f09c589dc6a1eaec0aebbe248459d569c67fb0909",
+      "bytes": 890340,
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/glue.ts (esbuild)"
     },
     "parse-worker.js": {

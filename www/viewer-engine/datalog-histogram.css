@@ -152,7 +152,14 @@
 /* ---- the table ----------------------------------------------------------------------------------- */
 /* The WRAP scrolls both ways; the page never does. border-collapse:separate is what keeps the sticky
    header borders drawn while scrolling (collapsed borders detach from sticky cells in Chrome). */
-.dlv-hist-tablewrap{flex:1;min-height:0;min-width:0;overflow:auto;position:relative;background:#0c0c0f;outline:none;}
+/* Table area = a back layer (gauges the host places, top-right, no pointer events) under a TRANSPARENT
+   scrolling wrap; the table itself is opaque, so wherever it extends it simply covers the gauges. */
+.dlv-hist-tablearea{flex:1;min-height:0;min-width:0;position:relative;display:flex;flex-direction:column;background:#0c0c0f;}
+.dlv-hist-back{position:absolute;left:0;top:0;right:0;bottom:0;z-index:0;overflow:hidden;pointer-events:none;}
+.dlv-hist-back-cluster{position:absolute;top:12px;right:12px;transform-origin:top right;}
+.dlv-hist-back .dlv-dash-gauge{position:absolute;pointer-events:none;}
+.dlv-hist-tablewrap{flex:1;min-height:0;min-width:0;overflow:auto;position:relative;z-index:1;background:transparent;outline:none;}
+table.dlv-hist-table{background:#0c0c0f;}
 .dlv-hist-tablewrap:focus-visible{box-shadow:inset 0 0 0 1px var(--amber, #f5a623);}
 table.dlv-hist-table{
   border-collapse:separate;border-spacing:0;table-layout:auto;

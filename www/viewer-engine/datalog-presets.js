@@ -557,12 +557,25 @@ function resolveGaugeChannel(def, resolvedRoles, channelNames, textLevels){
   if(def.channelOverride){
     if(isText(def.channelOverride)) return null;
     if(!channelNames || channelNames.indexOf(def.channelOverride) !== -1) return def.channelOverride;
+    // The same channel spelled differently (case, underscores, doubled spaces) is not a guess.
+    var want = normalizeForMatch(def.channelOverride);
+    for(var i = 0; i < channelNames.length; i++){
+      if(normalizeForMatch(channelNames[i]) === want) return isText(channelNames[i]) ? null : channelNames[i];
+    }
     // The override names a channel this log doesn't have. A preset gauge must not guess -- but a
     // custom-dash gauge that ALSO carries the role it was built from (stamped since 2026-09-08 so a
     // shared dashboard works on a car whose log names its channels differently) may follow the role,
     // which is the same channel by meaning. Presets never set channelOverride+role together on their
     // own; only user dashes do.
     if(def.roleFallback && byRole && !isText(byRole)) return byRole;
+    // A custom-dash gauge built BEFORE roles were stamped carries only the literal name -- but that
+    // name still says what it means ("Engine RPM (SAE)" IS the engine_rpm role by alias), so follow
+    // the role it names on this log (Ken, 2026-09-09: an older dash's RPM gauge read nothing on a log
+    // that spells RPM differently). Presets always carry `role`, so they never take this branch.
+    if(!def.role && resolvedRoles){
+      var inferred = roleForChannelName(def.channelOverride), viaName = inferred ? resolvedRoles[inferred] : null;
+      if(viaName && !isText(viaName)) return viaName;
+    }
     return null;
   }
   return isText(byRole) ? null : byRole;
@@ -573,6 +586,21 @@ function roleForChannel(channel, resolvedRoles){
   if(!channel || !resolvedRoles) return null;
   for(var role in resolvedRoles){ if(Object.prototype.hasOwnProperty.call(resolvedRoles, role) && resolvedRoles[role] === channel) return role; }
   return null;
+}
+// Which role would a channel NAME satisfy, judged by the alias tables alone (no log needed)? Exact
+// alias first, then the suffix-stripped form resolveChannelRoles also accepts. null when none.
+function roleForChannelName(name){
+  if(!name) return null;
+  var exact = normalizeForMatch(name), loose = normalizeChannelForRole(name), looseHit = null;
+  var ids = Object.keys(NORMALIZED_CHANNEL_ROLES);
+  for(var r = 0; r < ids.length; r++){
+    var aliases = NORMALIZED_CHANNEL_ROLES[ids[r]].aliases || [];
+    for(var i = 0; i < aliases.length; i++){
+      if(normalizeForMatch(aliases[i]) === exact) return ids[r];
+      if(!looseHit && normalizeChannelForRole(aliases[i]) === loose) looseHit = ids[r];
+    }
+  }
+  return looseHit;
 }
 
 // A gauge def may carry an alternate identity: `altRole` + an `alt` presentation block. When the

@@ -29,6 +29,7 @@ declare global {
     configureViewer: (cfg: Dict) => Dict;
     ensureViewerDom: () => void;
     setViewerPro?: (pro: boolean) => void;
+    setScorecardEnabledForEmail?: (email: string) => boolean;
     reloadViewerLayouts?: () => Promise<unknown>;
     openViewerFromPromise: (p: Promise<unknown>, opts: Dict) => void;
     closeViewer?: () => void;
@@ -264,6 +265,9 @@ function applyLicense(s: LicenseState) {
   const switched = license.email !== s.email;
   license = s;
   window.setViewerPro?.(s.pro === true);
+  // Scorecard is a PBD-internal dash gauge, hidden by default; the viewer unlocks it for staff sign-ins
+  // (the same rule the website applies). Only ever turns it on.
+  window.setScorecardEnabledForEmail?.(s.email ?? '');
   maybePullLayouts(s);
   if (switched) void refreshRecents(); // recents are per account
   $('checking').hidden = s.reason !== 'checking';

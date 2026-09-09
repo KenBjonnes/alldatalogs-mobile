@@ -548,7 +548,9 @@
           '</div>' +
           '<div class="dlv-hist-legend"></div>' +
           '<div class="dlv-hist-warn" hidden></div>' +
-          '<div class="dlv-hist-tablewrap" tabindex="0"></div>' +
+          // The table scrolls in a transparent wrap over a back layer the HOST may fill (gauges behind
+          // the table, Ken 2026-09-09) -- the table itself is opaque, so where it extends it covers them.
+          '<div class="dlv-hist-tablearea"><div class="dlv-hist-back" aria-hidden="true"></div><div class="dlv-hist-tablewrap" tabindex="0"></div></div>' +
           '<div class="dlv-hist-details"></div>' +
         '</div>';
     }
@@ -573,7 +575,8 @@
         list: Q('.dlv-hist-list'), rows: Q('.dlv-hist-list-rows'), expander: Q('.dlv-hist-expander'), file: Q('.dlv-hist-file'),
         tb: Q('.dlv-hist-toolbar'), defsel: Q('.dlv-hist-defsel'), legend: Q('.dlv-hist-legend'), warn: Q('.dlv-hist-warn'),
         wrap: Q('.dlv-hist-tablewrap'), details: Q('.dlv-hist-details'), samples: Q('.dlv-hist-samples'), manual: Q('.dlv-hist-manual'),
-        pager: Q('.dlv-hist-pager'), pageName: Q('.dlv-hist-page-name'), pageCount: Q('.dlv-hist-page-count')
+        pager: Q('.dlv-hist-pager'), pageName: Q('.dlv-hist-page-name'), pageCount: Q('.dlv-hist-page-count'),
+        back: Q('.dlv-hist-back')
       };
       // The live cursor mark is one persistent element, re-attached to D.wrap after every renderTable()
       // wipes it out with a fresh innerHTML -- creating it once here (rather than per-render) means
@@ -937,6 +940,7 @@
           // 2026-09-07 -- previously the only way in was buried inside a parameter pick).
           { label: 'Manage math channels…', disabled: !mathManagerAvailable(), action: function () { openMathManagerFromList(); } },
           { label: 'Combine numbered tables into pages…', disabled: S.defs.length < 2, action: function () { combinePagesInList(); } },
+          { label: (typeof glue.hasBackGauges === 'function' && glue.hasBackGauges()) ? 'Edit the gauges behind the table…' : 'Add gauges behind the table…', disabled: typeof glue.editBackGauges !== 'function', action: function () { glue.editBackGauges(); } },
           'sep',
           { label: 'Import JSON…', action: function () { D.file.click(); } },
           // One picker for both: the file itself decides. A tuner reaches for "import" holding a
@@ -1911,6 +1915,8 @@
         combinePages: combinePagesInList,
         setOwnerMode: function (on) { var d = activeDef(); if (d) setOwnerMode(d, !!on); },
         setOwnerBy: function (mode) { var d = activeDef(); if (!d) return; if (!isObj(d.display)) d.display = {}; d.display.ownerBy = mode; changed(); S.owner = null; renderActive('ownerby'); },
+        // The layer under the table, for the host to fill (gauges). Never touched by renders here.
+        backLayer: function () { return D.back; },
         ownerTable: function () { return S.owner; },
         setStatistic: setStatistic,
         setRangeMode: setRangeMode,

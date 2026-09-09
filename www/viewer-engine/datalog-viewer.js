@@ -341,6 +341,11 @@ function openViewerCore(fetchPromise, meta){
       var dashStillValid = VIEWER_DASH.gauges.some(function(g){ return !!gaugeChannelFor(g); });
       if(!dashStillValid){ VIEWER_DASH = null; VIEWER_CURRENT_GAUGES = null; VIEWER_GAUGES_DIRTY = false; }
     }
+    // The gauges behind the Histograms tab follow the same rule: a log opened mid-edit keeps the work
+    // (restored silently; this flow renders on its own), a set none of whose gauges resolve is stale.
+    if(VIEWER_DASH_TARGET === 'hist') finishHistGaugesEdit(true, true);
+    if(!VIEWER_HIST_DASH) VIEWER_HIST_DASH = loadHistDashLocal();
+    if(histDashGauges().length && !histDashGauges().some(function(g){ return !!gaugeChannelFor(g); })) VIEWER_HIST_DASH = null;
     if(VIEWER_ACTIVE_PRESET.gauges.length) VIEWER_VIEW_MODE = 'gauge';
     else if(VIEWER_VIEW_MODE === 'gauge' && !(VIEWER_DASH && VIEWER_DASH.gauges.length)) VIEWER_VIEW_MODE = 'default';
     if(VIEWER_GAUGE_SUBMODE === 'custom' && !viewerIsPro()) VIEWER_GAUGE_SUBMODE = 'default';
@@ -738,6 +743,7 @@ function wireModeTabs(){
   bar.addEventListener('click', function(e){
     var subBtn = e.target.closest ? e.target.closest('[data-sub]') : null;
     if(subBtn){
+      if(VIEWER_DASH_TARGET === 'hist'){ finishHistGaugesEdit(true); return; }   // leaving the histogram-gauge designer keeps the work
       if(subBtn.classList.contains('dlv-pro-locked')){
         adlTrack('paywall_viewed', { feature: 'gauge_designer', trigger: 'gauge_subtabs' });
         if(window.showToast) showToast('Custom gauges are Pro -- ' + PRO_LOCK_MSG + '.');
@@ -765,6 +771,7 @@ function wireModeTabs(){
       return;
     }
     var mode = btn.getAttribute('data-mode');
+    if(VIEWER_DASH_TARGET === 'hist'){ finishHistGaugesEdit(true); if(mode === 'histograms') return; }
     if(mode === VIEWER_VIEW_MODE) return;
     if(mode === 'histograms') return enterHistograms();
     adlTrack('mode_tab_click', { mode: mode });
@@ -1254,6 +1261,8 @@ window.setViewerPro = function(isPro){
 var VIEWER_SCORECARD_ENABLED = false;
 function scorecardEnabled(){ return VIEWER_SCORECARD_ENABLED === true; }
 var SCORECARD_STAFF_DOMAINS = ['pbdyno.com'];   // email domains treated as PBD-internal (confirm exact domain)
+// Individual sign-ins treated as PBD-internal too (Ken, 2026-09-09: his personal account should see it).
+var SCORECARD_STAFF_EMAILS = ['kenbjonnes@gmail.com'];
 window.setScorecardEnabled = function(on){
   var was = VIEWER_SCORECARD_ENABLED;
   VIEWER_SCORECARD_ENABLED = (on === true);
@@ -1265,8 +1274,9 @@ window.setScorecardEnabled = function(on){
 // Host convenience: enable when the signed-in email is a PBD-staff domain. Only ever turns it ON (the
 // default is OFF/fail-closed), so a non-staff email never accidentally overrides a ticket-context enable.
 window.setScorecardEnabledForEmail = function(email){
-  var dom = (email && typeof email === 'string') ? (email.trim().toLowerCase().split('@')[1] || '') : '';
-  var ok = SCORECARD_STAFF_DOMAINS.indexOf(dom) !== -1;
+  var addr = (email && typeof email === 'string') ? email.trim().toLowerCase() : '';
+  var dom = addr.split('@')[1] || '';
+  var ok = SCORECARD_STAFF_DOMAINS.indexOf(dom) !== -1 || SCORECARD_STAFF_EMAILS.indexOf(addr) !== -1;
   if(ok) window.setScorecardEnabled(true);
   return ok;
 };
@@ -2857,6 +2867,130 @@ var VIEWER_DASH_HUG = 0;       // last measured unscaled hug height (px), so the
 var VIEWER_DASH_HUG_W = 0;     // last measured unscaled content width (rightmost gauge edge) -- caps zoom-IN
                                // so enlarged gauges never spill past the canvas width
 var VIEWER_DASH_PALETTE_POS = null;   // {x,y} viewport pos of the floating gauge palette (draggable)
+// ---- Gauges behind the Histograms tab -------------------------------------------------------------
+// Ken (2026-09-09): "add gauges to the histogram tab, there is a lot of room to the right ... they would
+// be the back layer, so if the table extended to the right it would just go over the gauges." A second,
+// independent gauge set (VIEWER_HIST_DASH) painted into the table UI's back layer (HistogramUI
+// ctl.backLayer(): under a transparent table wrap, no pointer events), anchored top-right and scaled
+// down to fit. It is BUILT with the same designer as the custom dash: openHistGaugesEditor() parks the
+// Gauges-tab dash, loads this set into VIEWER_DASH in edit mode with VIEWER_DASH_TARGET = 'hist', and
+// Finalize / Remove / any tab click hands the result back (finishHistGaugesEdit). Carried across logs
+// like the custom dash, mirrored to localStorage, saved in a Layout as `histGauges`.
+var VIEWER_HIST_DASH = null;         // { gauges: [...] } -- same gauge shape as VIEWER_DASH
+var VIEWER_HIST_DASH_ELS = {};       // gauge id -> element in the back layer
+var VIEWER_DASH_TARGET = null;       // 'hist' while the designer is editing the histogram gauges
+var VIEWER_DASH_STASH = null;        // the Gauges-tab state parked while that happens
+var VIEWER_HIST_DASH_KEY = 'pbdDatalogViewerHistGauges.v1';
+var VIEWER_HIST_DASH_RO = null;      // ResizeObserver on the back layer (re-fit when the pane resizes)
+function histDashGauges(){ return (VIEWER_HIST_DASH && Array.isArray(VIEWER_HIST_DASH.gauges)) ? VIEWER_HIST_DASH.gauges : []; }
+function loadHistDashLocal(){
+  try {
+    var raw = window.localStorage ? localStorage.getItem(VIEWER_HIST_DASH_KEY) : null;
+    var p = raw ? JSON.parse(raw) : null;
+    return (p && Array.isArray(p.gauges) && p.gauges.length) ? { gauges: p.gauges } : null;
+  } catch(err){ return null; }
+}
+function saveHistDashLocal(){
+  try {
+    if(!window.localStorage) return;
+    if(histDashGauges().length) localStorage.setItem(VIEWER_HIST_DASH_KEY, JSON.stringify({ gauges: VIEWER_HIST_DASH.gauges }));
+    else localStorage.removeItem(VIEWER_HIST_DASH_KEY);
+  } catch(err){}
+}
+function histDashGaugesForSave(){ return histDashGauges().length ? JSON.parse(JSON.stringify(VIEWER_HIST_DASH.gauges)) : null; }
+function openHistGaugesEditor(){
+  if(!viewerIsPro()) return;
+  if(VIEWER_DASH_TARGET === 'hist') return;
+  adlTrack('gauge_designer_used', { action: 'hist_open' });
+  VIEWER_DASH_STASH = { dash: VIEWER_DASH, current: VIEWER_CURRENT_GAUGES, dirty: VIEWER_GAUGES_DIRTY, sub: VIEWER_GAUGE_SUBMODE, h: VIEWER_DASH_H, zoom: VIEWER_DASH_ZOOM };
+  VIEWER_DASH = { gauges: histDashGauges().map(function(g){ return JSON.parse(JSON.stringify(g)); }) };
+  VIEWER_CURRENT_GAUGES = null; VIEWER_GAUGES_DIRTY = false;
+  VIEWER_DASH_TARGET = 'hist';
+  VIEWER_DASH_EDIT = true; VIEWER_DASH_H = null; VIEWER_DASH_ZOOM = null;
+  VIEWER_VIEW_MODE = 'gauge'; VIEWER_GAUGE_SUBMODE = 'custom';
+  renderViewerBody();
+  if(window.showToast) showToast('Building the gauges behind the Histograms tab -- Done (or any tab) takes you back.');
+}
+// Hand the designer's result back to the Histograms tab. keep=false discards the edit. silent=true
+// restores state without rendering (a log opened mid-edit; the open flow renders on its own).
+function finishHistGaugesEdit(keep, silent){
+  if(VIEWER_DASH_TARGET !== 'hist') return;
+  if(keep){
+    dashNormalize();
+    var gs = (VIEWER_DASH ? VIEWER_DASH.gauges : []).map(function(g){ var c = JSON.parse(JSON.stringify(g)); delete c._w; delete c._h; return c; });
+    VIEWER_HIST_DASH = gs.length ? { gauges: gs } : null;
+    saveHistDashLocal();
+    markLayoutDirty();
+  }
+  var st = VIEWER_DASH_STASH || {};
+  VIEWER_DASH = st.dash || null; VIEWER_CURRENT_GAUGES = st.current || null; VIEWER_GAUGES_DIRTY = !!st.dirty;
+  VIEWER_DASH_EDIT = false; VIEWER_DASH_H = st.h == null ? null : st.h; VIEWER_DASH_ZOOM = st.zoom == null ? null : st.zoom;
+  VIEWER_GAUGE_SUBMODE = st.sub || 'default';
+  VIEWER_DASH_STASH = null; VIEWER_DASH_TARGET = null;
+  VIEWER_VIEW_MODE = 'histograms';
+  if(silent) return;
+  saveViewerPrefs();
+  renderViewerBody();
+}
+// Paint the set into the table UI's back layer: the gauges keep their designer geometry relative to
+// each other; the cluster is anchored top-right and scaled DOWN (never up) to fit the pane.
+function renderHistGaugeLayer(){
+  var layer = (VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.backLayer === 'function') ? VIEWER_HIST_CTL.backLayer() : null;
+  if(!layer) return;
+  if(VIEWER_HIST_DASH_RO){ try { VIEWER_HIST_DASH_RO.disconnect(); } catch(err){} VIEWER_HIST_DASH_RO = null; }
+  layer.innerHTML = '';
+  VIEWER_HIST_DASH_ELS = {};
+  var gs = histDashGauges().filter(function(g){ return g && g.type !== 'scorecard'; });
+  if(!gs.length) return;
+  var minX = Infinity, minY = Infinity;
+  gs.forEach(function(g){ minX = Math.min(minX, g.x || 0); minY = Math.min(minY, g.y || 0); });
+  var cluster = document.createElement('div');
+  cluster.className = 'dlv-hist-back-cluster';
+  layer.appendChild(cluster);
+  gs.forEach(function(g){
+    var el = createGaugeElement(g, { text: DASH_TEXT_SCALE });
+    el.classList.add('dlv-dash-gauge');
+    var free = dashIsFreeSize(g.type);
+    el.classList.toggle('dash-free', free);
+    if(free){
+      el.style.width = (g.w || 90) + 'px'; el.style.height = (g.h || 200) + 'px';
+      el.classList.toggle('dlv-bar-narrow', (g.w || 90) < DASH_BAR_NARROW_W);
+    } else el.style.setProperty('--dlv-gauge-u', (g.scale || 1) + 'px');
+    el.style.left = ((g.x || 0) - minX) + 'px'; el.style.top = ((g.y || 0) - minY) + 'px';
+    cluster.appendChild(el);
+    VIEWER_HIST_DASH_ELS[g.id] = el;
+  });
+  fitHistGaugeLayer();
+  if(typeof ResizeObserver !== 'undefined'){
+    VIEWER_HIST_DASH_RO = new ResizeObserver(function(){ fitHistGaugeLayer(); });
+    VIEWER_HIST_DASH_RO.observe(layer);
+  }
+  if(VIEWER_DATA) updateHistDashGauges(VIEWER_DATA.time.length - 1);
+}
+function fitHistGaugeLayer(){
+  var layer = (VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.backLayer === 'function') ? VIEWER_HIST_CTL.backLayer() : null;
+  var cluster = layer ? layer.querySelector('.dlv-hist-back-cluster') : null;
+  if(!cluster) return;
+  var maxR = 0, maxB = 0;
+  Object.keys(VIEWER_HIST_DASH_ELS).forEach(function(id){ var el = VIEWER_HIST_DASH_ELS[id]; maxR = Math.max(maxR, el.offsetLeft + el.offsetWidth); maxB = Math.max(maxB, el.offsetTop + el.offsetHeight); });
+  var PAD = 12, availW = layer.clientWidth - 2 * PAD, availH = layer.clientHeight - 2 * PAD, k = 1;
+  if(maxR > 0 && maxB > 0 && availW > 0 && availH > 0) k = Math.min(1, availW / maxR, availH / maxB);
+  cluster.style.width = maxR + 'px'; cluster.style.height = maxB + 'px';
+  cluster.style.transform = k < 1 ? 'scale(' + k.toFixed(3) + ')' : '';
+}
+function updateHistDashGauges(idx, dataX){
+  var gs = histDashGauges();
+  if(!gs.length || !VIEWER_DATA) return;
+  gs.forEach(function(g){
+    var el = VIEWER_HIST_DASH_ELS[g.id];
+    if(!el) return;
+    var ch = gaugeChannelFor(g);
+    var val = ch ? valueAtCursor(ch, idx, dataX) : null;
+    var val2;
+    if(g.type === 'combo' && g.sub && g.sub.channelOverride){ val2 = valueAtCursor(g.sub.channelOverride, idx, dataX); }
+    updateGaugeElement(el, g, val, val2);
+  });
+}
 var VIEWER_DASH_COLOR = '#22c55e';    // default gauge accent; per-gauge overridable, "apply to all" resets it
 var DASH_ID = 1;
 
@@ -3056,12 +3190,15 @@ function renderCustomDashView(){
       (edit
         ? '<div class="dlv-dash-editbtns">' +
             '<button type="button" class="dlv-btn dlv-btn-menu" id="dlvDashLoadGauges" title="Replace these gauges with a saved gauge dashboard (keeps your graphs)">&#8681; Load gauges &#9662;</button>' +
-            '<button type="button" class="dlv-btn dlv-btn-accent" id="dlvDashFinalize" title="Fit the canvas to your gauges and save">&#10003; Finalize</button>' +
-            '<button type="button" class="dlv-btn" id="dlvDashDelete" title="Delete this dashboard">&#128465; Delete</button>' +
+            (VIEWER_DASH_TARGET === 'hist'
+              ? '<button type="button" class="dlv-btn dlv-btn-accent" id="dlvDashFinalize" title="Place these gauges behind the histogram table and go back">&#10003; Done &rarr; Histograms</button>' +
+                '<button type="button" class="dlv-btn" id="dlvDashDelete" title="Remove the gauges behind the histogram table">&#128465; Remove gauges</button>'
+              : '<button type="button" class="dlv-btn dlv-btn-accent" id="dlvDashFinalize" title="Fit the canvas to your gauges and save">&#10003; Finalize</button>' +
+                '<button type="button" class="dlv-btn" id="dlvDashDelete" title="Delete this dashboard">&#128465; Delete</button>') +
           '</div>'
         : '<button type="button" class="dlv-dash-menu-btn" id="dlvDashMenuBtn" title="Dashboard options" aria-label="Dashboard options">&#8943;</button>') +
       (edit ? '<div class="dlv-dash-palette" id="dlvDashPalette">' +
-        '<div class="dlv-dash-palette-drag" title="Drag to move this panel">&#9776; Gauges<span>drag to move</span></div>' +
+        '<div class="dlv-dash-palette-drag" title="Drag to move this panel">&#9776; ' + (VIEWER_DASH_TARGET === 'hist' ? 'Histogram gauges' : 'Gauges') + '<span>drag to move</span></div>' +
         '<label class="dlv-dash-snap" title="Snap moves and bar-resizes to the grid (hold Alt to invert)"><input type="checkbox" id="dlvDashSnap"' + (VIEWER_DASH_SNAP !== false ? ' checked' : '') + '> Snap to grid</label>' +
         DASH_PALETTE.filter(function(p){ return p.type !== 'scorecard' || scorecardEnabled(); }).map(function(p){ return '<div class="dlv-dash-chip" draggable="true" data-dash-type="' + p.type + '"><span class="dlv-dash-chip-ico dash-ico-' + p.type + '"></span>' + p.label + '</div>'; }).join('') +
         '<button type="button" class="dlv-dash-chip dlv-dash-paste" id="dlvDashPaste" title="Paste the copied gauge (Ctrl+V also works)">&#10064; Paste gauge</button>' +
@@ -3397,6 +3534,9 @@ function histogramGlue(){
       }
     },
     isPro: viewerIsPro(),
+    // Gauges behind the table: the list menu offers the designer; the UI keeps a back layer for them.
+    editBackGauges: function(){ openHistGaugesEditor(); },
+    hasBackGauges: function(){ return histDashGauges().length > 0; },
     toast: function(msg){ if(window.showToast) showToast(msg); },
     escapeHtml: escapeHtml
   };
@@ -3451,6 +3591,7 @@ function renderHistogramView(){
   var histMountEl = host.firstElementChild;
   VIEWER_HIST_CTL = HistogramUI.mount(histMountEl, histogramGlue());
   if(VIEWER_HIST_CTL && VIEWER_HIST_CTL.setDefs) VIEWER_HIST_CTL.setDefs(VIEWER_HIST.defs);
+  renderHistGaugeLayer();   // the gauges behind the table (none = empty layer)
   // Prime the live cursor mark with wherever the cursor was already parked (e.g. arrow-keyed mid-log
   // before switching tabs) instead of leaving it pinned to the last sample until the next mouse move.
   if(VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.setCursor === 'function') VIEWER_HIST_CTL.setCursor(VIEWER_CURSOR_TIME);
@@ -3730,6 +3871,12 @@ function dashApplyHug(host, canvas){
 // identical dash work could get a different row type depending on what they'd clicked ten minutes
 // earlier).
 function dashFinalize(){
+  if(VIEWER_DASH_TARGET === 'hist'){
+    adlTrack('gauge_designer_used', { action: 'hist_save' });
+    finishHistGaugesEdit(true);
+    if(window.showToast) showToast(histDashGauges().length ? 'Gauges placed behind the table.' : 'No gauges behind the table.');
+    return;
+  }
   if(!VIEWER_DASH || !VIEWER_DASH.gauges.length){ if(window.showToast) showToast('Add a gauge before finalizing.'); return; }
   adlTrack('gauge_designer_used', { action: 'save' });
   dashNormalize();
@@ -3742,6 +3889,12 @@ function dashFinalize(){
 // Delete this dashboard: a saved one goes through the normal Custom Gauges delete (confirm + drop back
 // to Default gauges/Graph); an unsaved in-memory one is just discarded, never touching the Layout.
 function dashDeleteCurrent(){
+  if(VIEWER_DASH_TARGET === 'hist'){
+    if(!window.confirm('Remove the gauges behind the Histograms tab?')) return;
+    VIEWER_DASH = { gauges: [] };
+    finishHistGaugesEdit(true);
+    return;
+  }
   var cur = VIEWER_CURRENT_GAUGES || {};
   if(cur.kind === 'saved'){ deleteCurrentGauges(); return; }
   if(!window.confirm('Discard this dashboard?')) return;
@@ -4603,6 +4756,7 @@ function buildConfig(kind){
     gauges: currentGaugesList(),
     histograms: histogramDefsForSave(),   // the session's tuning tables ride along with the layout
     mathChannels: mathChannelsForSave(),  // the named calculated channels those tables reference
+    histGauges: histDashGaugesForSave(),  // the gauges behind the Histograms tab (null when none)
   };
 }
 // Back-compat alias for the single composite save.
@@ -4677,6 +4831,13 @@ function applyViewConfig(cfg, meta){
       if(live && live.id && d.id !== live.id){ mathIdMap[d.id] = live.id; d.id = live.id; }
     });
   }
+  // Gauges behind the Histograms tab: a layout that carries them restores them; one without leaves
+  // the session's set alone (nothing built since is ever silently dropped -- remove them from the
+  // designer instead).
+  if(!isBuiltin && Array.isArray(cfg.histGauges) && cfg.histGauges.length){
+    VIEWER_HIST_DASH = { gauges: cfg.histGauges.map(function(g){ return JSON.parse(JSON.stringify(g)); }) };
+    saveHistDashLocal();
+  }
   if(Array.isArray(cfg.histograms) && cfg.histograms.length){
     var incoming = cfg.histograms.map(function(d){
       var c = JSON.parse(JSON.stringify(d));
@@ -4735,7 +4896,7 @@ function applyGaugesConfig(cfg, meta, opts){
   dashMigrateScorecards(VIEWER_DASH.gauges);
   VIEWER_VIEW_MODE = 'gauge';
   VIEWER_GAUGE_SUBMODE = 'custom';
-  VIEWER_DASH_EDIT = !!opts.edit;
+  VIEWER_DASH_EDIT = VIEWER_DASH_TARGET === 'hist' ? true : !!opts.edit;   // "Load gauges" while building the histogram set stays in the designer
   VIEWER_CURRENT_GAUGES = { kind: meta.kind, id: meta.id, name: meta.name, readOnly: !!meta.readOnly };
   VIEWER_GAUGES_DIRTY = !!opts.dirty;
   saveViewerPrefs();
@@ -5430,7 +5591,10 @@ function updateAtCursor(dataX){
   // the submode check here or the Default branch would fire even while Custom is what's on screen.
   if(showsGauges() && VIEWER_GAUGE_SUBMODE === 'default') updateGaugesAtIndex(idx, dataX);
   else if(showsCustomDash()) updateDashGauges(idx, dataX);
-  else if(showsHistograms() && VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.setCursor === 'function') VIEWER_HIST_CTL.setCursor(dataX);
+  else if(showsHistograms()){
+    if(VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.setCursor === 'function') VIEWER_HIST_CTL.setCursor(dataX);
+    updateHistDashGauges(idx, dataX);
+  }
   // Live per-channel values in the left panel -- every channel currently rendered in the (possibly
   // search-filtered) table gets its value refreshed, not just the selected/graphed ones, per Ken's
   // request that every channel's value be visible at a glance without selecting it.
