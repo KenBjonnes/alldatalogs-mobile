@@ -489,6 +489,9 @@ tr:hover .dlv-ch-smooth,.dlv-ch-smooth.on{opacity:1;}
 .dlv-icon-btn:hover{color:var(--text, #f2f2f4);border-color:var(--red, #d1132e);}
 .dlv-graph-canvas-wrap{flex:1;min-height:0;position:relative;}
 .dlv-graph-canvas-wrap canvas{width:100% !important;height:100% !important;}
+/* The crosshair's own layer: transparent, above the traces, never hit-tested (the chart canvas below
+   still receives the mouse). Moving the cursor repaints only this. */
+.dlv-graph-canvas-wrap canvas.dlv-xhair{position:absolute;left:0;top:0;pointer-events:none;z-index:2;}
 
 /* ---- Dark scrollbars (default browser scrollbars render white-ish over this dark theme) --- */
 #viewerOverlay.dlv-fullscreen *{scrollbar-width:thin;scrollbar-color:#3a3a42 var(--bg-elev, #111114);}

@@ -152,27 +152,61 @@ function saveViewerPrefs(){
 // A single Chart.js plugin instance, registered once, draws a shared vertical crosshair line on
 // whichever panel(s) it's attached to -- CROSSHAIR_TIME is a data x-value (seconds), so each panel
 // converts it to its own pixel position independently via that panel's own x scale.
-var pbdCrosshairPlugin = {
-  id: 'pbdCrosshair',
-  afterDraw: function(chart){
-    if(CROSSHAIR_TIME == null) return;
-    var xScale = chart.scales.x;
-    if(!xScale) return;
-    var xPixel = xScale.getPixelForValue(CROSSHAIR_TIME);
-    if(xPixel < chart.chartArea.left || xPixel > chart.chartArea.right) return;
-    var ctx = chart.ctx;
+// The crosshair is drawn on its OWN transparent canvas over each panel, not by a Chart.js plugin.
+// As a plugin it could only move by redrawing the chart, and a redraw draws every trace: on a
+// 524-channel, 3000-sample log with four panels (~6000 points each) that measured 39 ms a frame --
+// 20 fps to move a one-pixel line (Ken, 2026-09-10: "it's better but still lag on the cursor line").
+// On its own canvas a move is one clear and one stroke, and the traces are never touched.
+//
+// Everything else that a plugin draws (the perf markers, the log-edge wash, the highlight spans)
+// changes only on a discrete action, so those stay plugins and still ride a chart repaint.
+var VIEWER_XHAIR = {};              // wrapId -> canvas
+function crosshairCanvasFor(wrap){
+  if(!wrap) return null;
+  var cv = wrap.querySelector('canvas.dlv-xhair');
+  if(!cv){
+    cv = document.createElement('canvas');
+    cv.className = 'dlv-xhair';
+    cv.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(cv);
+  }
+  return cv;
+}
+// Backing store in device pixels, CSS box from the wrap -- a 1px line has to stay 1px on a 150% display.
+function sizeCrosshairCanvas(cv, wrap){
+  var dpr = window.devicePixelRatio || 1;
+  var w = Math.max(1, Math.round(wrap.clientWidth * dpr)), h = Math.max(1, Math.round(wrap.clientHeight * dpr));
+  if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+  return dpr;
+}
+function drawCrosshairOverlays(){
+  var slots = activeGraphSlots();
+  for(var i = 0; i < slots.length; i++){
+    var slot = slots[i];
+    var wrap = document.getElementById('dlvCanvasWrap' + slot);
+    if(!wrap) continue;
+    var chart = viewerCharts['panel' + slot] || viewerCharts[slot];
+    var cv = wrap.querySelector('canvas.dlv-xhair');
+    if(!cv) continue;
+    var dpr = sizeCrosshairCanvas(cv, wrap);
+    var ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cv.width / dpr, cv.height / dpr);
+    if(CROSSHAIR_TIME == null || !chart || !chart.scales || !chart.scales.x || !chart.chartArea) continue;
+    var area = chart.chartArea;
+    var x = chart.scales.x.getPixelForValue(CROSSHAIR_TIME);
+    if(!isFinite(x) || x < area.left || x > area.right) continue;
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(xPixel, chart.chartArea.top);
-    ctx.lineTo(xPixel, chart.chartArea.bottom);
+    ctx.moveTo(x, area.top);
+    ctx.lineTo(x, area.bottom);
     ctx.lineWidth = 1;
     ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.setLineDash([4,4]);
+    ctx.setLineDash([4, 4]);
     ctx.stroke();
     ctx.restore();
   }
-};
-if(window.Chart) Chart.register(pbdCrosshairPlugin);
+}
 
 // When the window overhangs an end of the log (setVisibleRange lets it, by up to half its width) the
 // empty part gets a faint wash, a dashed line where the log starts/ends and a small label, so the gap
@@ -3159,6 +3193,72 @@ function refreshChannelValueRefs(){
   document.querySelectorAll('#dlvChannelBody [data-ch-value]').forEach(function(el){
     VIEWER_CHANNEL_VALUE_ELS[el.getAttribute('data-ch-value')] = el;
   });
+  watchVisibleRows();
+}
+
+// ---- Which rows are actually on screen --------------------------------------------------------
+// The live value on every row is the point (Ken asked for it), but a real HP Tuners log can carry
+// 524 channels and the panel shows about 17 of them. Rewriting all 524 text nodes per cursor move
+// cost 1.3 ms of JS and 12.4 ms of LAYOUT -- the browser re-laying-out the whole list every frame,
+// which is most of why the cursor felt heavy on a big log (Ken, 2026-09-10: "still lag on the cursor
+// line"). An IntersectionObserver against the scrolling wrap keeps a set of the rows in view, and
+// only those are written; a row scrolling in is filled by the observer's own callback, so nothing is
+// ever seen stale. With no observer available (or before its first callback) every row is written,
+// exactly as before.
+var VIEWER_ROW_VIS = null;      // { channel: true } for rows in or near the viewport
+var VIEWER_ROW_OBS = null;
+function watchVisibleRows(){
+  if(VIEWER_ROW_OBS){ try { VIEWER_ROW_OBS.disconnect(); } catch(e){} VIEWER_ROW_OBS = null; }
+  VIEWER_ROW_VIS = null;
+  var wrap = document.querySelector('.dlv-channel-table-wrap');
+  if(!wrap || typeof IntersectionObserver !== 'function') return;
+  var vis = {};
+  VIEWER_ROW_OBS = new IntersectionObserver(function(entries){
+    var changed = false;
+    entries.forEach(function(en){
+      var ch = en.target.getAttribute('data-ch-value');
+      if(!ch) return;
+      if(en.isIntersecting){ if(!vis[ch]){ vis[ch] = true; changed = true; } }
+      else if(vis[ch]){ delete vis[ch]; changed = true; }
+    });
+    // A row that just scrolled in was not being written while it was hidden, so fill it now.
+    if(changed) refreshVisibleRowValues();
+  // A screen's worth of margin: rows are filled before they can be seen, so a fast scroll never
+  // shows a blank or stale reading.
+  }, { root: wrap, rootMargin: '200px 0px' });
+  VIEWER_ROW_VIS = vis;
+  Object.keys(VIEWER_CHANNEL_VALUE_ELS).forEach(function(ch){
+    try { VIEWER_ROW_OBS.observe(VIEWER_CHANNEL_VALUE_ELS[ch]); } catch(e){}
+  });
+}
+function rowValueChannels(){
+  if(VIEWER_ROW_VIS){
+    var keys = Object.keys(VIEWER_ROW_VIS);
+    if(keys.length) return keys;
+  }
+  return Object.keys(VIEWER_CHANNEL_VALUE_ELS);   // first paint, or no observer
+}
+function cursorSampleIndex(dataX){
+  if(!VIEWER_DATA || !VIEWER_DATA.time || !VIEWER_DATA.time.length) return 0;
+  return dataX != null ? nearestTimeIndex(VIEWER_DATA.time, dataX) : VIEWER_DATA.time.length - 1;
+}
+// The row-value half of updateAtCursor, on its own so the observer can call it when rows scroll in.
+function updateRowValues(idx, dataX){
+  var els = VIEWER_CHANNEL_VALUE_ELS;
+  rowValueChannels().forEach(function(ch){
+    var el = els[ch];
+    if(!el) return;
+    var txt = formatReadoutValue(valueAtCursor(ch, idx, dataX), ch);
+    el.textContent = txt;
+    // Labels like "TQ Red. < Driver Demand" are wider than the column, so the row ellipsises them;
+    // the title makes the full state readable on hover without widening the panel.
+    if(isTextChannel(ch)) el.title = txt;
+  });
+}
+function refreshVisibleRowValues(){
+  if(!VIEWER_DATA) return;
+  var dataX = (CROSSHAIR_TIME != null) ? CROSSHAIR_TIME : null;
+  updateRowValues(cursorSampleIndex(dataX), dataX);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -4377,7 +4477,7 @@ function setCursorTime(t){
   // still only repaints -- the frame coalescing is for streams of pointer moves, not single actions.
   cancelCursorPaint();
   updateAtCursor(CROSSHAIR_TIME);
-  repaintCharts();
+  drawCrosshairOverlays();
 }
 // Paint the given sample indices (a histogram cell's contributors) on the graphs and the overview
 // bar. Runs of consecutive indices become one span; null/empty clears. Repaints only -- never a rebuild.
@@ -5402,6 +5502,7 @@ function gaugeChannelFor(def){
 // ---------------------------------------------------------------------------------------------
 function resizeViewerCharts(){
   Object.keys(viewerCharts).forEach(function(k){ if(viewerCharts[k]) viewerCharts[k].resize(); });
+  drawCrosshairOverlays();   // new plot area, new pixel for the same time
 }
 // The effective gauge unit, read back by measuring a known element. --dlv-gauge-u is an
 // unregistered custom property holding a clamp() expression, so getComputedStyle returns the
@@ -6570,7 +6671,7 @@ function valueAtCursor(ch, idx, dataX){
 
 function updateAtCursor(dataX){
   if(!VIEWER_DATA) return;
-  var idx = dataX != null ? nearestTimeIndex(VIEWER_DATA.time, dataX) : VIEWER_DATA.time.length - 1;
+  var idx = cursorSampleIndex(dataX);
   if(showsCards()){
     VIEWER_SELECTED.forEach(function(ch){
       var card = document.querySelector('.dlv-card[data-card-ch="' + cssEscape(ch) + '"] [data-card-value]');
@@ -6586,18 +6687,11 @@ function updateAtCursor(dataX){
     if(VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.setCursor === 'function') VIEWER_HIST_CTL.setCursor(dataX);
     updateHistDashGauges(idx, dataX);
   }
-  // Live per-channel values in the left panel -- every channel currently rendered in the (possibly
+  // Live per-channel values in the left panel -- every channel rendered in the (possibly
   // search-filtered) table gets its value refreshed, not just the selected/graphed ones, per Ken's
-  // request that every channel's value be visible at a glance without selecting it.
-  Object.keys(VIEWER_CHANNEL_VALUE_ELS).forEach(function(ch){
-    var el = VIEWER_CHANNEL_VALUE_ELS[ch];
-    var txt = formatReadoutValue(valueAtCursor(ch, idx, dataX), ch);
-    el.textContent = txt;
-    // (legend values are refreshed below, from their own element list)
-    // Labels like "TQ Red. < Driver Demand" are wider than the column, so the row ellipsises them;
-    // the title makes the full state readable on hover without widening the panel.
-    if(isTextChannel(ch)) el.title = txt;
-  });
+  // request that every channel's value be visible at a glance without selecting it. Only the rows on
+  // screen are written per move; see updateRowValues / watchVisibleRows.
+  updateRowValues(idx, dataX);
   // In-graph legends (they replaced the per-graph header bar). Queried live rather than cached
   // because rebuildChart / renderViewerBody can replace these nodes underneath us.
   document.querySelectorAll('[data-legend-ch]').forEach(function(el){
@@ -6638,13 +6732,51 @@ function repaintCharts(){
 }
 var CURSOR_PAINT_RAF = null;
 var CURSOR_PAINT_AT = null;      // { x } while a paint is queued -- an OBJECT, because null is a real cursor value
+
+// The CROSSHAIR and the READOUTS are paced separately, because they cost wildly different amounts.
+// Moving the line is one clear and one stroke on its own canvas (0.12 ms), so it runs every frame and
+// stays glued to the pointer. Refreshing the readouts writes into the channel table, and a table
+// re-lays-out as a WHOLE -- with a real 524-channel HP Tuners log that is ~25 ms a frame even though
+// only the ~20 rows on screen are written, because CSS containment does not apply to table rows
+// (measured: 524 rows in the DOM = 25 ms, 3 rows = 4 ms; the list is next in line to render only what
+// is visible, which removes this entirely).
+//
+// So the readouts are given a floor between refreshes, and only when they are actually expensive on
+// this log: a cheap list keeps updating every frame exactly as before. A trailing refresh always runs
+// when the pointer settles, so the numbers you read are never the ones from four frames ago.
+var READOUT_COST_MS = 0;         // rolling estimate of one readout refresh
+var READOUT_LAST_AT = 0;
+var READOUT_TRAILER = null;
+var READOUT_EXPENSIVE_MS = 6;    // above this, pace them
+var READOUT_MIN_GAP_MS = 55;     // ~18 refreshes a second, which reads as live for numbers
+function readoutsAreExpensive(){ return READOUT_COST_MS > READOUT_EXPENSIVE_MS; }
+function runReadouts(dataX){
+  var t0 = (window.performance && performance.now) ? performance.now() : 0;
+  updateAtCursor(dataX);
+  if(t0){
+    var dt = performance.now() - t0;
+    // Weighted so one slow frame (a GC pause, a background tab waking) cannot latch the pacing on.
+    READOUT_COST_MS = READOUT_COST_MS ? (READOUT_COST_MS * 0.7 + dt * 0.3) : dt;
+    READOUT_LAST_AT = performance.now();
+  }
+}
+function paceReadouts(dataX){
+  if(READOUT_TRAILER){ clearTimeout(READOUT_TRAILER); READOUT_TRAILER = null; }
+  var now = (window.performance && performance.now) ? performance.now() : 0;
+  if(!readoutsAreExpensive() || !now || (now - READOUT_LAST_AT) >= READOUT_MIN_GAP_MS){ runReadouts(dataX); return; }
+  // Too soon: let the line move on its own and catch the numbers up when the pointer settles.
+  READOUT_TRAILER = setTimeout(function(){
+    READOUT_TRAILER = null;
+    runReadouts(dataX);
+  }, READOUT_MIN_GAP_MS - (now - READOUT_LAST_AT));
+}
 function runCursorPaint(){
   CURSOR_PAINT_RAF = null;
   var at = CURSOR_PAINT_AT;
   CURSOR_PAINT_AT = null;
   if(!at) return;
-  updateAtCursor(at.x);
-  repaintCharts();
+  drawCrosshairOverlays();   // the line, every frame -- the traces have not changed
+  paceReadouts(at.x);        // the numbers, as fast as this log can afford
 }
 function paintCursor(dataX){
   CURSOR_PAINT_AT = { x: dataX };
@@ -6679,6 +6811,7 @@ function frameCoalescer(apply){
 }
 // Called before the charts are destroyed / rebuilt, so a queued frame can't render a dead chart.
 function cancelCursorPaint(){
+  if(READOUT_TRAILER){ clearTimeout(READOUT_TRAILER); READOUT_TRAILER = null; }
   if(CURSOR_PAINT_RAF === null) return;
   if(typeof cancelAnimationFrame === 'function') cancelAnimationFrame(CURSOR_PAINT_RAF);
   else clearTimeout(CURSOR_PAINT_RAF);
@@ -6790,6 +6923,7 @@ function setVisibleRange(t0, t1, opts){
     c.update('none');
   });
   updateScrubberWindow();
+  drawCrosshairOverlays();   // the window moved, so the cursor's pixel did too
   return getVisibleRange();
 }
 
@@ -6867,7 +7001,7 @@ function scrubCursorBySample(dir){
   VIEWER_CURSOR_TIME = CROSSHAIR_TIME;   // arrow-key stepping counts as placing the cursor
   cancelCursorPaint();
   updateAtCursor(CROSSHAIR_TIME);
-  repaintCharts();
+  drawCrosshairOverlays();
 }
 ['gesturestart', 'gesturechange', 'gestureend'].forEach(function(evt){
   document.addEventListener(evt, function(e){
@@ -6940,6 +7074,7 @@ function rebuildChart(){
     if(!panelDef.channels.length){ wrap.innerHTML = '<div class="dlv-loading">No channels assigned.</div>'; return; }
     wrap.innerHTML = '<canvas></canvas>';
     var canvas = wrap.querySelector('canvas');
+    crosshairCanvasFor(wrap);   // the crosshair's own layer, above the traces (see drawCrosshairOverlays)
 
     var datasets = compareDatasetsFor(panelDef.channels).concat(panelDef.channels.map(function(ch){
       var color = channelColor(ch);
@@ -7115,6 +7250,10 @@ function rebuildChart(){
                 var evt = ctx.event;
                 if(evt && evt.pointerType === 'touch' && (!evt.pointers || evt.pointers.length < 2)) return false;
               },
+              // The crosshair marks a TIME, so while the traces slide under a pan its pixel moves.
+              // Redrawing the overlay per pan event keeps the line welded to the data instead of to
+              // the screen (it costs 0.12 ms; the range write still waits for the drag to finish).
+              onPan: function(){ drawCrosshairOverlays(); },
               onPanComplete: function(ctx){ syncZoom(ctx.chart); },
             },
             zoom: {
@@ -7122,6 +7261,7 @@ function rebuildChart(){
               drag: { enabled: true, modifierKey: 'shift', backgroundColor: 'rgba(209,19,46,0.15)' },
               pinch: { enabled: true },
               mode: 'x',
+              onZoom: function(){ drawCrosshairOverlays(); },
               onZoomComplete: function(ctx){ syncZoom(ctx.chart); },
             },
           },
