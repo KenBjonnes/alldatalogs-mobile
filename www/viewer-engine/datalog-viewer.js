@@ -82,6 +82,11 @@ var VIEWER_RANGE_NOTIFYING = false;
 // Never zoom past ~0.4% of the run, or the scrubber handles become ungrabbable. Was local to
 // wireScrubberEvents; hoisted so setVisibleRange applies the same floor to callers outside it.
 var MIN_WINDOW_FRAC = 0.004;
+// How far the zoom window may hang past either end of the log, as a fraction of its own width, at a
+// deep zoom -- tapering to nothing as the window grows to the whole log (see visibleRangeBounds).
+// Ken (2026-09-09): a race log ends at the finish line (engine off), so the samples that matter sat
+// hard against the graph's right edge and could not be dragged into the clear.
+var VIEWER_OVERSCROLL_FRAC = 0.5;
 var VIEWER_ACTIVE_PRESET = null;
 var VIEWER_VIEW_MODE = 'default'; // 'default' | 'gauge' | 'graph' | 'histograms'
 // Only meaningful while VIEWER_VIEW_MODE==='gauge' -- which of the two sub-views the Gauges tab is
@@ -167,6 +172,41 @@ var pbdCrosshairPlugin = {
   }
 };
 if(window.Chart) Chart.register(pbdCrosshairPlugin);
+
+// When the window overhangs an end of the log (setVisibleRange lets it, by up to half its width) the
+// empty part gets a faint wash, a dashed line where the log starts/ends and a small label, so the gap
+// reads as "no more log" rather than a dropout. Only the viewer's own panels are touched.
+var pbdLogEdgePlugin = {
+  id: 'pbdLogEdge',
+  afterDraw: function(chart){
+    if(!VIEWER_DATA || !VIEWER_DATA.time || !VIEWER_DATA.time.length) return;
+    var mine = false, k;
+    for(k in viewerCharts){ if(viewerCharts[k] === chart){ mine = true; break; } }
+    if(!mine) return;
+    var xs = chart.scales.x, area = chart.chartArea;
+    if(!xs || !area) return;
+    var T = VIEWER_DATA.time, fullMin = T[0], fullMax = T[T.length - 1], eps = 1e-9, ctx = chart.ctx;
+    function edge(t, beyondLeft){
+      var px = xs.getPixelForValue(t);
+      if(!(px > area.left + 0.5 && px < area.right - 0.5)) return;
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,255,255,0.035)';
+      if(beyondLeft) ctx.fillRect(area.left, area.top, px - area.left, area.bottom - area.top);
+      else ctx.fillRect(px, area.top, area.right - px, area.bottom - area.top);
+      ctx.beginPath(); ctx.moveTo(px, area.top); ctx.lineTo(px, area.bottom);
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.setLineDash([3, 5]); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = '10px system-ui, -apple-system, Segoe UI, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.textBaseline = 'bottom';
+      ctx.textAlign = beyondLeft ? 'right' : 'left';
+      ctx.fillText(beyondLeft ? 'log start' : 'log end', beyondLeft ? px - 4 : px + 4, area.bottom - 3);
+      ctx.restore();
+    }
+    if(xs.min < fullMin - eps) edge(fullMin, true);
+    if(xs.max > fullMax + eps) edge(fullMax, false);
+  }
+};
+if(window.Chart) Chart.register(pbdLogEdgePlugin);
 
 function getCurrentVehicleMeta(){
   // Prefer a host-supplied vehicle object (meta.vehicle) -- it works on the ticket path (no vehicleId
@@ -6278,16 +6318,12 @@ function handleChartLeave(){
 function syncZoom(sourceChart){
   if(VIEWER_SYNCING) return;
   VIEWER_SYNCING = true;
-  var min = sourceChart.scales.x.min, max = sourceChart.scales.x.max;
-  Object.keys(viewerCharts).forEach(function(k){
-    var c = viewerCharts[k];
-    if(!c || c === sourceChart) return;
-    c.options.scales.x.min = min;
-    c.options.scales.x.max = max;
-    c.update('none');
-  });
-  VIEWER_SYNCING = false;
-  updateScrubberWindow();
+  try {
+    // Through the one writer, so a plugin pan / wheel zoom gets the same bounds (overhang past the
+    // ends, never wider than the log) as every other path. minFrac 0 keeps whatever depth the
+    // wheel reached, as before.
+    setVisibleRange(sourceChart.scales.x.min, sourceChart.scales.x.max, { minFrac: 0 });
+  } finally { VIEWER_SYNCING = false; }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -6321,7 +6357,7 @@ function getVisibleRange(){
   i0 = Math.max(0, Math.min(n - 1, i0));
   i1 = Math.max(0, Math.min(n - 1, i1));
   if(i1 < i0){ i0 = i1 = nearestTimeIndex(T, (t0 + t1) / 2); }
-  var isFull = Math.abs(t0 - fullMin) <= 1e-9 && Math.abs(t1 - fullMax) <= 1e-9;
+  var isFull = t0 <= fullMin + 1e-9 && t1 >= fullMax - 1e-9;   // the whole log is in view
   return { t0: t0, t1: t1, startIdx: i0, endIdx: i1, isFull: isFull };
 }
 
@@ -6331,6 +6367,15 @@ function getVisibleRange(){
 // arrow-key zoom has always allowed a deeper zoom (0.0005) than the scrubber handles (0.004), and
 // the scrubber pan must keep whatever width the wheel left it (0 = no floor), so each caller passes
 // the floor it always had and its numbers do not change. Returns what the viewer now shows.
+// The span a window of width w may occupy: the log plus an overhang at each end. The overhang is
+// VIEWER_OVERSCROLL_FRAC of the width at a deep zoom (the last sample can be dragged to the middle
+// of the graph) and tapers to zero as the window grows to the whole log, so a full zoom-out is
+// always exactly the log and nothing ever jumps.
+function visibleRangeBounds(w){
+  var T = VIEWER_DATA.time, fullMin = T[0], fullMax = T[T.length - 1], R = fullMax - fullMin;
+  var pad = (R > 0 && w > 0) ? VIEWER_OVERSCROLL_FRAC * w * Math.max(0, 1 - w / R) : 0;
+  return { min: fullMin - pad, max: fullMax + pad, pad: pad };
+}
 function setVisibleRange(t0, t1, opts){
   if(!VIEWER_DATA || !VIEWER_DATA.time || !VIEWER_DATA.time.length) return null;
   var T = VIEWER_DATA.time, fullMin = T[0], fullMax = T[T.length - 1];
@@ -6338,21 +6383,27 @@ function setVisibleRange(t0, t1, opts){
   t0 = +t0; t1 = +t1;
   if(!isFinite(t0) || !isFinite(t1)) return getVisibleRange();
   if(t1 < t0){ var swap = t0; t0 = t1; t1 = swap; }
-  t0 = Math.max(fullMin, Math.min(fullMax, t0));
-  t1 = Math.max(fullMin, Math.min(fullMax, t1));
   var minFrac = (opts && opts.minFrac != null) ? opts.minFrac : MIN_WINDOW_FRAC;
   var minW = fullRange * Math.max(0, Math.min(1, minFrac));
-  if(fullRange > 0 && (t1 - t0) < minW){
-    var mid = (t0 + t1) / 2;
-    t0 = mid - minW / 2; t1 = mid + minW / 2;
-    if(t0 < fullMin){ t0 = fullMin; t1 = Math.min(fullMax, fullMin + minW); }
-    if(t1 > fullMax){ t1 = fullMax; t0 = Math.max(fullMin, fullMax - minW); }
-  }
+  // Width first: never wider than the log, never narrower than the floor (about the centre).
+  var w = t1 - t0, mid = (t0 + t1) / 2;
+  if(fullRange > 0 && w > fullRange) w = fullRange;
+  if(fullRange > 0 && w < minW) w = minW;
+  if(!(fullRange > 0)) w = 0;
+  t0 = mid - w / 2; t1 = mid + w / 2;
+  // Then position: inside the log plus the overhang this width earns (see visibleRangeBounds).
+  var b = visibleRangeBounds(w);
+  if(t0 < b.min){ t0 = b.min; t1 = t0 + w; }
+  if(t1 > b.max){ t1 = b.max; t0 = t1 - w; }
   Object.keys(viewerCharts).forEach(function(k){
     var c = viewerCharts[k];
     if(!c) return;
     c.options.scales.x.min = t0;
     c.options.scales.x.max = t1;
+    // The zoom plugin clamps its own drags/wheels against these; kept in step with the width so a
+    // pan can overhang exactly as far as this function allows and no further.
+    var lim = c.options.plugins && c.options.plugins.zoom && c.options.plugins.zoom.limits;
+    if(lim && lim.x){ lim.x.min = b.min; lim.x.max = b.max; }
     c.update('none');
   });
   updateScrubberWindow();
@@ -6398,8 +6449,9 @@ function zoomAtPoint(factor){
   if(newRange < fullRange * 0.0005) newRange = fullRange * 0.0005;
   var newMin = center - newRange / 2;
   var newMax = center + newRange / 2;
-  if(newMin < fullMin){ newMin = fullMin; newMax = newMin + newRange; }
-  if(newMax > fullMax){ newMax = fullMax; newMin = newMax - newRange; }
+  // No clamp to the log here any more: setVisibleRange bounds the result (an overhang past the ends
+  // is allowed, shrinking as the window grows), so zooming about a point near the finish line no
+  // longer yanks the window back inside the log.
   // Own floor kept above (deeper than the scrubber's) and handed on, so the write path can't widen it.
   setVisibleRange(newMin, newMax, { minFrac: 0.0005 });
 }
@@ -6668,7 +6720,10 @@ function rebuildChart(){
           legend: { display: false },
           tooltip: { enabled: false },
           zoom: {
-            limits: { x: { min: fullMin, max: fullMax } },
+            // Refreshed on every range write (setVisibleRange): the window may overhang the log's ends
+            // by up to half its width, so these move with the zoom depth. maxRange (plugin v2.1+) stops
+            // a wheel zoom-out from ever showing more than the log; the writer caps the width anyway.
+            limits: { x: { min: fullMin, max: fullMax, maxRange: (fullMax - fullMin) || undefined } },
             pan: {
               enabled: true, mode: 'x',
               onPanStart: function(ctx){
@@ -6784,7 +6839,9 @@ function updateScrubberWindow(){
     width = Math.min(MIN_PX, w);
     if(left + width > w) left = Math.max(0, w - width);
   }
-  winEl.style.left = Math.max(0, left) + 'px';
+  // A window overhanging the log (setVisibleRange) is drawn where it is -- partly outside the bar,
+  // clipped by the wrap's overflow -- rather than shoved back inside, so the bar agrees with the graph.
+  winEl.style.left = left + 'px';
   winEl.style.width = width + 'px';
 }
 function updateScrubberPlayhead(t){
@@ -7114,7 +7171,8 @@ function wireScrubberEvents(){
     var fullMin = VIEWER_DATA.time[0], fullMax = VIEWER_DATA.time[VIEWER_DATA.time.length - 1];
     var fullRange = fullMax - fullMin;
     var widthFrac = windowWidthFrac();
-    leftFrac = Math.max(0, Math.min(1 - widthFrac, leftFrac));
+    // Not clamped to [0, 1 - width] here: setVisibleRange bounds it, overhang included, so the bar can
+    // be dragged past the ends exactly as far as the graph can.
     var newMin = fullMin + leftFrac * fullRange;
     // minFrac 0: a pan keeps whatever width the wheel/keys left (which can be far below the
     // handle floor) -- flooring here would silently zoom out on the first drag after a deep zoom.
