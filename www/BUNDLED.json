@@ -1,15 +1,15 @@
 {
-  "builtAt": "2026-09-10T11:49:31.519Z",
+  "builtAt": "2026-09-10T14:56:36.089Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
     "siteRepo": "C:/websites/Alldatalogs",
-    "siteCommit": "71c48d1"
+    "siteCommit": "1c71c8f"
   },
   "files": {
     "viewer-engine/datalog-viewer.css": {
-      "sha256": "d229646955acf0442a44f1ec942ffc8251de33e7498668ef35cd14b30a06f63e",
-      "bytes": 131703,
+      "sha256": "6056c5fe05ddf8774b47771ec49a6ceb137f01d90fc572d5a9076a070eb6ebc6",
+      "bytes": 133240,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.css"
     },
     "viewer-engine/datalog-histogram.css": {
@@ -88,8 +88,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-vehicles.js"
     },
     "viewer-engine/datalog-viewer.js": {
-      "sha256": "605d1f709d14b67d4c09b5e2413aea996550f30bdccdf22776ed6db44a93bcef",
-      "bytes": 446659,
+      "sha256": "5c583a1969e635868b0cbcf629d1f9eaeb79330f803a92030617a013793307a9",
+      "bytes": 456471,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.js"
     },
     "viewer-engine/runtime.js": {

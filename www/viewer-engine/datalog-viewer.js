@@ -1020,6 +1020,93 @@ function wireKindBar(){
     toggleKindFilter(b.getAttribute('data-kind'));
   });
 }
+
+// ---- Favorites (star) + collapsible sections --------------------------------------------------
+// Ken, 2026-09-10: "lets add a star next to every PID. if you star it, it becomes a favorite and shows
+// up top. then lets add collapsable categories for PIDs, math channels or the calculated parameters."
+//
+// A star is stored by channel NAME in localStorage, exactly like per-channel smoothing: you watch the
+// same handful of PIDs on every log, so the star has to survive opening the next one. A starred channel
+// is LIFTED OUT of its kind section into "Favorites" at the top rather than drawn twice -- the same rule
+// the prototype's pinned block follows, and the only one that keeps "shows up top" honest.
+var VIEWER_FAVORITES = null;
+var VIEWER_FAV_KEY = 'pbdDatalogViewerFavorites.v1';
+function favoritesMap(){
+  if(VIEWER_FAVORITES) return VIEWER_FAVORITES;
+  var m = null;
+  try { var raw = window.localStorage ? localStorage.getItem(VIEWER_FAV_KEY) : null; m = raw ? JSON.parse(raw) : null; } catch(e){ m = null; }
+  VIEWER_FAVORITES = (m && typeof m === 'object') ? m : {};
+  return VIEWER_FAVORITES;
+}
+function isFavoriteChannel(c){ return !!favoritesMap()[c]; }
+function persistFavorites(){ try { if(window.localStorage) localStorage.setItem(VIEWER_FAV_KEY, JSON.stringify(favoritesMap())); } catch(e){} }
+function toggleFavoriteChannel(c){
+  if(!c) return;
+  var m = favoritesMap();
+  if(m[c]) delete m[c]; else m[c] = true;
+  persistFavorites();
+  rerenderChannelRows();
+}
+
+// The sections themselves, in render order. The three kinds are the ones the row badges and the kind
+// filter already use (channelKind), so a section heading and its filter button always mean the same thing.
+var CHAN_SECTIONS = [
+  ['__fav',  'Favorites',        '&#9733;'],
+  ['logged', 'Logged channels',  '&#9673;'],
+  ['math',   'Math channels',    '&fnof;'],
+  ['calc',   'Calculated',       '&asymp;']
+];
+var VIEWER_SECT_COLLAPSED = null;
+var VIEWER_SECT_KEY = 'pbdDatalogViewerChanSections.v1';
+function sectCollapsedMap(){
+  if(VIEWER_SECT_COLLAPSED) return VIEWER_SECT_COLLAPSED;
+  var m = null;
+  try { var raw = window.localStorage ? localStorage.getItem(VIEWER_SECT_KEY) : null; m = raw ? JSON.parse(raw) : null; } catch(e){ m = null; }
+  VIEWER_SECT_COLLAPSED = (m && typeof m === 'object') ? m : {};
+  return VIEWER_SECT_COLLAPSED;
+}
+function sectCollapsed(id){ return !!sectCollapsedMap()[id]; }
+function toggleSectCollapsed(id){
+  var m = sectCollapsedMap();
+  if(m[id]) delete m[id]; else m[id] = true;
+  try { if(window.localStorage) localStorage.setItem(VIEWER_SECT_KEY, JSON.stringify(m)); } catch(e){}
+  rerenderChannelRows();
+}
+// Column count for a section heading's colspan -- the prototype adds a pin column, so this can't be a
+// literal (the phone also hides the last two columns, which a colspan may safely overshoot).
+function chanColCount(){ return VIEWER_CHAN_PROTOTYPE ? 7 : 6; }
+function renderSectHeaderHtml(id, label, count, collapsed){
+  var ico = '';
+  CHAN_SECTIONS.forEach(function(s){ if(s[0] === id) ico = s[2]; });
+  return '<tr class="dlv-group-row dlv-sect-row' + (collapsed ? ' collapsed' : '') +
+    (id === '__fav' ? ' dlv-sect-fav' : '') + '" data-section="' + id + '">' +
+    '<td colspan="' + chanColCount() + '">' +
+    '<span class="dlv-group-caret">' + (collapsed ? '&#9656;' : '&#9662;') + '</span>' +
+    '<span class="dlv-sect-ico dlv-sect-ico-' + id.replace('__', '') + '">' + ico + '</span>' +
+    '<span class="dlv-group-label">' + escapeHtml(label) + '</span>' +
+    '<span class="dlv-group-count">' + count + '</span></td></tr>';
+}
+// Rows inside one section: a manual drag order wins where one exists, otherwise the column sort.
+function orderSectRows(list){
+  if(!VIEWER_CHAN_ORDER) return sortRows(list);
+  return VIEWER_CHAN_ORDER.filter(function(c){ return list.indexOf(c) !== -1; })
+    .concat(list.filter(function(c){ return VIEWER_CHAN_ORDER.indexOf(c) === -1; }));
+}
+function chanSectionsHtml(rows, q){
+  var by = { __fav: [], logged: [], math: [], calc: [] };
+  rows.forEach(function(c){ (isFavoriteChannel(c) ? by.__fav : by[channelKind(c)]).push(c); });
+  var html = '';
+  CHAN_SECTIONS.forEach(function(s){
+    var list = by[s[0]];
+    if(!list.length) return;                       // no empty headings -- most logs have no math channels
+    // A search is a deliberate narrowing: never answer one with a collapsed heading and no rows.
+    var collapsed = !q && sectCollapsed(s[0]);
+    html += renderSectHeaderHtml(s[0], s[1], list.length, collapsed);
+    if(!collapsed) html += orderSectRows(list).map(function(c){ return renderOneChannelRow(c, false, s[0]); }).join('');
+  });
+  return html;
+}
+
 function channelMatchesSearch(c, q, groupHits){
   if(!channelPassesKind(c)) return false;
   if(!q) return true;
@@ -1038,31 +1125,39 @@ function renderChannelRowsHtml(){
   var html = '';
   if(pinned.length){
     html += renderGroupHeaderHtml('__pinned', 'Pinned', pinned.length, false) +
-            pinned.map(function(c){ return renderOneChannelRow(c, true); }).join('');
+            pinned.map(function(c){ return renderOneChannelRow(c, true, '__pinned'); }).join('');
   }
   if(!chanModeGrouped()){
-    // Flat mode keeps the existing column sort, unless dragging has established a manual order.
-    var ordered = VIEWER_CHAN_ORDER
-      ? VIEWER_CHAN_ORDER.filter(function(c){ return rest.indexOf(c) !== -1; })
-          .concat(rest.filter(function(c){ return VIEWER_CHAN_ORDER.indexOf(c) === -1; }))
-      : sortRows(rest);
-    return html + ordered.map(function(c){ return renderOneChannelRow(c, false); }).join('');
+    // Favorites first, then one collapsible section per kind. Ordering inside a section keeps the
+    // existing column sort, unless dragging has established a manual order (orderSectRows).
+    return html + chanSectionsHtml(rest, q);
   }
   groupChannels(rest).forEach(function(g){
     // A group the search matched by NAME opens automatically -- otherwise searching "timing" would
     // surface a collapsed heading and still show you nothing.
     var collapsed = VIEWER_GROUP_COLLAPSED[g.id] && !groupHits[g.id];
     html += renderGroupHeaderHtml(g.id, g.label, g.channels.length, collapsed);
-    if(!collapsed) html += sortRows(g.channels).map(function(c){ return renderOneChannelRow(c, false); }).join('');
+    if(!collapsed) html += sortRows(g.channels).map(function(c){ return renderOneChannelRow(c, false, g.id); }).join('');
   });
   return html;
 }
 function renderGroupHeaderHtml(id, label, count, collapsed){
   return '<tr class="dlv-group-row' + (collapsed ? ' collapsed' : '') + (id === '__pinned' ? ' dlv-group-pinned' : '') +
-    '" data-group="' + escapeHtml(id) + '"><td colspan="6">' +
+    '" data-group="' + escapeHtml(id) + '"><td colspan="' + chanColCount() + '">' +
     '<span class="dlv-group-caret">' + (collapsed ? '&#9656;' : '&#9662;') + '</span>' +
     '<span class="dlv-group-label">' + escapeHtml(label) + '</span>' +
     '<span class="dlv-group-count">' + count + '</span></td></tr>';
+}
+// The channel list's scroll position, carried across a full body rebuild. Read/written on the wrap
+// (.dlv-channel-table-wrap is the scrolling element -- the table itself doesn't scroll).
+function channelListScrollTop(){
+  var wrap = document.querySelector('.dlv-channel-table-wrap');
+  return wrap ? wrap.scrollTop : 0;
+}
+function restoreChannelListScroll(y){
+  if(!y) return;
+  var wrap = document.querySelector('.dlv-channel-table-wrap');
+  if(wrap) wrap.scrollTop = y;
 }
 function rerenderChannelRows(){
   var body = document.getElementById('dlvChannelBody');
@@ -1097,7 +1192,8 @@ function wireChannelDrag(body){
     if(!row) return;
     var pinnedRow = row.classList.contains('dlv-row-pinned');
     if(chanModeGrouped() && !pinnedRow) return;
-    st = { row: row, pinned: pinnedRow, x: e.clientX, y: e.clientY, active: false, id: e.pointerId, overPanel: null };
+    st = { row: row, pinned: pinnedRow, sect: row.getAttribute('data-sect') || '',
+           x: e.clientX, y: e.clientY, active: false, id: e.pointerId, overPanel: null };
     // Captured on DOWN, before any movement -- not just once slop is exceeded. A drop target (a
     // graph panel) lives in a completely different part of the DOM than this list, so the very
     // FIRST move event has to already be captured, or a fast/coarse first move that jumps straight
@@ -1125,6 +1221,7 @@ function wireChannelDrag(body){
     var target = over && over.closest ? over.closest('tr[data-ch]') : null;
     if(!target || target === st.row) return;
     if(target.classList.contains('dlv-row-pinned') !== st.pinned) return;  // stay in the block
+    if((target.getAttribute('data-sect') || '') !== st.sect) return;        // ...and in its section
     var r = target.getBoundingClientRect();
     target.parentNode.insertBefore(st.row, (e.clientY > r.top + r.height / 2) ? target.nextSibling : target);
   });
@@ -1243,11 +1340,14 @@ function renderChannelPanelHtml(){
       '<div class="dlv-channel-table-wrap"><table class="dlv-channel-table"><colgroup>' +
         '<col style="width:18px">' +
         '<col style="width:30px">' + (VIEWER_CHAN_PROTOTYPE ? '<col style="width:22px">' : '') +
+        '<col class="dlv-col-fav" style="width:22px">' +
         '<col><col style="width:28px"><col style="width:44px">' +
       '</colgroup><thead><tr>' +
         '<th class="dlv-th-center" title="Drag to reorder"></th>' +
         '<th class="dlv-th-center" data-sort="selected" title="Selected">Sel</th>' +
         (VIEWER_CHAN_PROTOTYPE ? '<th class="dlv-th-center" title="Pin to top"></th>' : '') +
+        // Not sortable: the stars already sort themselves, into the Favorites section at the top.
+        '<th class="dlv-th-center dlv-th-fav" title="Starred channels sit in Favorites at the top of the list">&#9733;</th>' +
         '<th data-sort="name">Channel</th>' +
         '<th class="dlv-th-center" data-sort="upper" title="Upper Graph (top) / Lower Graph (bottom)">U/L</th>' +
         '<th class="dlv-th-center" data-sort="gauge" title="Used by the active Gauge preset">Gauge</th>' +
@@ -2603,6 +2703,11 @@ function renderViewerBody(){
   if(VIEWER_HIST_CTL && VIEWER_HIST_CTL.destroy){ try { VIEWER_HIST_CTL.destroy(); } catch(err){} VIEWER_HIST_CTL = null; }
   var container = document.getElementById('viewerContent');
   var mobile = isMobileViewer();
+  // Ken, 2026-09-10: "when you pick a parameter, it scrolls the list to the top. don't need or want that
+  // scroll". Checking a channel rebuilds the whole body (graphs, cards, footer count all change), which
+  // built a fresh channel list scrolled to row one. It is the SAME list either side of the rebuild, so its
+  // scroll position is carried across; the browser clamps it if the list is now shorter.
+  var keepChanScroll = channelListScrollTop();
   // Mobile is always the cards-and-one-graph layout regardless of the saved view mode: the gauge
   // fascia is 29 tiles wide and has no meaningful phone form, and the view picker that would let
   // you switch back lives in the header, which is hidden. Forced here rather than by overwriting
@@ -2718,6 +2823,7 @@ function renderViewerBody(){
     else { showChannelHint(); showFullscreenHint(); }
   }
   updateAtCursor(CROSSHAIR_TIME);
+  restoreChannelListScroll(keepChanScroll);
   document.querySelectorAll('[data-soon]').forEach(function(el){
     el.addEventListener('click', function(e){ e.preventDefault(); if(window.showToast) showToast(el.getAttribute('data-soon') + ' is coming soon.'); });
   });
@@ -2931,8 +3037,14 @@ function wireChannelPanelEvents(){
       markLayoutDirty();
       renderViewerBody();
     });
-    // PROTOTYPE: pin + group collapse. Delegated, so it survives every row re-render.
+    // Star a channel / fold a section. Delegated, so both survive every row re-render.
     body.addEventListener('click', function(e){
+      var fav = e.target.closest('.dlv-fav-btn');
+      if(fav){ e.stopPropagation(); toggleFavoriteChannel(fav.getAttribute('data-fav-ch')); return; }
+      // Before the prototype's group branch: a section heading carries dlv-group-row too (it reuses
+      // that styling), and the prototype branch would read data-group off it and find nothing.
+      var sect = e.target.closest('.dlv-sect-row');
+      if(sect){ toggleSectCollapsed(sect.getAttribute('data-section')); return; }
       var pin = e.target.closest('.dlv-pin-btn');
       if(pin){ e.stopPropagation(); togglePin(pin.dataset.pinCh); return; }
       var grp = e.target.closest('.dlv-group-row');
@@ -2979,16 +3091,25 @@ function wireChannelPanelEvents(){
   var moreBtn = document.getElementById('dlvCardsMoreBtn');
   if(moreBtn) moreBtn.addEventListener('click', function(){ VIEWER_CARDS_EXPANDED = !VIEWER_CARDS_EXPANDED; renderViewerBody(); });
 }
-function renderOneChannelRow(c, pinnedRow){
+function renderOneChannelRow(c, pinnedRow, sectId){
   var gaugeSet = gaugeChannelSet();
   var checked = VIEWER_SELECTED.indexOf(c) !== -1;
   var unit = VIEWER_UNIT_BY_CHANNEL[c];
+  var fav = isFavoriteChannel(c);
   // U / M / L stacked vertically -- the middle button only exists in views that render 3 graphs
   var slots = activeGraphSlots();
+  // data-sect confines a drag to its own section (see wireChannelDrag): dragging a channel out of
+  // "Math channels" and into "Logged channels" would be a claim about the log that isn't true.
   return '<tr class="' + (checked ? 'dlv-row-selected' : '') + (pinnedRow ? ' dlv-row-pinned' : '') +
-      '" data-ch="' + escapeHtml(c) + '">' +
+      '" data-ch="' + escapeHtml(c) + '" data-sect="' + escapeHtml(sectId || '') + '">' +
     '<td class="dlv-cell-center"><span class="dlv-drag-handle" title="Drag to reorder, or onto a graph to add it there">&#8801;</span></td>' +
     '<td class="dlv-cell-center"><input type="checkbox" data-ch="' + escapeHtml(c) + '"' + (checked?' checked':'') + '></td>' +
+    // Faint on every row rather than hover-only: a star nobody can see is a feature nobody finds, and
+    // the phone drawer has no hover at all.
+    '<td class="dlv-cell-center"><button type="button" class="dlv-fav-btn' + (fav ? ' on' : '') +
+      '" data-fav-ch="' + escapeHtml(c) + '" aria-pressed="' + (fav ? 'true' : 'false') +
+      '" title="' + (fav ? 'Remove from favorites' : 'Favorite -- keeps this channel at the top of the list') +
+      '">' + (fav ? '&#9733;' : '&#9734;') + '</button></td>' +
     (VIEWER_CHAN_PROTOTYPE
       ? '<td class="dlv-cell-center"><button type="button" class="dlv-pin-btn' + (pinnedRow ? ' pinned' : '') +
           '" data-pin-ch="' + escapeHtml(c) + '" title="' + (pinnedRow ? 'Unpin' : 'Send to top') + '">' +
@@ -3074,7 +3195,7 @@ function loadHistDashLocal(){
   try {
     var raw = window.localStorage ? localStorage.getItem(VIEWER_HIST_DASH_KEY) : null;
     var p = raw ? JSON.parse(raw) : null;
-    return (p && Array.isArray(p.gauges) && p.gauges.length) ? { gauges: p.gauges } : null;
+    return (p && Array.isArray(p.gauges) && p.gauges.length) ? { gauges: dashAdoptGaugeIds(p.gauges) } : null;
   } catch(err){ return null; }
 }
 function saveHistDashLocal(){
@@ -3206,6 +3327,50 @@ function updateHistDashGauges(idx, dataX){
 var VIEWER_DASH_COLOR = '#22c55e';    // default gauge accent; per-gauge overridable, "apply to all" resets it
 var DASH_ID = 1;
 
+// ---- Gauge ids -------------------------------------------------------------------------------
+// A gauge id has to be unique across the whole dash: VIEWER_DASH_ELS is keyed by it, so two gauges
+// sharing one id share ONE element -- the newer gauge takes the entry and the older one is left
+// orphaned on the canvas, frozen, while everything else keeps moving. Ken, 2026-09-10: "every time I
+// add a gauge or change something, a different gauge stops working ... lamba stopped working after I
+// added a fuel pressure gauge", then "I just added MAP and it messed up the spark gauge".
+//
+// DASH_ID was a plain per-session counter starting at 1, and nothing reseeded it from a dash that was
+// LOADED. So opening the app, loading a saved dash whose gauges were minted in an earlier session
+// (dash-1, dash-2, dash-3 ...) and adding one more handed the new gauge "dash-1" -- an id the dash
+// already had. Two rules close it: every new id comes from dashNextId(), which never hands out one
+// that is in use, and every gauge list that arrives from outside this session goes through
+// dashAdoptGaugeIds(), which reseeds the minter and repairs a collision that was already saved.
+function dashIdsInUse(){
+  var used = {};
+  function scan(list){ if(Array.isArray(list)) list.forEach(function(g){ if(g && g.id) used[g.id] = true; }); }
+  scan(VIEWER_DASH && VIEWER_DASH.gauges);
+  scan(VIEWER_HIST_DASH && VIEWER_HIST_DASH.gauges);
+  // The Gauges-tab dash parked while the histogram back-gauges are being edited: it comes back, so its
+  // ids are still taken even though nothing is rendering them right now.
+  scan(VIEWER_DASH_STASH && VIEWER_DASH_STASH.dash && VIEWER_DASH_STASH.dash.gauges);
+  return used;
+}
+function dashNextId(){
+  var used = dashIdsInUse(), id;
+  do { id = 'dash-' + (DASH_ID++); } while(used[id]);
+  return id;
+}
+function dashAdoptGaugeIds(list){
+  if(!Array.isArray(list)) return list;
+  // Reseed FIRST, over the whole list, so a repaired id can never collide with one further down it.
+  list.forEach(function(g){
+    var m = (g && typeof g.id === 'string') ? /^dash-(\d+)$/.exec(g.id) : null;
+    if(m && Number(m[1]) >= DASH_ID) DASH_ID = Number(m[1]) + 1;
+  });
+  var seen = {};
+  list.forEach(function(g){
+    if(!g) return;
+    if(!g.id || seen[g.id]) g.id = dashNextId();   // missing, or a duplicate saved by the old code
+    seen[g.id] = true;
+  });
+  return list;
+}
+
 // Bar park point: where the fill grows FROM. 'auto' lets gaugeAnchor decide (0 for a signed range,
 // else the min = end-parked); 'center' forces 0; 'end' forces the min. Stored as g.parked; g.anchor
 // is derived so the renderer (gaugeAnchor) picks it up.
@@ -3315,7 +3480,7 @@ function dashSeedComboSub(g, ch){
 // the vehicle-speed channel (else the next numeric channel that isn't the RPM one).
 function dashMakeCombo(x, y){
   var rpm = dashRpmChannel() || dashNextChannel();
-  var g = { id: 'dash-' + (DASH_ID++), type: 'combo', color: VIEWER_DASH_COLOR, scale: DASH_SCALES.combo || 1.5, x: x, y: y };
+  var g = { id: dashNextId(), type: 'combo', color: VIEWER_DASH_COLOR, scale: DASH_SCALES.combo || 1.5, x: x, y: y };
   dashSeedComboMain(g, rpm);
   g.channelOverride = rpm || null;
   dashStampRole(g, rpm);
@@ -3351,7 +3516,7 @@ function dashMakeTable(x, y){
   texts.sort(function(a, b){ return (/source/i.test(b) ? 1 : 0) - (/source/i.test(a) ? 1 : 0); });   // Source fields first
   var seed = texts.slice(0, 4);
   if(!seed.length) seed = dashNumericChannels().slice(0, 3);
-  return { id: 'dash-' + (DASH_ID++), type: 'table', label: '', color: VIEWER_DASH_COLOR, fontScale: 1, rows: seed.map(dashMakeTableRow), x: x, y: y, w: DASH_BAR_SIZES.table.w, h: 0 };
+  return { id: dashNextId(), type: 'table', label: '', color: VIEWER_DASH_COLOR, fontScale: 1, rows: seed.map(dashMakeTableRow), x: x, y: y, w: DASH_BAR_SIZES.table.w, h: 0 };
 }
 // One display cell per row: a text channel's level, a value-label lookup for a numeric state code,
 // or the number (row decimals/unit, else the gauge's, else the standard readout format).
@@ -3385,7 +3550,7 @@ function dashMakeGauge(ptype, x, y){
   var unit = (VIEWER_DATA && VIEWER_DATA.units && ch) ? (VIEWER_DATA.units[ch] || '') : '';
   var type = ptype === 'tach' ? 'round' : ptype;   // a tach is a round dial that carries a redline
   var g = {
-    id: 'dash-' + (DASH_ID++), type: type,
+    id: dashNextId(), type: type,
     label: ch ? (typeof shortChannelName === 'function' ? shortChannelName(ch) : ch) : 'Gauge',
     unit: unit, min: rng.min, max: rng.max, color: VIEWER_DASH_COLOR, decimals: (rng.max - rng.min) <= 20 ? 1 : 0,
     channelOverride: ch || null,
@@ -3444,7 +3609,7 @@ function restoreLastDash(){
   var gauges = o.gauges.map(function(g){ return JSON.parse(JSON.stringify(g)); });
   if(typeof dashMigrateScorecards === 'function') dashMigrateScorecards(gauges);
   if(!gauges.some(function(g){ return !!gaugeChannelFor(g); })) return false;   // not for this car
-  VIEWER_DASH = { gauges: gauges };
+  VIEWER_DASH = { gauges: dashAdoptGaugeIds(gauges) };
   VIEWER_CURRENT_GAUGES = (o.current && o.current.kind) ? o.current : null;
   VIEWER_GAUGES_DIRTY = false;
   return true;
@@ -5126,7 +5291,7 @@ function dashPaste(src, at){
   var canvas = document.getElementById('dlvDashCanvas');
   if(!canvas) return false;
   var g = JSON.parse(JSON.stringify(src));
-  g.id = 'dash-' + (DASH_ID++);
+  g.id = dashNextId();
   var free = dashIsFreeSize(g.type);
   if(at){ g.x = dashSnap(at.x, free); g.y = dashSnap(at.y, free); }
   else { g.x = dashSnap((g.x || 0) + DASH_GRID * 2, free); g.y = dashSnap((g.y || 0) + DASH_GRID * 2, free); }
@@ -5509,6 +5674,7 @@ function applyViewConfig(cfg, meta){
     VIEWER_GAUGE_SUBMODE = 'default';
   } else if(seedDash && Array.isArray(cfg.gauges) && cfg.gauges.length){
     VIEWER_DASH = { gauges: cfg.gauges.map(function(g){ return JSON.parse(JSON.stringify(g)); }) };
+    dashAdoptGaugeIds(VIEWER_DASH.gauges);
     dashMigrateScorecards(VIEWER_DASH.gauges);
     // A current-model layout remembers which sub-view it was showing (unlike the legacy customdash
     // remap above, this isn't a forced reinterpretation -- it's literally what was true when saved).
@@ -5568,6 +5734,7 @@ function applyViewConfig(cfg, meta){
   // designer instead).
   if(!isBuiltin && Array.isArray(cfg.histGauges) && cfg.histGauges.length){
     VIEWER_HIST_DASH = { gauges: cfg.histGauges.map(function(g){ return JSON.parse(JSON.stringify(g)); }) };
+    dashAdoptGaugeIds(VIEWER_HIST_DASH.gauges);
     saveHistDashLocal();
   }
   if(Array.isArray(cfg.histograms) && cfg.histograms.length){
@@ -5629,6 +5796,7 @@ function applyGaugesConfig(cfg, meta, opts){
   VIEWER_DASH = VIEWER_DASH || { gauges: [] };
   VIEWER_DASH.gauges = cfg.gauges.map(function(g){ return JSON.parse(JSON.stringify(g)); });
   dashMigrateScorecards(VIEWER_DASH.gauges);
+  dashAdoptGaugeIds(VIEWER_DASH.gauges);   // ids were minted in whatever session saved this set
   // The graph channels saved with the set come back too (only those this log has); a set saved before
   // that existed leaves the graphs as they are.
   if(cfg.graphs){ applyGraphsSnapshot(cfg.graphs); if(!VIEWER_SELECTED.length) pickDefaultChannels(); }

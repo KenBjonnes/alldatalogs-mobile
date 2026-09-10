@@ -249,6 +249,27 @@
 .dlv-search-wrap.dlv-has-text .dlv-search-clear{display:flex;}
 .dlv-search-clear:hover{background:var(--red, #d1132e);color:#fff;}
 
+/* ---- Favorites star + collapsible kind sections (Ken, 2026-09-10) ---------------------------- */
+/* Faint on every row so the control is discoverable (same convention as the per-channel ∿ button),
+   full strength on hover and amber once set. */
+.dlv-fav-btn{width:20px;height:20px;padding:0;border:0;background:none;cursor:pointer;
+  color:var(--text-dim, #9a9aa2);font-size:15px;line-height:1;border-radius:4px;opacity:.5;
+  transition:opacity .12s ease,color .12s ease;}
+tr:hover .dlv-fav-btn,.dlv-fav-btn:focus-visible{opacity:1;}
+.dlv-fav-btn:hover{color:var(--amber, #f5a623);background:rgba(245,166,35,.14);}
+.dlv-fav-btn.on{opacity:1;color:var(--amber, #f5a623);}
+@media (hover:none){ .dlv-fav-btn{opacity:.85;} }
+.dlv-th-fav{color:var(--amber, #f5a623);opacity:.6;cursor:default;}
+.dlv-th-fav:hover{color:var(--amber, #f5a623);}
+/* Section headings reuse the group-heading styling (sticky, uppercase, count on the right) and add the
+   kind badge, so a heading and its kind-filter button read as the same thing. */
+.dlv-sect-ico{display:inline-block;width:14px;text-align:center;font-weight:800;}
+.dlv-sect-ico-fav{color:var(--amber, #f5a623);}
+.dlv-sect-ico-math{color:var(--amber, #f5a623);font-style:italic;}
+.dlv-sect-ico-calc{color:#38bdf8;}
+.dlv-sect-fav > td{color:var(--text, #f2f2f4);border-top-color:var(--amber, #f5a623);}
+.dlv-sect-fav .dlv-group-count{color:var(--amber, #f5a623);}
+
 /* ---- CHANNEL LIST PROTOTYPE (Ken, 2026-07-22 -- not released) --------------------------------
    Pin / drag / group. Deliberately styled quietly: this is for judging the INTERACTION, so nothing
    here should win attention away from the channel names themselves. */
@@ -1339,6 +1360,8 @@ button.dlv-dash-paste:hover{border-color:var(--amber, #f5a623);}
   .dlv-mobile .dlv-ch-value-text{font-size:13px;}
   .dlv-mobile table.dlv-channel-table thead th{font-size:11px;padding:10px 8px;}
   .dlv-mobile .dlv-channel-table input[type=checkbox]{width:22px;height:22px;}
+  .dlv-mobile .dlv-channel-table .dlv-col-fav{width:30px;}
+  .dlv-mobile .dlv-fav-btn{width:26px;height:26px;font-size:17px;}
   .dlv-mobile .dlv-channel-footer{font-size:13px;padding:12px 10px;}
 
   /* ---- "View channels" hint (fades itself out) -------------------------------------------- */
