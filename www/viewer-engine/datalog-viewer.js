@@ -586,7 +586,10 @@ window.addEventListener('pagehide', teardownViewerOnNavigation);
 // current view renders. That matters because views without the gauge cluster show three graphs
 // (U/M/L) while Gauge View only has room for two (U/L): if slots were just "panel 1..n", a channel
 // assigned to "lower" would silently become "middle" when you switched views.
-var GRAPH_SLOT_UPPER = 1, GRAPH_SLOT_MIDDLE = 2, GRAPH_SLOT_LOWER = 3;
+// 4 is a SECOND MIDDLE, not a new bottom (Ken, 2026-09-10: "when in graph mode, lets give the option
+// for 4"). Inserting it above LOWER keeps every existing assignment meaning what it did: "lower" is
+// the bottom panel whether you are showing two, three or four.
+var GRAPH_SLOT_UPPER = 1, GRAPH_SLOT_MIDDLE = 2, GRAPH_SLOT_LOWER = 3, GRAPH_SLOT_MIDDLE2 = 4;
 // The gauge cluster eats the vertical room, so Gauge View keeps two graphs; every other view gets
 // the third (middle) one -- per Ken, 2026-07-21.
 // ---------------------------------------------------------------------------------------------
@@ -639,16 +642,24 @@ function showsGauges(){ return VIEWER_VIEW_MODE === 'gauge' && !isMobileViewer()
 // screen you're on: three panels are unusable on a 14" laptop and fine on a shop monitor.
 // Defaults to 2, which was the old Gauge View behaviour and fits everywhere.
 var VIEWER_GRAPH_COUNT = 2;
+// Graph View has the whole pane to itself, so it can take a fourth panel; every other view keeps three
+// because the cards / gauges / tables above the graphs already eat the height. A remembered count of 4
+// is CLAMPED here rather than reset, so leaving Graph View and coming back gives the fourth panel again.
+function maxGraphCount(){ return isMobileViewer() ? 1 : (VIEWER_VIEW_MODE === 'graph' ? 4 : 3); }
+function effectiveGraphCount(){ return Math.max(1, Math.min(VIEWER_GRAPH_COUNT || 2, maxGraphCount())); }
 function activeGraphSlots(){
   if(isMobileViewer()) return [GRAPH_SLOT_UPPER];
   // 2 deliberately means UPPER+LOWER, not UPPER+MIDDLE: that's what Gauge View has always used, so
   // channels already assigned to "lower" stay where the user put them when toggling 3 -> 2.
-  if(VIEWER_GRAPH_COUNT <= 1) return [GRAPH_SLOT_UPPER];
-  if(VIEWER_GRAPH_COUNT === 2) return [GRAPH_SLOT_UPPER, GRAPH_SLOT_LOWER];
-  return [GRAPH_SLOT_UPPER, GRAPH_SLOT_MIDDLE, GRAPH_SLOT_LOWER];
+  var n = effectiveGraphCount();
+  if(n <= 1) return [GRAPH_SLOT_UPPER];
+  if(n === 2) return [GRAPH_SLOT_UPPER, GRAPH_SLOT_LOWER];
+  if(n === 3) return [GRAPH_SLOT_UPPER, GRAPH_SLOT_MIDDLE, GRAPH_SLOT_LOWER];
+  return [GRAPH_SLOT_UPPER, GRAPH_SLOT_MIDDLE, GRAPH_SLOT_MIDDLE2, GRAPH_SLOT_LOWER];
 }
 function graphSlotLabel(slot){
-  return slot === GRAPH_SLOT_UPPER ? 'UPPER GRAPH' : slot === GRAPH_SLOT_MIDDLE ? 'MIDDLE GRAPH' : 'LOWER GRAPH';
+  return slot === GRAPH_SLOT_UPPER ? 'UPPER GRAPH' : slot === GRAPH_SLOT_MIDDLE ? 'MIDDLE GRAPH'
+    : slot === GRAPH_SLOT_MIDDLE2 ? 'MIDDLE GRAPH 2' : 'LOWER GRAPH';
 }
 // Channels drawn on a given slot. Anything assigned to a slot this view doesn't render (a middle
 // assignment while in Gauge View) folds into the last visible panel rather than vanishing.
@@ -2432,8 +2443,11 @@ function refreshPerfUi(){
 // Lives in the UPPER graph's top-left, because that panel is the master and is always on screen --
 // so the control never disappears with the thing it controls. Opposite corner from the legend.
 function renderGraphCountHtml(){
-  var btns = [1,2,3].map(function(n){
-    return '<button type="button" class="dlv-gcount-btn' + (VIEWER_GRAPH_COUNT === n ? ' active' : '') +
+  // 4 is offered in Graph View only (see maxGraphCount), and the highlighted button is the count
+  // actually on screen, which is the remembered one clamped to what this view can show.
+  var shown = effectiveGraphCount();
+  var btns = [1, 2, 3, 4].slice(0, maxGraphCount()).map(function(n){
+    return '<button type="button" class="dlv-gcount-btn' + (shown === n ? ' active' : '') +
       '" data-gcount="' + n + '" title="' + n + ' graph' + (n===1?'':'s') + '">' + n + '</button>';
   }).join('');
   return '<div class="dlv-graph-count" title="Number of graphs">' + btns + '</div>';
@@ -2969,11 +2983,12 @@ function renderOneChannelRow(c, pinnedRow){
         '</div>' +
       '<div class="dlv-ch-value"><span class="dlv-ch-value-num' + (isTextChannel(c) ? ' dlv-ch-value-text' : '') + '" data-ch-value="' + escapeHtml(c) + '">--</span>' + (unit && unit !== 'na' ? '<span class="dlv-ch-value-unit">' + escapeHtml(unit) + '</span>' : '') + '</div>' +
     '</td>' +
-    '<td class="dlv-cell-center dlv-ul-cell">' +
+    '<td class="dlv-cell-center dlv-ul-cell' + (slots.length > 3 ? ' dlv-ul-grid' : '') + '">' +
       slots.map(function(slot){
         var on = VIEWER_PANEL_ASSIGN[c] === slot;
-        var letter = slot === GRAPH_SLOT_UPPER ? 'U' : slot === GRAPH_SLOT_MIDDLE ? 'M' : 'L';
-        var cls = slot === GRAPH_SLOT_UPPER ? 'dlv-upper' : slot === GRAPH_SLOT_MIDDLE ? 'dlv-middle' : 'dlv-lower';
+        var letter = slot === GRAPH_SLOT_UPPER ? 'U' : slot === GRAPH_SLOT_MIDDLE ? 'M' : slot === GRAPH_SLOT_MIDDLE2 ? 'M2' : 'L';
+        var cls = slot === GRAPH_SLOT_UPPER ? 'dlv-upper' : slot === GRAPH_SLOT_MIDDLE ? 'dlv-middle'
+          : slot === GRAPH_SLOT_MIDDLE2 ? 'dlv-middle2' : 'dlv-lower';
         return '<button type="button" class="dlv-cell-btn ' + cls + (on ? ' active' : '') +
           '" data-panel-ch="' + escapeHtml(c) + '" data-panel-num="' + slot + '">' + letter + '</button>';
       }).join('') +
@@ -5331,14 +5346,49 @@ function sanitizeGaugeDef(g){
 function currentGaugesList(){
   return (VIEWER_DASH && VIEWER_DASH.gauges ? VIEWER_DASH.gauges : []).map(sanitizeGaugeDef);
 }
+// WHICH gauges a Layout was showing, recorded as a choice rather than only a copy (Ken, 2026-09-10:
+// "the layout should also save what gauges are being used ... if I go to holley layout, it changes to
+// holley gauges with that. if I go to standard layout, it goes to the V8 gauges"). Layouts already
+// carried the custom dash's own gauges; what was missing is which sub-view was showing and which
+// built-in fascia was on, so loading a layout left the gauges exactly as the last one had them.
+function gaugeSelectionForSave(){
+  var sel = { submode: VIEWER_GAUGE_SUBMODE === 'custom' ? 'custom' : 'default', preset: null, ref: null };
+  if(VIEWER_ACTIVE_PRESET && VIEWER_ACTIVE_PRESET.id){
+    sel.preset = { id: VIEWER_ACTIVE_PRESET.id, name: VIEWER_ACTIVE_PRESET.name || '' };
+  }
+  var cur = VIEWER_CURRENT_GAUGES;
+  if(cur && cur.kind) sel.ref = { kind: cur.kind, id: cur.id || null, name: cur.name || '', readOnly: !!cur.readOnly };
+  return sel;
+}
+// Put a built-in fascia back the way picking it from the Gauges menu does. Returns false and changes
+// NOTHING for an unknown id, a fascia with no gauges, or one whose gauges resolve to no channel on
+// this log -- the log's own auto-matched fascia is left alone rather than replaced by an empty one.
+function applyPresetFascia(id){
+  if(!id || typeof getPresetById !== 'function') return false;
+  var p = getPresetById(id);
+  if(!p || !Array.isArray(p.gauges) || !p.gauges.length) return false;
+  // Deep copy: per-gauge edits must never write back into the shipped preset, which every log shares.
+  var gauges = JSON.parse(JSON.stringify(p.gauges));
+  if(typeof applyAltRoles === 'function'){
+    try { applyAltRoles(gauges, VIEWER_RESOLVED_ROLES, VIEWER_CHANNEL_STATS, VIEWER_DATA); } catch(e){}
+  }
+  if(!gauges.some(function(g){ return !!gaugeChannelFor(g); })) return false;
+  VIEWER_ACTIVE_PRESET = {
+    id: p.id, name: p.name, gauges: gauges,
+    defaultGraphs: p.defaultGraphs || { upper: [], middle: [], lower: [] },
+    layout: (p.layout === 'v8-gauge' || p.layout === 'v6-gauge') ? 'gauge' : p.layout,
+  };
+  return true;
+}
 // The LIVE graph state -- which channels are on which of the 3 panels right now. This is what a saved
 // VIEW remembers. (The old code stored the preset's role-based defaultGraphs, so a view never actually
 // remembered the user's graph edits -- Ken's fix.) Stored as literal channel names per panel.
 function currentGraphsSnapshot(){
-  var out = { upper: [], middle: [], lower: [] };
+  var out = { upper: [], middle: [], middle2: [], lower: [] };
   VIEWER_SELECTED.forEach(function(ch){
     var slot = VIEWER_PANEL_ASSIGN[ch] || GRAPH_SLOT_UPPER;
-    (slot === GRAPH_SLOT_MIDDLE ? out.middle : slot === GRAPH_SLOT_LOWER ? out.lower : out.upper).push(ch);
+    (slot === GRAPH_SLOT_MIDDLE ? out.middle : slot === GRAPH_SLOT_MIDDLE2 ? out.middle2
+      : slot === GRAPH_SLOT_LOWER ? out.lower : out.upper).push(ch);
   });
   return out;
 }
@@ -5346,7 +5396,8 @@ function currentGraphsSnapshot(){
 function applyGraphsSnapshot(graphs){
   VIEWER_SELECTED = []; VIEWER_PANEL_ASSIGN = {};
   var chans = (VIEWER_DATA && VIEWER_DATA.channels) || [];
-  [[GRAPH_SLOT_UPPER, graphs.upper], [GRAPH_SLOT_MIDDLE, graphs.middle], [GRAPH_SLOT_LOWER, graphs.lower]].forEach(function(pair){
+  [[GRAPH_SLOT_UPPER, graphs.upper], [GRAPH_SLOT_MIDDLE, graphs.middle],
+   [GRAPH_SLOT_MIDDLE2, graphs.middle2], [GRAPH_SLOT_LOWER, graphs.lower]].forEach(function(pair){
     (pair[1] || []).forEach(function(ch){
       if(chans.indexOf(ch) === -1) return;
       if(VIEWER_SELECTED.indexOf(ch) === -1) VIEWER_SELECTED.push(ch);
@@ -5366,13 +5417,14 @@ function buildConfig(kind){
     kind: 'view',
     layout: VIEWER_VIEW_MODE,
     gaugeSubmode: VIEWER_GAUGE_SUBMODE,
-    graphCount: VIEWER_GRAPH_COUNT,   // 1/2/3 -- remember how many graph panels this layout shows
+    graphCount: VIEWER_GRAPH_COUNT,   // 1-4 (4 = Graph View only) -- how many graph panels this layout shows
     graphs: currentGraphsSnapshot(),
     // Still carried on the wire (unchanged shape) so a PBD vehicle config can compose a specific
     // layout with specific gauges in one host-supplied record -- but always the DASH's own gauges now,
     // never mode-dependent, and loading a Layout only ever SEEDS the dash with it (see below); it
     // never overwrites the log's own auto-matched fascia and never forces the Custom sub-view open.
     gauges: currentGaugesList(),
+    gaugeSet: gaugeSelectionForSave(),    // WHICH gauges were showing: Default fascia (which one) or the Custom dash
     histograms: histogramDefsForSave(),   // the session's tuning tables ride along with the layout
     mathChannels: mathChannelsForSave(),  // the named calculated channels those tables reference
     histGauges: histDashGaugesForSave(),  // the gauges behind the Histograms tab (null when none)
@@ -5422,6 +5474,27 @@ function applyViewConfig(cfg, meta){
     // A current-model layout remembers which sub-view it was showing (unlike the legacy customdash
     // remap above, this isn't a forced reinterpretation -- it's literally what was true when saved).
     if(cfg.gaugeSubmode === 'custom') forceCustomSubmode = true;
+  }
+  // The gauge choice this layout was saved with (Ken, 2026-09-10). cfg.gauges above only restores the
+  // custom dash's CONTENTS; this is what makes switching Layouts switch gauges -- a layout saved on the
+  // Custom dash comes back on Custom under the name it was saved with, and one saved on a built-in
+  // fascia puts that fascia back instead of leaving whatever the previous layout or this log's
+  // auto-match had. Layouts saved before this field existed carry no gaugeSet and behave exactly as
+  // they did (dash seeded if they have one, fascia untouched).
+  var gsel = (!isBuiltin && cfg.gaugeSet && typeof cfg.gaugeSet === 'object') ? cfg.gaugeSet : null;
+  if(gsel){
+    if(gsel.submode === 'custom'){
+      forceCustomSubmode = true;
+      VIEWER_CURRENT_GAUGES = (gsel.ref && gsel.ref.kind)
+        ? { kind: gsel.ref.kind, id: gsel.ref.id || null, name: gsel.ref.name || '', readOnly: !!gsel.ref.readOnly }
+        : null;
+      VIEWER_GAUGES_DIRTY = false;
+      rememberLastDash();   // the next log opens on the dash this layout brought, not the previous one
+    } else {
+      forceCustomSubmode = false;
+      VIEWER_GAUGE_SUBMODE = 'default';
+      applyPresetFascia(gsel.preset && gsel.preset.id);
+    }
   }
   if(forceCustomSubmode) VIEWER_GAUGE_SUBMODE = 'custom';
   VIEWER_VIEW_MODE = layout;

@@ -372,11 +372,15 @@ tr:hover .dlv-ch-smooth,.dlv-ch-smooth.on{opacity:1;}
    is two lines tall (name + value), stacking reclaims the horizontal width the old side-by-side
    layout used, which goes to the Channel column instead. */
 .dlv-ul-cell{display:flex;flex-direction:column;align-items:center;gap:2px;}
-.dlv-cell-btn{width:20px;height:16px;border-radius:4px;border:1px solid var(--card-border, #26262c);background:var(--card, #16161a);color:var(--text-faint, #5c5c66);font-size:8.5px;font-weight:800;cursor:pointer;line-height:1;padding:0;}
+/* Four panels: a 2x2 block instead of a 4-high stack, so the channel rows stay short. */
+.dlv-ul-cell.dlv-ul-grid{display:grid;grid-template-columns:auto auto;justify-content:center;}
+.dlv-cell-btn{min-width:20px;padding:0 2px;height:16px;border-radius:4px;border:1px solid var(--card-border, #26262c);background:var(--card, #16161a);color:var(--text-faint, #5c5c66);font-size:8.5px;font-weight:800;cursor:pointer;line-height:1;padding:0;}
 .dlv-cell-btn.active{color:#fff;border-color:transparent;}
 .dlv-cell-btn.active.dlv-upper{background:var(--dlv-blue);}
 /* middle only exists in views that render 3 graphs (no gauge cluster) */
 .dlv-cell-btn.active.dlv-middle{background:var(--green,#22c55e);}
+/* Graph View's fourth panel: a SECOND middle, so 'lower' still means the bottom graph. */
+.dlv-cell-btn.active.dlv-middle2{background:#a855f7;}
 .dlv-cell-btn.active.dlv-lower{background:var(--amber, #f5a623);}
 .dlv-gauge-dot{width:8px;height:8px;border-radius:50%;background:var(--green, #22c55e);display:inline-block;margin:0 auto;}
 .dlv-channel-footer{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-top:1px solid var(--card-border, #26262c);font-size:11.5px;color:var(--text-dim, #9a9aa2);flex-shrink:0;}
