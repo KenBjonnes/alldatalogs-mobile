@@ -3039,7 +3039,8 @@ function finishHistGaugesEdit(keep, silent){
   renderViewerBody();
 }
 // Paint the set into the table UI's back layer: the gauges keep their designer geometry relative to
-// each other; the cluster is anchored top-right and scaled DOWN (never up) to fit the pane.
+// each other; the cluster is anchored top-right and scaled DOWN (never up) to fit the pane -- and,
+// since 2026-09-09, laid out AROUND the table (histGaugePlacement: beside it, else below it).
 function renderHistGaugeLayer(){
   var layer = (VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.backLayer === 'function') ? VIEWER_HIST_CTL.backLayer() : null;
   if(!layer) return;
@@ -3073,16 +3074,39 @@ function renderHistGaugeLayer(){
   }
   if(VIEWER_DATA) updateHistDashGauges(VIEWER_DATA.time.length - 1);
 }
+// Where the gauge cluster sits relative to the painted table (Ken, 2026-09-09: "a large 1D histogram
+// collides with the gauges I have to the right ... need to prevent collision there and move gauges down
+// if needed"). Sizes are back-layer pixels; the cluster is right-anchored and scales from its top-right.
+//   right -- beside the table, scaled so its left edge clears the table (the default whenever it fits)
+//   below -- under the table, still right-aligned, scaled to the strip that is left
+//   cover -- no useful room either way (the table nearly fills the pane): fit to the pane as before and
+//            let the table paint over them
+// The larger of the two collision-free scales wins; a scale under MIN_K is not worth reading.
+var HIST_GAUGE_PAD = 12, HIST_GAUGE_MIN_K = 0.35;
+function histGaugePlacement(clW, clH, paneW, paneH, tableW, tableH){
+  var PAD = HIST_GAUGE_PAD;
+  function kFor(aw, ah){ return (clW > 0 && clH > 0 && aw > 0 && ah > 0) ? Math.min(1, aw / clW, ah / clH) : 0; }
+  var kFull = kFor(paneW - 2 * PAD, paneH - 2 * PAD);
+  if(!(tableW > 0 && tableH > 0)) return { place: 'right', k: kFull, top: PAD };
+  var kRight = kFor(paneW - tableW - 2 * PAD, paneH - 2 * PAD);
+  var kBelow = kFor(paneW - 2 * PAD, paneH - tableH - 2 * PAD);
+  if(kRight >= kBelow && kRight >= HIST_GAUGE_MIN_K) return { place: 'right', k: kRight, top: PAD };
+  if(kBelow > kRight && kBelow >= HIST_GAUGE_MIN_K) return { place: 'below', k: kBelow, top: tableH + PAD };
+  return { place: 'cover', k: kFull, top: PAD };
+}
 function fitHistGaugeLayer(){
   var layer = (VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.backLayer === 'function') ? VIEWER_HIST_CTL.backLayer() : null;
   var cluster = layer ? layer.querySelector('.dlv-hist-back-cluster') : null;
   if(!cluster) return;
   var maxR = 0, maxB = 0;
   Object.keys(VIEWER_HIST_DASH_ELS).forEach(function(id){ var el = VIEWER_HIST_DASH_ELS[id]; maxR = Math.max(maxR, el.offsetLeft + el.offsetWidth); maxB = Math.max(maxB, el.offsetTop + el.offsetHeight); });
-  var PAD = 12, availW = layer.clientWidth - 2 * PAD, availH = layer.clientHeight - 2 * PAD, k = 1;
-  if(maxR > 0 && maxB > 0 && availW > 0 && availH > 0) k = Math.min(1, availW / maxR, availH / maxB);
+  var fp = (VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.tableFootprint === 'function') ? VIEWER_HIST_CTL.tableFootprint() : null;
+  var p = histGaugePlacement(maxR, maxB, layer.clientWidth, layer.clientHeight, fp ? fp.w : 0, fp ? fp.h : 0);
+  var k = p.k > 0 ? p.k : 1;   // nothing measurable yet (hidden pane / no gauges): leave the natural size
   cluster.style.width = maxR + 'px'; cluster.style.height = maxB + 'px';
+  cluster.style.top = p.top + 'px';
   cluster.style.transform = k < 1 ? 'scale(' + k.toFixed(3) + ')' : '';
+  cluster.setAttribute('data-place', p.place);
 }
 function updateHistDashGauges(idx, dataX){
   var gs = histDashGauges();
@@ -3981,6 +4005,9 @@ function histogramGlue(){
     // Gauges behind the table: the list menu offers the designer; the UI keeps a back layer for them.
     editBackGauges: function(){ openHistGaugesEditor(); },
     hasBackGauges: function(){ return histDashGauges().length > 0; },
+    // Every paint of the active view (a wider table, a page flip, a state panel) re-lays the gauges out
+    // around the table's new footprint.
+    onTableLayout: function(){ fitHistGaugeLayer(); },
     toast: function(msg){ if(window.showToast) showToast(msg); },
     escapeHtml: escapeHtml
   };

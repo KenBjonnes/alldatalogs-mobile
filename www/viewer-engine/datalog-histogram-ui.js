@@ -596,6 +596,21 @@
       D.cursorMark.hidden = true;
 
       // ---- def access ------------------------------------------------------------------------------
+      // The painted table's footprint inside the pane (clipped to the scroll wrap), or null when a state
+      // panel is showing. The host lays its back-layer gauges out around it (Ken, 2026-09-09: "a large 1D
+      // histogram collides with the gauges I have to the right ... move gauges down if needed").
+      function tableFootprint() {
+        var t = D.wrap ? D.wrap.querySelector('table.dlv-hist-table') : null;
+        if (!t) return null;
+        var w = Math.min(t.offsetWidth, D.wrap.clientWidth), h = Math.min(t.offsetHeight, D.wrap.clientHeight);
+        return (w > 0 && h > 0) ? { w: w, h: h, tableW: t.offsetWidth, tableH: t.offsetHeight } : null;
+      }
+      // After EVERY render of the active view (table, owner map, state panel) the host may re-fit
+      // whatever it keeps behind the table; renderActive() below funnels all of them through here.
+      function notifyLayout() {
+        if (S.destroyed || typeof glue.onTableLayout !== 'function') return;
+        try { glue.onTableLayout(tableFootprint()); } catch (e) { if (global.console) console.warn('[histogram] onTableLayout failed', e); }
+      }
       function defById(id) { for (var i = 0; i < S.defs.length; i++) if (S.defs[i].id === id) return S.defs[i]; return null; }
       function defIndex(id) { for (var i = 0; i < S.defs.length; i++) if (S.defs[i].id === id) return i; return -1; }
       function activeDef() { return defById(S.activeId); }
@@ -1182,7 +1197,8 @@
         D.legend.innerHTML = ''; D.samples.innerHTML = '';
         renderDetails();
       }
-      function renderActive(reason) {
+      function renderActive(reason) { renderActiveCore(reason); notifyLayout(); }
+      function renderActiveCore(reason) {
         if (S.destroyed) return;
         var def = activeDef();
         D.warn.hidden = true; D.warn.innerHTML = '';
@@ -1937,6 +1953,7 @@
         setOwnerBy: function (mode) { var d = activeDef(); if (!d) return; if (!isObj(d.display)) d.display = {}; d.display.ownerBy = mode; changed(); S.owner = null; renderActive('ownerby'); },
         // The layer under the table, for the host to fill (gauges). Never touched by renders here.
         backLayer: function () { return D.back; },
+        tableFootprint: tableFootprint,
         ownerTable: function () { return S.owner; },
         setStatistic: setStatistic,
         setRangeMode: setRangeMode,
