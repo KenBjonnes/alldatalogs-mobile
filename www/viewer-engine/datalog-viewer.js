@@ -94,6 +94,7 @@ var VIEWER_VIEW_MODE = 'default'; // 'default' | 'gauge' | 'graph' | 'histograms
 // old separate 'customdash' top-level mode (Ken, 2026-09-08: "only have graph, gauges, histograms...
 // within the gauges tab it can show either default gauges or custom gauges").
 var VIEWER_GAUGE_SUBMODE = 'default'; // 'default' | 'custom'
+var VIEWER_SUBMODE_WANTED = null;     // the sub-view the last log open asked for, before Pro/dash clamps
 var VIEWER_MANUAL_PRESET_OVERRIDE = null; // preset id, or null = Auto
 var VIEWER_LEFT_COLLAPSED = false;
 var VIEWER_GAUGE_U = null;     // gauge scale unit (px) set by dragging the splitter; null = automatic
@@ -408,6 +409,10 @@ function openViewerCore(fetchPromise, meta){
     if(histDashGauges().length && !histDashGauges().some(function(g){ return !!gaugeChannelFor(g); })) VIEWER_HIST_DASH = null;
     if(VIEWER_ACTIVE_PRESET.gauges.length) VIEWER_VIEW_MODE = 'gauge';
     else if(VIEWER_VIEW_MODE === 'gauge' && !(VIEWER_DASH && VIEWER_DASH.gauges.length)) VIEWER_VIEW_MODE = 'default';
+    // Remember the sub-view that was ASKED for before either clamp below denies it: when the licence
+    // resolves a moment later (the app started BY a log file, so the viewer runs before Pro is known)
+    // setViewerPro can honour it instead of leaving the tuner on the fascia.
+    VIEWER_SUBMODE_WANTED = VIEWER_GAUGE_SUBMODE;
     if(VIEWER_GAUGE_SUBMODE === 'custom' && !viewerIsPro()) VIEWER_GAUGE_SUBMODE = 'default';
     if(VIEWER_GAUGE_SUBMODE === 'custom' && !(VIEWER_DASH && VIEWER_DASH.gauges.length)) VIEWER_GAUGE_SUBMODE = 'default';
     if(VIEWER_GAUGE_SUBMODE === 'default' && !VIEWER_ACTIVE_PRESET.gauges.length && VIEWER_DASH && VIEWER_DASH.gauges.length) VIEWER_GAUGE_SUBMODE = 'custom';
@@ -442,7 +447,15 @@ function openViewerCore(fetchPromise, meta){
     loadSavedViews().then(refreshViewSelect);
     // The saved Layout / Custom Gauges the tuner picked last comes back on the next log (its graph
     // channels that exist here, its dash) unless a host config for this car takes over below.
-    if(!VIEWER_VEHICLE_CONFIGS.length && !VIEWER_AUTO_CONFIG) reapplyLastSaved();
+    if(!VIEWER_VEHICLE_CONFIGS.length && !VIEWER_AUTO_CONFIG && !reapplyLastSaved()){
+      // Not in the store at this instant -- retry once the pull settles, unless the tuner has since
+      // picked something or changed anything (never yank a layout out from under them).
+      loadSavedViews().then(function(){
+        if(VIEWER_VEHICLE_CONFIGS.length || VIEWER_AUTO_CONFIG || VIEWER_LAYOUT_DIRTY) return;
+        if(VIEWER_CURRENT_LAYOUT && VIEWER_CURRENT_LAYOUT.kind === 'saved') return;
+        reapplyLastSaved();
+      }).catch(function(){});
+    }
     // A host-resolved config (e.g. a ticket's BigData Config for this vehicle) overrides the built-in
     // auto-select -- applied LAST, via the same path as choosing a saved view, so the log opens straight
     // into its intended gauges/graphs. Accepts either a bare config or a {id,name,kind,config} wrapper.
@@ -1394,6 +1407,19 @@ window.setViewerPro = function(isPro){
   // happened to be correct only because entitlement usually resolves before the first log opens).
   // A full body repaint is safe now that rebuildChart preserves the zoom window across a rebuild;
   // fall back to the race-only refresh when there is no open log to rebuild.
+  // A promotion that lands AFTER the log opened has to re-run the restores it gated. Starting the app
+  // by double-clicking a log is exactly that order: the viewer opens, then the licence resolves -- and
+  // the tuner's remembered dash and last saved Layout were both skipped a moment earlier, so the log
+  // came up on the auto-matched fascia with the header naming a view that was never chosen.
+  if(viewerIsPro() && VIEWER_DATA){
+    if(!(VIEWER_DASH && VIEWER_DASH.gauges && VIEWER_DASH.gauges.length) && restoreLastDash() &&
+       VIEWER_SUBMODE_WANTED === 'custom' && VIEWER_VIEW_MODE !== 'histograms'){
+      VIEWER_GAUGE_SUBMODE = 'custom';
+      VIEWER_VIEW_MODE = 'gauge';
+    }
+    if(!VIEWER_VEHICLE_CONFIGS.length && !VIEWER_AUTO_CONFIG && !VIEWER_LAYOUT_DIRTY &&
+       !(VIEWER_CURRENT_LAYOUT && VIEWER_CURRENT_LAYOUT.kind === 'saved')) reapplyLastSaved();
+  }
   if(VIEWER_DATA && document.getElementById('viewerContent')) renderViewerBody();
   else if(document.getElementById('dlvRace')) refreshRaceUi();
   closeGraphMenu();
@@ -3426,6 +3452,10 @@ function restoreLastDash(){
 function enterCustomGauges(){
   if(!viewerIsPro()) return;
   adlTrack('gauge_designer_used', { action: 'open' });
+  // Which gauges are showing is part of a saved Layout now, so changing the sub-view is an unsaved
+  // edit -- same rule as the graph count. Without this the header kept claiming the built-in view it
+  // was on before, with no hint that what you are looking at is no longer that view.
+  markLayoutDirty();
   if(!VIEWER_DASH) VIEWER_DASH = { gauges: [] };
   if(!VIEWER_DASH.gauges.length) restoreLastDash();   // the last custom dash, not the builder
   VIEWER_DASH_PALETTE_POS = null;   // a fresh dash re-centres the palette (Ken); drags still stick after
@@ -3949,7 +3979,16 @@ function reapplyLastSaved(){
   var lp = viewsProvider(); if(!lp) return false;
   var state = null;
   try { state = lp.apply(last.id); } catch(e){ state = null; }
-  if(!state) { VIEWER_LAST_SAVED = null; return false; }
+  if(!state){
+    // A miss here usually means the provider's store has not filled YET (a cloud pull that settles
+    // after the log opens -- the normal case when the app is started BY a log file). Forgetting the
+    // memory then meant the layout never came back at all, so only forget it when the store is loaded
+    // and this id is genuinely gone (deleted on another device).
+    var loaded = VIEWER_SAVED_VIEWS && VIEWER_SAVED_VIEWS.length;
+    var stillThere = loaded && VIEWER_SAVED_VIEWS.some(function(r){ return String(r.id) === String(last.id); });
+    if(loaded && !stillThere) VIEWER_LAST_SAVED = null;
+    return false;
+  }
   applyViewConfig(state, { kind: 'saved', id: last.id, name: last.name });
   if(window.showToast) showToast('Layout "' + last.name + '" applied.');
   return true;
@@ -5600,6 +5639,7 @@ function applyGaugesConfig(cfg, meta, opts){
   VIEWER_DASH_EDIT = VIEWER_DASH_TARGET === 'hist' ? true : !!opts.edit;   // "Load gauges" while building the histogram set stays in the designer
   VIEWER_CURRENT_GAUGES = { kind: meta.kind, id: meta.id, name: meta.name, readOnly: !!meta.readOnly };
   VIEWER_GAUGES_DIRTY = !!opts.dirty;
+  markLayoutDirty();   // the layout on screen now shows different gauges than the one that was loaded
   rememberLastDash();
   saveViewerPrefs();
   renderViewerBody();
@@ -5737,8 +5777,16 @@ function viewsAccountLine(){
   }
   return '<div class="dlv-vpick-account" title="Sign in with Pro to sync saved layouts across devices">This device only · not signed in</div>';
 }
+// True when the tuner's own dash is the thing on screen. A built-in view row is then NOT "the current
+// view", however the fascia underneath was auto-matched -- the Layout menu used to tick "V8 Gauge"
+// while a Holley dash was displaying (Ken, 2026-09-10).
+function customDashShowing(){
+  return VIEWER_VIEW_MODE === 'gauge' && VIEWER_GAUGE_SUBMODE === 'custom' &&
+         !!(VIEWER_DASH && VIEWER_DASH.gauges && VIEWER_DASH.gauges.length);
+}
 function viewPickerHtml(which){
   var cur = (which === 'gauges' ? VIEWER_CURRENT_GAUGES : VIEWER_CURRENT_LAYOUT) || {};
+  var dashShowing = customDashShowing();
   var html = '';
   if(which === 'view'){
     html += '<h4>Layout</h4>' + viewsAccountLine();
@@ -5749,7 +5797,7 @@ function viewPickerHtml(which){
       html += vveh.map(function(c){ return vehPickRowHtml(c, 'view'); }).join('') + '<div class="dlv-menu-sep"></div>';
     }
     html += DATALOG_PRESETS.map(function(p){
-      var on = cur.kind === 'builtin' && cur.id === p.id;
+      var on = cur.kind === 'builtin' && cur.id === p.id && !dashShowing;
       return '<div class="dlv-vrow"><button type="button" class="act clear dlv-vrow-pick' + (on ? ' dlv-vrow-on' : '') + '" data-pick="b:' + p.id + '">' + escapeHtml(p.name) + '</button></div>';
     }).join('');
     var saved = VIEWER_SAVED_VIEWS.filter(function(r){ return savedRowKind(r) !== 'gauges'; });
@@ -5770,8 +5818,21 @@ function viewPickerHtml(which){
   }
   return html;
 }
+// The anchor can be STALE by the time this runs: refreshViewSelect() rewrites the header buttons with
+// outerHTML, so the element captured when the menu opened is detached and measures 0x0 at 0,0 -- which
+// parked the menu against the left edge of the window instead of under its button (Ken, 2026-09-10:
+// "sometimes when I click on the layout menu it opens under the button but other times it is all the
+// way to the left"). Re-resolve the live button by id, and if there is nothing measurable, leave the
+// menu where it is rather than throwing it into the corner.
 function positionHdrMenu(m, anchor){
-  var rc = anchor.getBoundingClientRect(), pad = 8;
+  var el = anchor;
+  if(el && el.id){
+    var live = (el.isConnected === false || !document.body.contains(el)) ? document.getElementById(el.id) : el;
+    if(live) el = live;
+  }
+  var rc = el ? el.getBoundingClientRect() : null;
+  if(!rc || (!rc.width && !rc.height)) return;
+  var pad = 8;
   m.style.top = (rc.bottom + 6) + 'px';
   m.style.left = Math.max(pad, Math.min(rc.left, window.innerWidth - m.offsetWidth - pad)) + 'px';
 }
@@ -5919,6 +5980,10 @@ function persistConfig(kind, name, updateId){
   var setCurrent = function(id, savedName){
     if(kind === 'gauges'){ VIEWER_CURRENT_GAUGES = { kind: 'saved', id: id, name: savedName }; VIEWER_GAUGES_DIRTY = false; rememberLastDash(); }
     else { VIEWER_CURRENT_LAYOUT = { kind: 'saved', id: id, name: savedName }; VIEWER_LAYOUT_DIRTY = false; }
+    // Only LOADING one used to count as "the one I'm using", so saving a layout and then opening the
+    // next log came up on the auto-matched built-in -- the header naming a view the tuner never chose
+    // while their own dash was on screen (Ken, 2026-09-10). Saving is just as much a choice as loading.
+    rememberLastSaved(kind === 'gauges' ? 'gauges' : 'view', id, savedName);
   };
   var lp = viewsProvider();
   if(lp){
