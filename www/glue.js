@@ -23036,7 +23036,7 @@ ${suffix}`;
       if (!row || !row.storage_path) return null;
       const { data: blob, error } = await sb2.storage.from(HISTORY_BUCKET).download(row.storage_path);
       if (error || !blob) return null;
-      void touchOpened(sb2, id);
+      await touchOpened(sb2, id);
       return { name: row.name, format: row.format, buffer: await blob.arrayBuffer() };
     } catch {
       return null;

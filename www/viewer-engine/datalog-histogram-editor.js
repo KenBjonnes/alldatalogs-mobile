@@ -827,6 +827,17 @@
       persist();
     }
     function close() {
+      // Whatever is in the boxes right now is what the user meant to keep (Done / Escape / click-away
+      // with an uncommitted edit used to lose it).
+      try {
+        var aC = active(), taC = ovl.querySelector('[data-expr="current"]'), nmC = ovl.querySelector('[data-mm-field="name"]'), unC = ovl.querySelector('[data-mm-field="unit"]');
+        if (aC) {
+          if (taC && aC.expression !== taC.value) aC.expression = taC.value;
+          if (nmC && nmC.value && aC.name !== nmC.value) aC.name = nmC.value;
+          if (unC && (unC.value || null) !== aC.unit) aC.unit = unC.value || null;
+        }
+        persist();
+      } catch (e) { /* never block closing */ }
       document.removeEventListener('keydown', onKey, true);
       if (ovl.parentNode) ovl.parentNode.removeChild(ovl);
       if (typeof opts.onClose === 'function') { try { opts.onClose(); } catch (e) { /* ignore */ } }
@@ -847,6 +858,11 @@
         }
         return;
       }
+      // Functions palette / math tools carry data-act (shared with the per-histogram editor). They must be
+      // handled BEFORE the data-mm-act early return below -- until 2026-09-09 that return swallowed every
+      // function-button click in the manager, so "abs(" etc. never landed in the box.
+      var actBtn = e.target.closest('[data-act]');
+      if (actBtn) { insertOrFn(actBtn); return; }
       var act = e.target.closest('[data-mm-act]'); if (!act) return;
       var a2 = act.getAttribute('data-mm-act');
       if (a2 === 'close' || a2 === 'done') { close(); return; }
@@ -856,17 +872,20 @@
         var nameInp = ovl.querySelector('[data-mm-field="name"]'); if (nameInp) { nameInp.focus(); nameInp.select(); }
         return;
       }
-      var actBtn = e.target.closest('[data-act]');
-      if (actBtn) { insertOrFn(actBtn); return; }
     });
     function insertOrFn(btn) {
       var act = btn.getAttribute('data-act');
-      if (act === 'insert-fn') { insertIntoExpr(ed, 'current', btn.getAttribute('data-fn') + '('); syncFromShim(); return; }
+      if (act === 'insert-fn') { try { insertIntoExpr(ed, 'current', btn.getAttribute('data-fn') + '('); } finally { syncFromShim(); } return; }
       if (act === 'math-clear') return;   // no "use a channel instead" concept for a standalone math channel
     }
+    // The box is the source of truth: after an insert (channel dropdown / function button) the shim's
+    // copy may be stale, and a programmatic change never fires the box's own change event.
     function syncFromShim() {
       var a = active(); if (!a) return;
-      a.expression = (ed.work.current && ed.work.current.math) || '';
+      var ta = ovl.querySelector('[data-expr="current"]');
+      a.expression = ta ? ta.value : ((ed.work.current && ed.work.current.math) || '');
+      if (ed.work.current) ed.work.current.math = a.expression;
+      if (!a.unit) { var u0 = inferUnitForMath(a.expression, unitByChannel); if (u0) { a.unit = u0; var ui0 = ovl.querySelector('[data-mm-field="unit"]'); if (ui0) ui0.value = u0; } }
       persist();
     }
     ovl.addEventListener('change', function (e) {
@@ -874,7 +893,7 @@
       if (t.getAttribute('data-mm-field') === 'name') { var a = active(); if (a) { a.name = t.value; persist(); var rowName = ovl.querySelector('.dlv-hg-mm-row.active .dlv-hg-mm-row-name'); if (rowName) rowName.textContent = 'ƒ ' + (t.value || '(unnamed)'); } return; }
       if (t.getAttribute('data-mm-field') === 'unit') { var a2 = active(); if (a2) { a2.unit = t.value || null; persist(); } return; }
       if (t.getAttribute('data-expr') === 'current') { autoBracketField(ed, t); commitExpr(t); liveExpr(ed, t); return; }
-      if (t.getAttribute('data-insert-ch') === 'current') { if (t.value) { insertIntoExpr(ed, 'current', '[' + t.value + ']'); syncFromShim(); } t.value = ''; return; }
+      if (t.getAttribute('data-insert-ch') === 'current') { if (t.value) { try { insertIntoExpr(ed, 'current', '[' + t.value + ']'); } finally { syncFromShim(); } } t.value = ''; return; }
     });
     ovl.addEventListener('input', function (e) {
       var t = e.target;
@@ -1735,7 +1754,11 @@
     var path = ta.getAttribute('data-path');
     if (path) { setPath(ed.work, path, ta.value); onPathChanged(ed, path, ta.value, ta); }
     liveExpr(ed, ta);
-    ed.refreshValidation();
+    // The Math Channels manager drives this through a slim editor shim with no refreshValidation.
+    // Calling it unconditionally threw AFTER the text was in the box but BEFORE the manager copied the
+    // box into the saved definition -- so a term inserted from "Insert channel…" showed on screen and
+    // was gone on reopen ("unexpected end of expression at position 31", Ken, 2026-09-09).
+    if (typeof ed.refreshValidation === 'function') ed.refreshValidation();
   }
   function applyPickedParam(ed, pPath, param, info) {
     var w = ed.work;
