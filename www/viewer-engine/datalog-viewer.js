@@ -658,7 +658,13 @@ var VIEWER_GRAPH_COUNT = 2;
 // Graph View has the whole pane to itself, so it can take a fourth panel; every other view keeps three
 // because the cards / gauges / tables above the graphs already eat the height. A remembered count of 4
 // is CLAMPED here rather than reset, so leaving Graph View and coming back gives the fourth panel again.
-function maxGraphCount(){ return isMobileViewer() ? 1 : (VIEWER_VIEW_MODE === 'graph' ? 4 : 3); }
+// Four graphs on the GRAPH TAB, three where the pane is shared with a dash or a histogram table.
+// Both 'default' and 'graph' are that tab (see renderModeTabsHtml: 'graph' is the same tab with the
+// numeric cards suppressed, reachable only from the old View picker) -- gating on 'graph' alone meant
+// the tab Ken actually clicks never offered the fourth (Ken, 2026-09-10: "in graph mode, there isnt the
+// option to add a 4th graph").
+function graphsAreTheView(){ return VIEWER_VIEW_MODE === 'default' || VIEWER_VIEW_MODE === 'graph'; }
+function maxGraphCount(){ return isMobileViewer() ? 1 : (graphsAreTheView() ? 4 : 3); }
 function effectiveGraphCount(){ return Math.max(1, Math.min(VIEWER_GRAPH_COUNT || 2, maxGraphCount())); }
 function activeGraphSlots(){
   if(isMobileViewer()) return [GRAPH_SLOT_UPPER];
@@ -2569,7 +2575,7 @@ function refreshPerfUi(){
 // Lives in the UPPER graph's top-left, because that panel is the master and is always on screen --
 // so the control never disappears with the thing it controls. Opposite corner from the legend.
 function renderGraphCountHtml(){
-  // 4 is offered in Graph View only (see maxGraphCount), and the highlighted button is the count
+  // 4 is offered on the Graph tab only (see maxGraphCount), and the highlighted button is the count
   // actually on screen, which is the remembered one clamped to what this view can show.
   var shown = effectiveGraphCount();
   var btns = [1, 2, 3, 4].slice(0, maxGraphCount()).map(function(n){
