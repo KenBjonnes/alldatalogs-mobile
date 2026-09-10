@@ -2567,9 +2567,9 @@ function commitPerfDialog(wrap, kind, dragyTestId){
 // Markers are drawn by a plugin, so a chart update is all it takes -- rebuilding the body would
 // drop the current zoom.
 function refreshPerfUi(){
-  // Markers are drawn by a plugin, so a chart update is all it takes. The perf state used to also
+  // Markers are drawn by a plugin, so a repaint is all it takes. The perf state used to also
   // relabel a header button; that button now lives in the Analyze menu, which is rebuilt each open.
-  Object.keys(viewerCharts).forEach(function(k){ if(viewerCharts[k]) viewerCharts[k].update('none'); });
+  repaintCharts();
 }
 
 // Lives in the UPPER graph's top-left, because that panel is the master and is always on screen --
@@ -2701,6 +2701,7 @@ function wireGraphLegends(){
 // Full body render
 // ---------------------------------------------------------------------------------------------
 function renderViewerBody(){
+  cancelCursorPaint();   // the charts below are about to be destroyed; a queued frame must not paint them
   // A header dropdown is appended to <body>, outside the content we're about to replace, and is
   // anchored to a button that this rebuild destroys -- so close it, or it lingers pointing at nothing.
   if(typeof closeHdrMenu === 'function') closeHdrMenu();
@@ -4371,8 +4372,12 @@ function setCursorTime(t){
   var idx = nearestTimeIndex(VIEWER_DATA.time, +t);
   CROSSHAIR_TIME = VIEWER_DATA.time[idx];
   VIEWER_CURSOR_TIME = CROSSHAIR_TIME;
+  // Synchronous, unlike hover: this is one discrete jump (a histogram cell, a scorecard evidence
+  // link, a host calling navigate.setCursor) and callers read the cursor straight afterwards. It
+  // still only repaints -- the frame coalescing is for streams of pointer moves, not single actions.
+  cancelCursorPaint();
   updateAtCursor(CROSSHAIR_TIME);
-  Object.keys(viewerCharts).forEach(function(k){ if(viewerCharts[k]) viewerCharts[k].update('none'); });
+  repaintCharts();
 }
 // Paint the given sample indices (a histogram cell's contributors) on the graphs and the overview
 // bar. Runs of consecutive indices become one span; null/empty clears. Repaints only -- never a rebuild.
@@ -4391,7 +4396,7 @@ function setHighlightIndices(indices){
       s = p = v;
     }
   }
-  Object.keys(viewerCharts).forEach(function(k){ if(viewerCharts[k]) viewerCharts[k].update('none'); });
+  repaintCharts();   // the spans are a plugin draw -- no scale or dataset changed
   updateScrubberHighlights();
 }
 // Overview-bar marks, positioned in PERCENT of the run so a window resize needs no re-layout. Spans
@@ -6611,19 +6616,85 @@ function cssEscape(s){
   return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 }
 
+// ---- Cursor repaints ---------------------------------------------------------------------------
+// A mouse reports 125-1000 positions a second, and each hover used to run updateAtCursor() plus a
+// full chart.update('none') on EVERY panel -- measured at 20.4 ms with four panels, so the handler
+// queue outran the frame budget and the whole window, pointer included, felt heavy (Ken, 2026-09-10:
+// "moving my mouse around, there seems to be lag now ... need to make sure it's not overhead from
+// the app slowing things down"; median frame 31 ms, worst 190 ms during an ordinary sweep).
+//
+// Two changes. The work is COALESCED into one animation frame, so a burst of moves paints once and
+// intermediate positions are dropped (the last one is the only one anybody can see). And it calls
+// render() instead of update(): the crosshair, the perf markers, the log-edge wash and the highlight
+// spans are all drawn by plugins in afterDraw from module state, and nothing about the datasets or
+// the scales changes when the cursor moves -- update('none') recomputes both at 18.2 ms for four
+// panels against render()'s 0.58 ms. Anything that really does change a scale (setVisibleRange) or a
+// dataset still calls update, as before.
+function repaintCharts(){
+  Object.keys(viewerCharts).forEach(function(k){
+    var c = viewerCharts[k];
+    if(c && c.ctx) c.render();   // ctx is nulled by destroy(); a pending frame must not touch that
+  });
+}
+var CURSOR_PAINT_RAF = null;
+var CURSOR_PAINT_AT = null;      // { x } while a paint is queued -- an OBJECT, because null is a real cursor value
+function runCursorPaint(){
+  CURSOR_PAINT_RAF = null;
+  var at = CURSOR_PAINT_AT;
+  CURSOR_PAINT_AT = null;
+  if(!at) return;
+  updateAtCursor(at.x);
+  repaintCharts();
+}
+function paintCursor(dataX){
+  CURSOR_PAINT_AT = { x: dataX };
+  if(CURSOR_PAINT_RAF !== null) return;
+  CURSOR_PAINT_RAF = (typeof requestAnimationFrame === 'function')
+    ? requestAnimationFrame(runCursorPaint) : setTimeout(runCursorPaint, 16);
+}
+// Drag handlers get the same treatment for a different reason. setVisibleRange writes both scales and
+// updates every panel -- measured at 9.8 ms with four -- which is real work it has to do; but a drag
+// fires pointermove at the mouse's report rate, and no intermediate position of a drag is ever seen.
+// So the newest value is applied once per frame and the rest are dropped. flush() exists for
+// pointerup: the release must never be the position that gets discarded.
+function frameCoalescer(apply){
+  var raf = null, pending = null;
+  function run(){
+    raf = null;
+    var p = pending; pending = null;
+    if(p) apply.apply(null, p);
+  }
+  return {
+    set: function(){
+      pending = Array.prototype.slice.call(arguments);
+      if(raf !== null) return;
+      raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame(run) : setTimeout(run, 16);
+    },
+    flush: function(){
+      if(raf === null) return;
+      if(typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf); else clearTimeout(raf);
+      run();
+    }
+  };
+}
+// Called before the charts are destroyed / rebuilt, so a queued frame can't render a dead chart.
+function cancelCursorPaint(){
+  if(CURSOR_PAINT_RAF === null) return;
+  if(typeof cancelAnimationFrame === 'function') cancelAnimationFrame(CURSOR_PAINT_RAF);
+  else clearTimeout(CURSOR_PAINT_RAF);
+  CURSOR_PAINT_RAF = null; CURSOR_PAINT_AT = null;
+}
 function handleChartHover(chart, e){
   var rect = chart.canvas.getBoundingClientRect();
   var dataX = chart.scales.x.getValueForPixel(e.clientX - rect.left);
   if(dataX == null || !isFinite(dataX)) return;
   CROSSHAIR_TIME = dataX;
   VIEWER_CURSOR_TIME = dataX;   // sticky: survives the pointer leaving the chart
-  updateAtCursor(dataX);
-  Object.keys(viewerCharts).forEach(function(k){ if(viewerCharts[k]) viewerCharts[k].update('none'); });
+  paintCursor(dataX);
 }
 function handleChartLeave(){
   CROSSHAIR_TIME = null;
-  updateAtCursor(null);
-  Object.keys(viewerCharts).forEach(function(k){ if(viewerCharts[k]) viewerCharts[k].update('none'); });
+  paintCursor(null);
 }
 
 // Propagates a zoom/pan change on one panel to the other, in data-value (seconds) space.
@@ -6794,8 +6865,9 @@ function scrubCursorBySample(dir){
   if(idx > VIEWER_DATA.time.length - 1) idx = VIEWER_DATA.time.length - 1;
   CROSSHAIR_TIME = VIEWER_DATA.time[idx];
   VIEWER_CURSOR_TIME = CROSSHAIR_TIME;   // arrow-key stepping counts as placing the cursor
+  cancelCursorPaint();
   updateAtCursor(CROSSHAIR_TIME);
-  Object.keys(viewerCharts).forEach(function(k){ if(viewerCharts[k]) viewerCharts[k].update('none'); });
+  repaintCharts();
 }
 ['gesturestart', 'gesturechange', 'gestureend'].forEach(function(evt){
   document.addEventListener(evt, function(e){
@@ -6830,6 +6902,7 @@ var VIEWER_AXIS_OVERRIDE = {};   // channel -> { min, max }
 // VIEWER_PANEL_ASSIGN. Kept close to the original implementation -- only the container ids and a
 // call into updateScrubberWindow()/renderGraphHeadHtml() are new.
 function rebuildChart(){
+  cancelCursorPaint();   // same reason as renderViewerBody: the charts are destroyed a few lines down
   // Capture the zoom window BEFORE the old charts are destroyed, so a rebuild triggered by a layout
   // change (add channel, reassign panel, add a comparison) can restore it rather than snapping to full.
   var prevMin = null, prevMax = null;
@@ -7477,6 +7550,8 @@ function wireScrubberEvents(){
     setVisibleRange(fullMin + lo * fullRange, fullMin + hi * fullRange, { minFrac: 0 });
   }
   var lo, hi;   // scratch, reused by setWindowFracs
+  // One range write per frame while a handle is being dragged (see frameCoalescer).
+  var fracsDrag = frameCoalescer(setWindowFracs);
 
   function setWindowLeftFrac(leftFrac){
     if(!VIEWER_DATA || !VIEWER_DATA.time.length) return;
@@ -7512,10 +7587,11 @@ function wireScrubberEvents(){
       handle.classList.add('dragging');
       function move(ev){
         var d = (ev.clientX - startX) / w;
-        if(edge === 'lo') setWindowFracs(startLo + d, startHi);
-        else setWindowFracs(startLo, startHi + d);
+        if(edge === 'lo') fracsDrag.set(startLo + d, startHi);
+        else fracsDrag.set(startLo, startHi + d);
       }
       function up(ev){
+        fracsDrag.flush();   // the position the user released on is the one that counts
         handle.classList.remove('dragging');
         try { handle.releasePointerCapture(ev.pointerId); } catch(err){}
         window.removeEventListener('pointermove', move);
@@ -7540,12 +7616,13 @@ function wireScrubberEvents(){
     if(winEl.setPointerCapture){ try{ winEl.setPointerCapture(e.pointerId); }catch(err){} }
     e.preventDefault();
   });
+  var panDrag = frameCoalescer(setWindowLeftFrac);
   document.addEventListener('pointermove', function(e){
     if(!dragging || (dragPointerId !== null && e.pointerId !== dragPointerId)) return;
     var dx = e.clientX - dragStartX;
-    setWindowLeftFrac(dragStartLeftFrac + dx / (wrap.clientWidth || 1));
+    panDrag.set(dragStartLeftFrac + dx / (wrap.clientWidth || 1));
   });
-  function endDrag(){ dragging = false; dragPointerId = null; }
+  function endDrag(){ panDrag.flush(); dragging = false; dragPointerId = null; }
   document.addEventListener('pointerup', endDrag);
   document.addEventListener('pointercancel', endDrag);   // touch drags get cancelled, mouse ones don't
   wrap.addEventListener('click', function(e){
