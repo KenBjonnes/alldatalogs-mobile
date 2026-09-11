@@ -1259,7 +1259,21 @@ var CHANNEL_SHORT_NAMES = {
   'throttle angle source':'TA SRC',
   'rpm limit source':'RPM LIM',
   'fuel system #1 status (sae)':'FUEL SYS',
-  'vct schedule mode':'VCT MODE'
+  'vct schedule mode':'VCT MODE',
+  // The calculated (Vehicle Dynamics) channels had no short name, so a docked legend tile or a phone card
+  // spelled "Estimated Acceleration" out in full (Ken, 2026-09-11: "estimated accelration should just be
+  // truncated to Est Accel G or something like that"). The unit rides beside the name, so the three
+  // acceleration variants can share one.
+  'estimated acceleration':'EST ACCEL',
+  'estimated acceleration (ft/s²)':'EST ACCEL',
+  'estimated acceleration (m/s²)':'EST ACCEL',
+  'acceleration rate':'ACCEL RATE',
+  'estimated chassis speed':'EST SPEED',
+  'estimated wheel slip':'WHEEL SLIP',
+  'driven wheel speed delta':'WHEEL DELTA',
+  'wheel spin detected':'WHEEL SPIN',
+  'wheel spin correction active':'SPIN CORR',
+  'acceleration estimate confidence':'ACCEL CONF'
 };
 
 // Word-level shorteners for everything not in the map. Order matters: longer phrases first.

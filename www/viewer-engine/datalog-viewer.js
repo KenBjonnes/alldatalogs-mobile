@@ -2875,13 +2875,189 @@ function currentLegendPos(legend){
 function setLegendPos(panelNum, pos){ VIEWER_LEGEND_POS[panelNum] = pos; }
 // A docked legend: drag it out onto the plot to float every graph's legend again. It follows the pointer
 // while dragged; let go still inside the strip and it settles back where it was.
-// One column of tiles while they fit the graph's height (HP Tuners stacks a short list); two per row
-// once they would overflow it (HP Tuners' busier charts pair them). Re-run on every resize.
-function fitDockedLegends(){
-  document.querySelectorAll('.dlv-graph-legend.dlv-legend-dock').forEach(function(l){
-    l.classList.remove('dlv-dock-2col');
-    if(l.children.length > 1 && l.scrollHeight > l.clientHeight + 1) l.classList.add('dlv-dock-2col');
+// ---- Docked column: always fits, never scrolls -----------------------------------------------
+// Ken, 2026-09-11, with a screenshot of a scrollbar in the column: "depending on window size, we get a
+// scroll bar on the parametes to the left. this can never happen, need to scale text instead and/or
+// truncate titles to help. make sure the title truncations are smart and don't just cut off the end.
+// estimated accelration should just be truncated to Est Accel G or something like that".
+// The column is overflow:hidden, and fitDockedLegend makes sure nothing ever needs hiding. It tries one
+// tile per row with the text stepping down to two-thirds size, then two per row stepping down to half,
+// and takes the first that fits the column's height. At each size every tile gets the most complete
+// label that fits its width -- the short name with its unit, then a word-by-word abbreviation, and only
+// if even that is too wide a name shortened from the MIDDLE so its start and end both survive -- and
+// the value is checked at the WIDEST text its channel can show (its min and max, or every state label),
+// so scrubbing can never push a number off its tile. A ResizeObserver re-runs it whenever the column
+// changes size (window resize, splitter, graph count): the 1.0.0 fit only ran when the app itself
+// resized the graphs, which is how a window resize left the scrollbar in Ken's screenshot.
+// The ladder, best first. Stacked tiles (label over a big value, HP Tuners' look) in one column, then
+// paired two to a row; then, for a graph too short for any stacked tiles, an INLINE list -- name and
+// value on one line, about half the height per channel -- in one column, then two. A column with more
+// than one tile never falls back to a single column: two columns always hold more.
+function dockConfigsFor(n){
+  var out = [], add = function(mode, cols, scales){ scales.forEach(function(s){ out.push({ mode: mode, cols: cols, scale: s }); }); };
+  add('stack', 1, [1, 0.92, 0.85, 0.78, 0.72]);
+  if(n > 1) add('stack', 2, [1, 0.92, 0.85, 0.78, 0.72, 0.66]);
+  else add('stack', 1, [0.66, 0.6, 0.55, 0.5]);
+  add('inline', 1, [1, 0.9, 0.8, 0.72, 0.66, 0.6]);
+  if(n > 1) add('inline', 2, [1, 0.9, 0.8, 0.72, 0.66, 0.6, 0.55, 0.5]);
+  else add('inline', 1, [0.55, 0.5]);
+  return out;
+}
+var DOCK_NAME_PX = 10.5, DOCK_VAL_PX = 20, DOCK_INLINE_VAL_PX = 14;
+// Whole plain words only; an empty abbreviation drops the word ("Wheel Spin Detected" -> "Wheel Spin").
+var DOCK_ABBREV = {
+  estimated:'est', estimate:'est', estimation:'est', acceleration:'accel', accelerator:'accel',
+  chassis:'chas', speed:'spd', detected:'', temperature:'temp', pressure:'press', position:'pos',
+  commanded:'cmd', command:'cmd', desired:'des', actual:'act', correction:'corr', corrected:'corr',
+  ignition:'ign', advance:'adv', throttle:'thr', pedal:'ped', injector:'inj', injection:'inj',
+  barometric:'baro', intake:'int', exhaust:'exh', coolant:'clnt', engine:'eng', vehicle:'veh',
+  manifold:'man', absolute:'abs', relative:'rel', transmission:'trans', request:'req', requested:'req',
+  voltage:'volt', average:'avg', maximum:'max', minimum:'min', confidence:'conf', calculated:'calc',
+  timing:'tmg', retard:'rtd', driven:'drv', sensor:'sns', module:'mod', control:'ctl', volume:'vol',
+  percent:'pct', cylinder:'cyl', wheel:'whl', delta:'dlt', torque:'tq', schedule:'sched',
+  scheduled:'sched', source:'src', status:'stat'
+};
+function dockAbbreviate(name){
+  var out = String(name).split(/(\s+)/).map(function(w){
+    var key = w.toLowerCase();
+    if(!/^[a-z]+$/.test(key) || !(key in DOCK_ABBREV)) return w;
+    var a = DOCK_ABBREV[key];
+    if(!a) return '';
+    if(w === w.toUpperCase()) return a.toUpperCase();
+    if(w.charAt(0) === w.charAt(0).toUpperCase()) return a.charAt(0).toUpperCase() + a.slice(1);
+    return a;
+  }).join('').replace(/\s{2,}/g, ' ').trim();
+  return out || String(name);
+}
+function dockLabelParts(ch){
+  var unit = VIEWER_UNIT_BY_CHANNEL[ch];
+  var u = (unit && unit !== 'na') ? ' (' + unit + ')' : '';
+  var short = (typeof shortChannelName === 'function') ? shortChannelName(ch) : ch;
+  var abbr = dockAbbreviate(short);
+  return { names: abbr !== short ? [short, abbr] : [short], unit: u };
+}
+var DOCK_CTX = null;
+function dockTextW(text, px, weight, family){
+  if(!DOCK_CTX) DOCK_CTX = document.createElement('canvas').getContext('2d');
+  DOCK_CTX.font = weight + ' ' + px + 'px ' + family;
+  return DOCK_CTX.measureText(text).width;
+}
+// Shorten from the MIDDLE, keeping the start and the end ("EST CH\u2026SPD"), never just the front.
+function dockMiddleFit(text, maxW, px, weight, family){
+  if(dockTextW(text, px, weight, family) <= maxW) return text;
+  for(var n = text.length - 1; n >= 2; n--){
+    var head = Math.ceil(n * 0.6), tail = n - head;
+    var t = text.slice(0, head).replace(/\s+$/, '') + '\u2026' + (tail > 0 ? text.slice(text.length - tail).replace(/^\s+/, '') : '');
+    if(dockTextW(t, px, weight, family) <= maxW) return t;
+  }
+  return text.charAt(0) + '\u2026';
+}
+function dockPickLabel(parts, maxW, px, weight, family){
+  for(var i = 0; i < parts.names.length; i++){
+    var full = parts.names[i] + parts.unit;
+    if(dockTextW(full, px, weight, family) <= maxW) return full;
+  }
+  var last = parts.names[parts.names.length - 1];
+  // Keep the unit and shorten the name from its middle -- unless that would leave almost no name, in
+  // which case the name matters more than its unit.
+  var room = maxW - dockTextW(parts.unit, px, weight, family);
+  if(parts.unit && room >= dockTextW('WWWW', px, weight, family)) return dockMiddleFit(last, room, px, weight, family) + parts.unit;
+  return dockMiddleFit(last, maxW, px, weight, family);
+}
+// Every text this channel's value can show, so the widest one is what the tile is sized for.
+function dockWidestValues(ch){
+  var out = ['--'];
+  var levels = textLevelsFor(ch);
+  if(levels){ levels.forEach(function(l){ if(l != null) out.push(String(l)); }); return out; }
+  var st = VIEWER_CHANNEL_STATS[ch];
+  if(st && isFinite(st.min) && isFinite(st.max)){
+    out.push(formatReadoutValue(st.min, ch), formatReadoutValue(st.max, ch));
+    if(st.min < 0) out.push(formatReadoutValue(-Math.max(Math.abs(st.min), Math.abs(st.max)), ch));
+  }
+  return out;
+}
+// One rung of the ladder applied to a column: mode, columns and scale on the element, and every label
+// chosen for that size. Returns false and changes nothing when a value would not fit, unless forced.
+function dockApplyConfig(l, cfg, info, c, force){
+  var inline = cfg.mode === 'inline';
+  // 4 px of tile padding, 2 px of slack so a measuring rounding never trips the CSS ellipsis
+  var tileW = (c.inner - c.gapX * (cfg.cols - 1)) / cfg.cols - 6;
+  var nPx = DOCK_NAME_PX * cfg.scale, vPx = (inline ? DOCK_INLINE_VAL_PX : DOCK_VAL_PX) * cfg.scale;
+  // Each row's widest value; inline, the name gets what is left beside it (at least a few letters).
+  var minName = dockTextW('WWW', nPx, c.wN, c.family);
+  var valueW = info.map(function(i){
+    return Math.max.apply(null, i.widest.map(function(t){ return dockTextW(t, vPx, c.wV, c.family); }));
   });
+  var valuesFit = valueW.every(function(w){ return inline ? w + 4 + minName <= tileW : w <= tileW; });
+  if(!valuesFit && !force) return false;
+  l.classList.toggle('dlv-dock-2col', cfg.cols === 2);
+  l.classList.toggle('dlv-dock-inline', inline);
+  l.style.setProperty('--dock-scale', String(cfg.scale));
+  info.forEach(function(i, j){
+    var room = inline ? Math.max(minName, tileW - valueW[j] - 4) : tileW;
+    var label = dockPickLabel(i.parts, room, nPx, c.wN, c.family);
+    if(i.nameEl.textContent !== label) i.nameEl.textContent = label;
+  });
+  return true;
+}
+function fitDockedLegend(l){
+  if(!l || !l.isConnected || !l.clientHeight) return;
+  var oldChip = l.querySelector('.dlv-legend-more');
+  if(oldChip) oldChip.parentNode.removeChild(oldChip);
+  var rows = Array.prototype.slice.call(l.querySelectorAll('.dlv-legend-row'));
+  if(!rows.length) return;
+  rows.forEach(function(r){ r.classList.remove('dlv-legend-cut'); });
+  var csN = getComputedStyle(rows[0].querySelector('.dlv-legend-name'));
+  var csV = getComputedStyle(rows[0].querySelector('.dlv-legend-val'));
+  var cs = getComputedStyle(l);
+  var family = csN.fontFamily, wN = csN.fontWeight, wV = csV.fontWeight;
+  var inner = l.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  var gapX = parseFloat(cs.columnGap) || 4;   // the same 4 px in both modes (only the row gap differs)
+  var info = rows.map(function(r){
+    var ch = r.querySelector('[data-legend-ch]').getAttribute('data-legend-ch');
+    return { row: r, ch: ch, nameEl: r.querySelector('.dlv-legend-name'), parts: dockLabelParts(ch), widest: dockWidestValues(ch) };
+  });
+  var c = { inner: inner, gapX: gapX, wN: wN, wV: wV, family: family };
+  var configs = dockConfigsFor(rows.length);
+  for(var k = 0; k < configs.length; k++){
+    if(!dockApplyConfig(l, configs[k], info, c, k === configs.length - 1)) continue;   // a value would not fit
+    if(l.scrollHeight <= l.clientHeight + 0.5) return;
+  }
+  // Nothing on the ladder fits: a graph this short (a 540 px window split four ways, five channels a
+  // graph -- a 34 px column) cannot show every channel legibly at any size. Still never a scrollbar,
+  // and never a silent crop: the last channels step out, and a "+N" chip says how many and names them
+  // on hover. Grow the window, or use fewer graphs, and they come straight back (the ResizeObserver).
+  // Once channels have to step out anyway, cut at a size that can still be READ, not at the ladder's
+  // last, half-size rung (about 5 px text on the first try).
+  dockApplyConfig(l, { mode: 'inline', cols: info.length > 1 ? 2 : 1, scale: 0.72 }, info, c, true);
+  var chip = document.createElement('div');
+  chip.className = 'dlv-legend-more';
+  l.appendChild(chip);
+  var cut = [];
+  for(var h = info.length - 1; h > 0 && l.scrollHeight > l.clientHeight + 0.5; h--){
+    info[h].row.classList.add('dlv-legend-cut');
+    cut.unshift(info[h].ch);
+    chip.textContent = '+' + cut.length;
+    chip.title = cut.length + ' more on this graph: ' + cut.join(', ');
+  }
+  if(!cut.length) chip.parentNode.removeChild(chip);
+}
+function fitDockedLegends(){
+  document.querySelectorAll('.dlv-graph-legend.dlv-legend-dock').forEach(fitDockedLegend);
+}
+var VIEWER_DOCK_RO = null, DOCK_FIT_RAF = null, DOCK_FIT_PENDING = [];
+function observeDockedLegend(l){
+  if(typeof ResizeObserver !== 'function') return;
+  if(!VIEWER_DOCK_RO) VIEWER_DOCK_RO = new ResizeObserver(function(entries){
+    entries.forEach(function(en){ if(DOCK_FIT_PENDING.indexOf(en.target) === -1) DOCK_FIT_PENDING.push(en.target); });
+    if(DOCK_FIT_RAF !== null) return;
+    DOCK_FIT_RAF = requestAnimationFrame(function(){
+      DOCK_FIT_RAF = null;
+      var list = DOCK_FIT_PENDING; DOCK_FIT_PENDING = [];
+      list.forEach(fitDockedLegend);   // the column's own box is fixed by its graph, so this cannot loop
+    });
+  });
+  VIEWER_DOCK_RO.observe(l);
 }
 function wireDockedLegend(legend, panelNum, panel){
   var st = null;
@@ -2926,11 +3102,12 @@ function wireDockedLegend(legend, panelNum, panel){
 // resize them as a group"). Position is stored as top/right (matching the CSS anchor corner) so
 // resize's transform-origin (top right) and drag's delta math agree on which corner stays put.
 function wireGraphLegends(){
+  if(VIEWER_DOCK_RO) VIEWER_DOCK_RO.disconnect();   // the columns it watched were just replaced
   document.querySelectorAll('.dlv-graph-legend').forEach(function(legend){
     var panelNum = Number(legend.getAttribute('data-legend-panel'));
     var panel = legend.closest('.dlv-graph-panel');
     if(!panel) return;
-    if(legend.classList.contains('dlv-legend-dock')){ wireDockedLegend(legend, panelNum, panel); fitDockedLegends(); return; }
+    if(legend.classList.contains('dlv-legend-dock')){ wireDockedLegend(legend, panelNum, panel); fitDockedLegend(legend); observeDockedLegend(legend); return; }
     var moveSt = null, resizeSt = null;
 
     legend.addEventListener('pointerdown', function(e){
