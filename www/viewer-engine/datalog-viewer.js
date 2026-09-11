@@ -114,9 +114,13 @@ var VIEWER_LEGEND_POS = {};
 // ONE switch for all graphs, not one per graph: a docked column narrows the plot, and the graphs must
 // keep identical plot areas or their time axes stop lining up and the crosshair is no longer one
 // straight line down them (Ken, 2026-07-24). Remembered across sessions, and saved in a Layout.
-var VIEWER_LEGEND_DOCK = false;
-var VIEWER_LEGEND_DOCK_KEY = 'pbdDatalogViewerLegendDock.v1';
-try { VIEWER_LEGEND_DOCK = !!(window.localStorage && localStorage.getItem(VIEWER_LEGEND_DOCK_KEY) === '1'); } catch(e){}
+// DOCKED BY DEFAULT since 1.0.1 (Ken, 2026-09-11: "I like the new change to put the parameters to the
+// left better. lets leave it so end user can move it, but make it docked to the left as default"). Only a
+// deliberate drag out to float is remembered ('0'). The key moved to .v2 so every install starts docked
+// after this update: under 1.0.0 the stored value was mostly people, Ken included, trying the drag both ways.
+var VIEWER_LEGEND_DOCK = true;
+var VIEWER_LEGEND_DOCK_KEY = 'pbdDatalogViewerLegendDock.v2';
+try { if(window.localStorage && localStorage.getItem(VIEWER_LEGEND_DOCK_KEY) === '0') VIEWER_LEGEND_DOCK = false; } catch(e){}
 
 // ---- Session persistence (per Ken: view mode + manual preset override should survive across
 // logs opened in the same tab session, but not permanently; sessionStorage clears on tab close). --
@@ -5988,6 +5992,7 @@ function buildConfig(kind){
     histGauges: histDashGaugesForSave(),  // the gauges behind the Histograms tab (null when none)
     smoothing: smoothingForSave(),        // per-channel smoothing windows (ms), null when none
     legendDock: !!VIEWER_LEGEND_DOCK,     // legends docked to the left of the graphs (HP Tuners style)
+    legendFloat: !VIEWER_LEGEND_DOCK,     // 1.0.1+: floating is the deliberate choice (docked is the default)
   };
 }
 // Back-compat alias for the single composite save.
@@ -6133,11 +6138,14 @@ function applyViewConfig(cfg, meta){
   VIEWER_LAYOUT_DIRTY = false;
   if(meta.kind === 'saved' && !meta.readOnly) rememberLastSaved('view', meta.id, meta.name);
   if(cfg.smoothing && typeof cfg.smoothing === 'object') setSmoothingMap(cfg.smoothing);
-  // Docked or floating legends (0.1.47+). A Layout saved before the choice existed has no field and
-  // leaves whatever the user has now.
-  if(typeof cfg.legendDock === 'boolean' && cfg.legendDock !== !!VIEWER_LEGEND_DOCK){
-    VIEWER_LEGEND_DOCK = cfg.legendDock;
-    try { if(window.localStorage) localStorage.setItem(VIEWER_LEGEND_DOCK_KEY, cfg.legendDock ? '1' : '0'); } catch(e){}
+  // Docked or floating legends. Docked is the default, so what a Layout can FORCE is floating, and only one
+  // saved by 1.0.1+ says so deliberately (legendFloat). A 1.0.0 Layout recorded legendDock:false simply
+  // because nobody had docked yet, so a bare false is not taken as a choice; legendDock:true still docks.
+  // A Layout with neither field (saved before any of this) leaves the current choice alone.
+  var wantDock = (cfg.legendFloat === true) ? false : (cfg.legendDock === true ? true : null);
+  if(wantDock !== null && wantDock !== !!VIEWER_LEGEND_DOCK){
+    VIEWER_LEGEND_DOCK = wantDock;
+    try { if(window.localStorage) localStorage.setItem(VIEWER_LEGEND_DOCK_KEY, wantDock ? '1' : '0'); } catch(e){}
   }
   // A layout remembers its literal graph channels; restore them (those this log has). A legacy/built-in
   // config with no graph snapshot -- or one none of whose channels exist here -- falls back to the
