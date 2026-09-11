@@ -6257,6 +6257,68 @@ function gaugeSelectionForSave(){
   if(cur && cur.kind) sel.ref = { kind: cur.kind, id: cur.id || null, name: cur.name || '', readOnly: !!cur.readOnly };
   return sel;
 }
+// Which saved Custom Gauges set a dash IS, judged by what its gauges read (Ken, 2026-09-11: switching to the
+// Holley Layout brought the Holley gauges but the menu still said "V6 iKnock2", and editing then tried to save
+// them as V6 -- a Save would have overwritten V6 with the Holley gauges). A gauge is known by its type and what
+// it reads: its channel, else its role, else its label.
+function gaugeKeys(gauges){
+  var keys = {};
+  (gauges || []).forEach(function(g){
+    if(!g) return;
+    var what = g.channelOverride || g.role || g.label || '';
+    keys[String(g.type || '') + '|' + String(what).toLowerCase()] = true;
+  });
+  return keys;
+}
+// 0..1: shared gauges over all gauges of the two sets (1 = the same set, 0 = nothing in common).
+function gaugeOverlap(a, b){
+  var ka = gaugeKeys(a), kb = gaugeKeys(b), inter = 0, union = 0, k;
+  for(k in ka){ union++; if(kb[k]) inter++; }
+  for(k in kb){ if(!ka[k]) union++; }
+  return union ? inter / union : 1;
+}
+function savedGaugesOf(id){
+  var cfg = null;
+  try { cfg = getSavedConfigById(id); } catch(e){ cfg = null; }
+  return (cfg && Array.isArray(cfg.gauges)) ? cfg.gauges : null;
+}
+// The saved set these gauges belong to: the one the Layout named, when its gauges still largely match (a set
+// edited since keeps its identity); else a saved set that is near-identical; else none -- the dash is then
+// labelled after the Layout, and saving it asks for a name instead of writing over another set.
+function identifyGaugeRef(gauges, hint, fallbackName){
+  if(hint && hint.kind && hint.readOnly) return { kind: hint.kind, id: hint.id || null, name: hint.name || '', readOnly: true };   // a PBD "for this car" set is not in the user's list
+  var rows = VIEWER_SAVED_VIEWS.filter(function(r){ return savedRowKind(r) === 'gauges'; });
+  if(hint && hint.kind === 'saved' && hint.id != null){
+    var hrow = rows.filter(function(r){ return String(r.id) === String(hint.id); })[0];
+    var hg = hrow ? savedGaugesOf(hrow.id) : null;
+    if(hg && gaugeOverlap(gauges, hg) >= 0.6) return { kind: 'saved', id: hrow.id, name: hrow.name };
+  }
+  var best = null, bestScore = 0;
+  rows.forEach(function(r){
+    var g = savedGaugesOf(r.id); if(!g) return;
+    var s = gaugeOverlap(gauges, g);
+    if(s > bestScore){ bestScore = s; best = r; }
+  });
+  if(best && bestScore >= 0.9) return { kind: 'saved', id: best.id, name: best.name };
+  return fallbackName ? { kind: 'layout', id: null, name: fallbackName } : null;
+}
+// Saving over the loaded set is only safe while the dash still IS that set. If it no longer largely matches,
+// the save asks for a name rather than silently replacing it.
+function gaugesStillMatch(cur){
+  if(!cur || cur.kind !== 'saved' || cur.id == null) return true;
+  var saved = savedGaugesOf(cur.id);
+  if(!saved) return true;   // cannot tell -- keep the old behaviour
+  return gaugeOverlap(currentGaugesList(), saved) >= 0.5;
+}
+// Saving under the NAME of an existing set whose gauges read different channels replaces that set (the
+// providers match by name) -- ask first.
+function confirmOverwriteGauges(name){
+  var row = VIEWER_SAVED_VIEWS.filter(function(r){ return savedRowKind(r) === 'gauges' && r.name === name; })[0];
+  if(!row) return true;
+  var saved = savedGaugesOf(row.id);
+  if(!saved || gaugeOverlap(currentGaugesList(), saved) >= 0.5) return true;
+  return window.confirm('Replace the gauges saved as "' + name + '"? They read different channels from the gauges on screen.');
+}
 // Put a built-in fascia back the way picking it from the Gauges menu does. Returns false and changes
 // NOTHING for an unknown id, a fascia with no gauges, or one whose gauges resolve to no channel on
 // this log -- the log's own auto-matched fascia is left alone rather than replaced by an empty one.
@@ -6354,7 +6416,7 @@ function applyViewConfig(cfg, meta){
 
   var isBuiltin = cfg.kind === undefined;
   var rawLayout = cfg.layout, layout = rawLayout || 'default';
-  var seedDash = false, forceCustomSubmode = false;
+  var seedDash = false, forceCustomSubmode = false, dashSeeded = false;
   if(!isBuiltin){
     if(rawLayout === 'customdash'){ layout = 'gauge'; forceCustomSubmode = true; seedDash = true; }
     else if(rawLayout === 'v8-gauge' || rawLayout === 'v6-gauge') layout = 'gauge';
@@ -6372,6 +6434,7 @@ function applyViewConfig(cfg, meta){
     VIEWER_DASH = { gauges: cfg.gauges.map(function(g){ return JSON.parse(JSON.stringify(g)); }) };
     dashAdoptGaugeIds(VIEWER_DASH.gauges);
     dashMigrateScorecards(VIEWER_DASH.gauges);
+    dashSeeded = true;   // the dash now holds THIS layout's gauges -- its name is re-decided below
     // A current-model layout remembers which sub-view it was showing (unlike the legacy customdash
     // remap above, this isn't a forced reinterpretation -- it's literally what was true when saved).
     if(cfg.gaugeSubmode === 'custom') forceCustomSubmode = true;
@@ -6396,6 +6459,15 @@ function applyViewConfig(cfg, meta){
       VIEWER_GAUGE_SUBMODE = 'default';
       applyPresetFascia(gsel.preset && gsel.preset.id);
     }
+  }
+  // The dash now holds this Layout's gauges, so its NAME must follow them -- never the set that was on screen
+  // before, which a Save would then have overwritten with these gauges (Ken, 2026-09-11: Holley Layout ->
+  // Holley gauges, menu still "V6 iKnock2", Save went to V6). The ref the Layout recorded is only a hint: one
+  // saved while the name was already stale is caught because its gauges do not match that set.
+  if(dashSeeded){
+    VIEWER_CURRENT_GAUGES = identifyGaugeRef(VIEWER_DASH.gauges, gsel && gsel.ref, ((meta && meta.name) || 'Layout') + ' gauges');
+    VIEWER_GAUGES_DIRTY = false;
+    rememberLastDash();
   }
   if(forceCustomSubmode) VIEWER_GAUGE_SUBMODE = 'custom';
   VIEWER_VIEW_MODE = layout;
@@ -6832,10 +6904,14 @@ function wireViewSelect(){
 function saveConfig(kind, asNew){
   var cur = (kind === 'gauges' ? VIEWER_CURRENT_GAUGES : VIEWER_CURRENT_LAYOUT) || {};
   var updating = !asNew && cur.kind === 'saved';
-  if(updating) return persistConfig(kind, cur.name, cur.id);
+  // Never save silently over a set the dash no longer is (gaugesStillMatch) -- ask for a name instead.
+  var drifted = kind === 'gauges' && updating && !gaugesStillMatch(cur);
+  if(updating && !drifted) return persistConfig(kind, cur.name, cur.id);
   var noun = kind === 'gauges' ? 'custom gauge dashboard' : 'layout';
-  var name = window.prompt('Save this ' + noun + ' as:', (cur.name || (kind === 'gauges' ? 'My Gauges' : 'My Layout')) + (cur.kind === 'builtin' ? ' (custom)' : ''));
+  var def = drifted ? 'My Gauges' : (cur.name || (kind === 'gauges' ? 'My Gauges' : 'My Layout')) + (cur.kind === 'builtin' ? ' (custom)' : '');
+  var name = window.prompt(drifted ? ('These gauges no longer match "' + cur.name + '". Save them as:') : ('Save this ' + noun + ' as:'), def);
   if(!name) return Promise.resolve(false);
+  if(kind === 'gauges' && !confirmOverwriteGauges(name)) return Promise.resolve(false);
   return persistConfig(kind, name, null);
 }
 // Like saveConfig but ALWAYS prompts, defaulted to the current/loaded item's name -- so hitting Enter
@@ -6844,9 +6920,12 @@ function saveConfig(kind, asNew){
 function saveConfigPrompt(kind){
   var cur = (kind === 'gauges' ? VIEWER_CURRENT_GAUGES : VIEWER_CURRENT_LAYOUT) || {};
   var isSame = cur.kind === 'saved';
-  var def = isSame ? cur.name : (kind === 'gauges' ? 'My Gauges' : 'My Layout');
-  var name = window.prompt('Save as:', def);
+  var drifted = kind === 'gauges' && isSame && !gaugesStillMatch(cur);
+  // A dash that came with a Layout but matches no saved set is offered under the Layout's name.
+  var def = (isSame && !drifted) ? cur.name : (cur.kind === 'layout' && cur.name) ? cur.name : (kind === 'gauges' ? 'My Gauges' : 'My Layout');
+  var name = window.prompt(drifted ? ('These gauges no longer match "' + cur.name + '". Save them as:') : 'Save as:', def);
   if(!name) return Promise.resolve(false);
+  if(kind === 'gauges' && !confirmOverwriteGauges(name)) return Promise.resolve(false);
   // Same name as what we're editing -> overwrite it; a new name -> a new entry.
   var updateId = (isSame && name === cur.name) ? cur.id : null;
   return persistConfig(kind, name, updateId);
