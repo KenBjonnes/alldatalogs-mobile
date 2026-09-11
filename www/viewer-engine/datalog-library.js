@@ -1,7 +1,7 @@
 'use strict';
 /*
- * datalog-library.js -- the shared library (browse / use / share) for custom-gauge dashboards and
- * histogram definitions. Ken, 2026-09-08: "a library of gauges and histograms ... labeled as our
+ * datalog-library.js -- the shared library (browse / use / share) for custom-gauge dashboards,
+ * histogram definitions and (since 2026-09-11) math channels. Ken, 2026-09-08: "a library of gauges and histograms ... labeled as our
  * official one ... if a user shares one it will be marked as a user share ... a thumbnail to show
  * what it looks like." Same day: our own shares (admin accounts) are marked SYSTEM automatically,
  * never "User share"; the car link is an official Year / Make / Model picked from
@@ -25,7 +25,7 @@
  *   me()               -> { userId, email } | null
  *   isAdmin()          -> boolean
  *   admin: { setOfficial(id, bool), hide(id, bool), remove(id) }  (each -> { ok } | { ok:false, error })
- * Summary: { id, kind:'gauges'|'histogram', name, description, owner_id, author_name, is_official,
+ * Summary: { id, kind:'gauges'|'histogram'|'math', name, description, owner_id, author_name, is_official,
  *            status:'published'|'hidden', thumb_svg, vehicle, vehicle_year, vehicle_make, vehicle_model,
  *            tags, pulls, updated_at }
  *
@@ -37,7 +37,10 @@
  * datalog-viewer.js (the viewer references window.Library lazily, guarded by typeof).
  */
 (function (global) {
-  var KINDS = { gauges: 'Gauge dashboards', histogram: 'Histograms' };
+  // One tab per kind. Math channels joined 2026-09-11 (Ken: "I want to add math channels to the library
+  // as well"): payload { kind:'math', mathChannels:[the channel, then every math channel it uses] }.
+  var KINDS = { gauges: 'Gauge dashboards', histogram: 'Histograms', math: 'Math channels' };
+  function kindOf(k) { return Object.prototype.hasOwnProperty.call(KINDS, k) ? k : 'gauges'; }
   var PAGE = 30;
   var SYSTEM_LABEL = 'System', USER_LABEL = 'User share';
   var state = { ovl: null };
@@ -139,12 +142,12 @@
   }
 
   // ---- Browse ------------------------------------------------------------------------------------
-  // opts: { kind: 'gauges'|'histogram', onUse(item) }  onUse receives the FULL item (with payload).
+  // opts: { kind: 'gauges'|'histogram'|'math', onUse(item) }  onUse receives the FULL item (with payload).
   function open(opts) {
     opts = opts || {};
     var p = provider();
     if (!p) { toast('The library is not available on this page.'); return; }
-    var st = { kind: opts.kind === 'histogram' ? 'histogram' : 'gauges', q: '', filter: 'all', page: 0, items: [], hasMore: false, busy: false, me: null, admin: false, seq: 0 };
+    var st = { kind: kindOf(opts.kind), q: '', filter: 'all', page: 0, items: [], hasMore: false, busy: false, me: null, admin: false, seq: 0 };
     var tabs = '<div class="dlv-lib-tabs">' + Object.keys(KINDS).map(function (k) {
       return '<button type="button" data-kind="' + k + '"' + (k === st.kind ? ' class="on"' : '') + '>' + esc(KINDS[k]) + '</button>';
     }).join('') + '</div>';
@@ -284,7 +287,7 @@
     var p = provider();
     if (!p) { toast('The library is not available on this page.'); return; }
     if (!isPro()) { toast(PRO_MSG); return; }
-    var kind = opts.kind === 'histogram' ? 'histogram' : 'gauges';
+    var kind = kindOf(opts.kind);
     var vehicle = opts.vehicle && typeof opts.vehicle === 'object' ? opts.vehicle : null;
     var ovl = mount('<div class="dlv-lib dlv-lib-share" role="dialog" aria-label="Share to the library">' +
       headHtml('Share to the library', KINDS[kind]) +

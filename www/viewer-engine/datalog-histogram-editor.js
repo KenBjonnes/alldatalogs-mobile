@@ -231,6 +231,7 @@
       return null;
     };
     fn.mathChannel = findMathChannel;
+    fn.mathByName = mathByName;   // the [Name] fallback previews use, so nested math channels resolve
     return fn;
   }
   function unitsFromData(data) {
@@ -253,6 +254,22 @@
       return { values: v, levels: levels[name] || null };
     };
     return { resolve: resolve, time: data.time || null, n: data.time ? data.time.length : 0 };
+  }
+  // What a preview compiles against: the log, plus the named math channels by [Name] (nested ones
+  // included, with the resolver's cycle guard). The Math Channels manager's shim has no opts, so it
+  // hands over its own working list instead. Until 2026-09-11 a preview compiled against the log alone
+  // and said "RPM Double missing in this log" for a channel built on another math channel, while the
+  // channel itself computed fine -- and a channel pulled from the library usually is built that way.
+  function previewExprCtx(ed) {
+    var list = function () {
+      try {
+        if (ed && ed.opts && ed.opts.mathChannels && typeof ed.opts.mathChannels.list === 'function') return ed.opts.mathChannels.list() || [];
+        if (ed && typeof ed.mathList === 'function') return ed.mathList() || [];
+      } catch (e) { /* none */ }
+      return [];
+    };
+    var lr = makeLocalResolver(ed && ed.data, null, ed && ed.units, list);
+    return exprCtx(ed && ed.data, lr.mathByName);
   }
   // Every name an expression may reference by [Name]: the log's channels plus the named math channels.
   function knownExprNames(ed) {
@@ -776,11 +793,21 @@
     var toast = typeof opts.toast === 'function' ? opts.toast : function (m) { if (global.console) console.log('[math channels] ' + m); };
     var data = opts.data || null, unitByChannel = opts.unitByChannel || unitsFromData(data);
     var srcList = typeof opts.list === 'function' ? opts.list() : (Array.isArray(opts.list) ? opts.list : []);
-    var S = { list: (srcList || []).map(function (m) { return { id: m.id, name: m.name || '', expression: m.expression || '', unit: m.unit || null }; }) };
+    // libraryId / vehicle ride along untouched: they say which library item a channel came from, so
+    // "Share to library…" can offer to update that entry instead of adding a duplicate.
+    var keep = function (m, o) { if (m.libraryId) o.libraryId = m.libraryId; if (m.vehicle) o.vehicle = m.vehicle; return o; };
+    var S = { list: (srcList || []).map(function (m) { return keep(m, { id: m.id, name: m.name || '', expression: m.expression || '', unit: m.unit || null }); }) };
     S.activeId = opts.focusId && S.list.some(function (m) { return m.id === opts.focusId; }) ? opts.focusId : (S.list[0] ? S.list[0].id : null);
-    function persist() { if (typeof opts.onSave === 'function') { try { opts.onSave(S.list.map(function (m) { return { id: m.id, name: m.name, expression: m.expression, unit: m.unit || null }; })); } catch (e) { /* ignore */ } } }
+    function persist() { if (typeof opts.onSave === 'function') { try { opts.onSave(S.list.map(function (m) { return keep(m, { id: m.id, name: m.name, expression: m.expression, unit: m.unit || null }); })); } catch (e) { /* ignore */ } } }
     function active() { for (var i = 0; i < S.list.length; i++) if (S.list[i].id === S.activeId) return S.list[i]; return null; }
     function newId() { return 'mc_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6); }
+    // The shared library, when the host has one (opts.library = { available, share(mc, list), browse() }).
+    var lib = opts.library && typeof opts.library.available === 'function' && opts.library.available() ? opts.library : null;
+    function shareRowHtml(a) {
+      if (!lib) return '';
+      return '<div class="dlv-hg-mm-share"><button type="button" class="dlv-hg-btn sm" data-mm-act="lib-share">Share to library…</button>' +
+        '<span class="dlv-hg-faint">Publishes this channel with every math channel it uses.' + (a.libraryId ? ' It came from the library, so you can update that entry.' : '') + '</span></div>';
+    }
 
     var ovl = document.createElement('div');
     ovl.className = 'dlv-hg-ed-ovl dlv-hg-mm-ovl';
@@ -789,7 +816,9 @@
     // keyed by pPath -- 'current' here always means "the math channel selected in the list".
     var ed = { work: { current: null }, data: data, units: unitByChannel, ctx: { resolvedRoles: opts.resolvedRoles || {} }, body: ovl, esc: escapeHtml, pendingConv: {}, timers: {}, toast: toast,
       // knownExprNames() reads this: the other named channels are legal [Name] references here too
-      get mathNames() { return S.list.map(function (m) { return m.name; }); } };
+      get mathNames() { return S.list.map(function (m) { return m.name; }); },
+      // previewExprCtx reads this: the preview resolves the other channels in this list by [Name]
+      mathList: function () { return S.list; } };
 
     function rowHtml(m) {
       return '<div class="dlv-hg-mm-row' + (m.id === S.activeId ? ' active' : '') + '" data-mm-pick="' + escapeHtml(m.id) + '">' +
@@ -808,12 +837,13 @@
           '<div class="dlv-hg-mm-body">' +
             '<div class="dlv-hg-mm-list">' +
               '<button type="button" class="dlv-hg-btn sm primary" data-mm-act="new" style="width:100%;margin-bottom:8px;">+ New math channel</button>' +
+              (lib ? '<button type="button" class="dlv-hg-btn sm" data-mm-act="lib-browse" style="width:100%;margin-bottom:8px;">Browse library…</button>' : '') +
               (S.list.length ? S.list.map(rowHtml).join('') : '<div class="dlv-hg-faint" style="padding:8px 4px;">No math channels yet. A histogram\'s parameter picker will offer any you create here.</div>') +
             '</div>' +
             '<div class="dlv-hg-mm-detail">' + (a ?
               ('<label class="dlv-hg-mm-field"><span>Name</span><input type="text" class="dlv-hg-in" data-mm-field="name" value="' + escapeHtml(a.name || '') + '" placeholder="Lambda Error %"></label>' +
                mathPanel(ed, ed.work.current, 'current') +
-               '<label class="dlv-hg-mm-field"><span>Unit</span><input type="text" class="dlv-hg-in" data-mm-field="unit" value="' + escapeHtml(a.unit || '') + '" placeholder="' + escapeHtml(inferUnitForMath(a.expression || '', unitByChannel) || 'as computed') + '"></label>')
+               '<label class="dlv-hg-mm-field"><span>Unit</span><input type="text" class="dlv-hg-in" data-mm-field="unit" value="' + escapeHtml(a.unit || '') + '" placeholder="' + escapeHtml(inferUnitForMath(a.expression || '', unitByChannel) || 'as computed') + '"></label>' + shareRowHtml(a))
               : '<div class="dlv-hg-help">Select a math channel on the left, or create a new one.</div>') + '</div>' +
           '</div>' +
           '<div class="dlv-hg-ed-foot"><span class="dlv-hg-faint">Editing a definition updates every histogram that references it.</span><button type="button" class="dlv-hg-btn primary" data-mm-act="done">Done</button></div>' +
@@ -866,6 +896,17 @@
       var act = e.target.closest('[data-mm-act]'); if (!act) return;
       var a2 = act.getAttribute('data-mm-act');
       if (a2 === 'close' || a2 === 'done') { close(); return; }
+      // The library's dialogs are overlays of their own: the manager closes first (keeping what is in the
+      // boxes) rather than stacking under them and eating their Escape key.
+      if (a2 === 'lib-share' && lib) {
+        var cur = active(), box = ovl.querySelector('[data-expr="current"]');
+        if (!cur) return;
+        if (!String(box ? box.value : (cur.expression || '')).trim()) { toast('Write the expression before sharing it.'); return; }
+        close();
+        lib.share(active(), S.list.slice());
+        return;
+      }
+      if (a2 === 'lib-browse' && lib) { close(); lib.browse(); return; }
       if (a2 === 'new') {
         var m2 = { id: newId(), name: 'New Math Channel', expression: '', unit: null };
         S.list.push(m2); S.activeId = m2.id; persist(); render();
@@ -909,7 +950,7 @@
   function openMathManagerFromEditor(ed, focusId) {
     if (!ed.opts.mathChannels || typeof ed.opts.mathChannels.list !== 'function') { ed.toast('Math channels are not available here.'); return; }
     openMathManager({
-      list: ed.opts.mathChannels.list, onSave: ed.opts.mathChannels.save, focusId: focusId,
+      list: ed.opts.mathChannels.list, onSave: ed.opts.mathChannels.save, focusId: focusId, library: ed.opts.mathChannels.library || null,
       data: ed.data, unitByChannel: ed.units, resolvedRoles: ed.ctx.resolvedRoles,
       toast: ed.toast, escapeHtml: ed.esc, onClose: function () { if (!ed.closed) ed.render(); }
     });
@@ -1656,7 +1697,7 @@
     var ta = exprTextarea(ed, pPath), src = ta ? ta.value : (getPath(ed.work, pPath + '.math') || '');
     if (!trim(src)) { pv.innerHTML = ''; return; }
     if (!ed.data || !ed.data.series) { pv.innerHTML = '<span class="dlv-hg-faint">No log loaded — preview unavailable.</span>'; return; }
-    var c = X().compile(pageSub(ed, src), exprCtx(ed.data));
+    var c = X().compile(pageSub(ed, src), previewExprCtx(ed));
     if (!c.ok) { pv.innerHTML = ''; return; }
     if (c.missing.length) { pv.innerHTML = '<span class="dlv-hg-warn">Cannot preview: ' + ed.esc(c.missing.join(', ')) + ' missing in this log</span>'; return; }
     var vals = c.evaluateAll(), n = vals.length, k = 0, mn = Infinity, mx = -Infinity, sum = 0, nan = 0;
@@ -1677,7 +1718,7 @@
     var src = pageSub(ed, currentFilterSource(ed)), M = ed.data && ed.data.time ? ed.data.time.length : 0;
     if (!X() || !ed.data || !M) { out.innerHTML = '<span class="dlv-hg-faint">No log loaded — pass count unavailable.</span>'; return; }
     if (!trim(src)) { out.innerHTML = 'No filter — <b>all ' + M + '</b> samples pass'; return; }
-    var c = X().compile(src, exprCtx(ed.data));
+    var c = X().compile(src, previewExprCtx(ed));
     if (!c.ok) { out.innerHTML = '<span class="dlv-hg-err">Filter does not compile: ' + ed.esc(c.error.message) + '</span>'; return; }
     if (c.missing.length) { out.innerHTML = '<span class="dlv-hg-warn">0 of ' + M + ' pass — ' + ed.esc(c.missing.join(', ')) + ' missing in this log</span>'; return; }
     var mask = c.evaluateMask(), n = 0;

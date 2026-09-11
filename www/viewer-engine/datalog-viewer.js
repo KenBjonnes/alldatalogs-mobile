@@ -4453,6 +4453,20 @@ function mathChannelsForSave(){
   if(!VIEWER_MATH || !VIEWER_MATH.defs || !VIEWER_MATH.defs.length) return null;
   return JSON.parse(JSON.stringify(VIEWER_MATH.defs));
 }
+// The one way the math-channel list changes -- the manager, a histogram package and the library all land
+// here. Persist (session + localStorage mirror + dirty flag, like histogram defs), then:
+//  - force an open table to recompute: an expression can change with NO histogram def touched, so the
+//    table's own per-def cache cannot know (caught live, 2026-09-07);
+//  - re-inject and re-render, so the channel list AND any graph showing a renamed or deleted math
+//    channel follow, not just its row.
+function saveMathChannels(defs){
+  ensureMath().defs = defs || [];
+  saveMathDefsLocal(VIEWER_MATH.defs);
+  markLayoutDirty();
+  if(VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.refresh === 'function'){ try { VIEWER_HIST_CTL.refresh(); } catch(err){} }
+  injectMathChannels();
+  renderViewerBody();
+}
 // Names of math channels currently injected into VIEWER_DATA (see injectMathChannels) -- tracked so a
 // re-run (after editing the manager) can cleanly remove stale entries before adding fresh ones, rather
 // than accumulating duplicates or leaving a renamed/deleted channel's old name behind.
@@ -4866,21 +4880,8 @@ function histogramGlue(){
     // whole list the SAME way histogram defs do (session + localStorage mirror + dirty flag).
     mathChannels: {
       list: function(){ return ensureMath().defs; },
-      save: function(defs){
-        ensureMath().defs = defs || [];
-        saveMathDefsLocal(VIEWER_MATH.defs);
-        markLayoutDirty();
-        // A math channel's expression can change with NO histogram def itself touched, so the table's
-        // own per-def compute cache has no way to know it needs to recompute -- force it, or an open
-        // table keeps showing stale numbers after "Edit this definition..." (caught live, 2026-09-07).
-        if(VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.refresh === 'function'){ try { VIEWER_HIST_CTL.refresh(); } catch(err){} }
-        // Re-sync the left channel list (and anything graphing one) with the edited/added/removed
-        // math channels -- a full re-render rather than just the channel rows, since a renamed or
-        // deleted math channel that was actively graphed needs the GRAPH to drop it too, not just its
-        // row in the list.
-        injectMathChannels();
-        renderViewerBody();
-      }
+      save: function(defs){ saveMathChannels(defs); },
+      library: MATH_LIBRARY_OPS   // Share / Browse in the manager, when the host has a library
     },
     isPro: viewerIsPro(),
     // Gauges behind the table: the list menu offers the designer; the UI keeps a back layer for them.
@@ -4890,6 +4891,8 @@ function histogramGlue(){
     // around the table's new footprint.
     onTableLayout: function(){ fitHistGaugeLayer(); },
     toast: function(msg){ if(window.showToast) showToast(msg); },
+    // A card picked from the library's other tabs while it was opened from the tables.
+    useLibraryItem: function(item){ useLibraryItem(item, {}); },
     escapeHtml: escapeHtml
   };
   // The editor is optional at runtime (a host may ship the tables without it); when present, fill in
@@ -4915,6 +4918,7 @@ function histogramGlue(){
       var o = opts || {};
       return HistogramEditor.openMathManager({
         list: g.mathChannels.list, onSave: g.mathChannels.save,
+        focusId: o.focusId || null, library: g.mathChannels.library,
         data: o.data || g.data(), resolvedRoles: o.resolvedRoles || g.resolvedRoles(),
         unitByChannel: o.unitByChannel || g.unitByChannel(),
         toast: g.toast, escapeHtml: escapeHtml
@@ -5093,31 +5097,36 @@ function libraryAvailable(){ return typeof Library !== 'undefined' && !!Library.
 function openLibrary(kind, opts){
   if(!libraryAvailable()) return;
   opts = opts || {};
-  Library.open({ kind: kind, onUse: function(item){
-    if(!item || !item.payload) return;
-    var pl = item.payload;
-    if(item.kind === 'gauges'){
-      var gauges = Array.isArray(pl.gauges) ? pl.gauges : [];
-      if(!gauges.length){ if(window.showToast) showToast('That dashboard is empty.'); return; }
-      if(!viewerIsPro()) return;
-      applyGaugesConfig({ kind: 'gauges', gauges: gauges }, { kind: 'library', id: item.id, name: item.name, readOnly: true },
-        { edit: !!opts.edit, dirty: !!opts.edit, toast: 'Loaded "' + item.name + '" from the library.' });
-      if(VIEWER_CURRENT_GAUGES){
-        VIEWER_CURRENT_GAUGES.libraryId = item.id;
-        VIEWER_CURRENT_GAUGES.vehicle = (typeof Library !== 'undefined' && Library.vehicleOf) ? Library.vehicleOf(item) : null;
-      }
-      return;
+  Library.open({ kind: kind, onUse: function(item){ useLibraryItem(item, opts); } });
+}
+// "Use" on a library card, whichever tab it came from: the library has a tab per kind, so a browse
+// opened for dashboards can still hand back a histogram or a math channel.
+function useLibraryItem(item, opts){
+  opts = opts || {};
+  if(!item || !item.payload) return;
+  var pl = item.payload;
+  if(item.kind === 'gauges'){
+    var gauges = Array.isArray(pl.gauges) ? pl.gauges : [];
+    if(!gauges.length){ if(window.showToast) showToast('That dashboard is empty.'); return; }
+    if(!viewerIsPro()) return;
+    applyGaugesConfig({ kind: 'gauges', gauges: gauges }, { kind: 'library', id: item.id, name: item.name, readOnly: true },
+      { edit: !!opts.edit, dirty: !!opts.edit, toast: 'Loaded "' + item.name + '" from the library.' });
+    if(VIEWER_CURRENT_GAUGES){
+      VIEWER_CURRENT_GAUGES.libraryId = item.id;
+      VIEWER_CURRENT_GAUGES.vehicle = (typeof Library !== 'undefined' && Library.vehicleOf) ? Library.vehicleOf(item) : null;
     }
-    if(item.kind === 'histogram'){
-      if(!pl.def){ if(window.showToast) showToast('That histogram is empty.'); return; }
-      enterHistograms();
-      if(VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.importPackage === 'function'){
-        // Stamp the def with where it came from so "Share to library" can offer to update that entry.
-        var def = Object.assign({}, pl.def, { libraryId: item.id, vehicle: (typeof Library !== 'undefined' && Library.vehicleOf) ? Library.vehicleOf(item) : null });
-        VIEWER_HIST_CTL.importPackage({ kind: 'datalog-histograms', histograms: [def], mathChannels: Array.isArray(pl.mathChannels) ? pl.mathChannels : [] }, 'library item');
-      }
+    return;
+  }
+  if(item.kind === 'histogram'){
+    if(!pl.def){ if(window.showToast) showToast('That histogram is empty.'); return; }
+    enterHistograms();
+    if(VIEWER_HIST_CTL && typeof VIEWER_HIST_CTL.importPackage === 'function'){
+      // Stamp the def with where it came from so "Share to library" can offer to update that entry.
+      var def = Object.assign({}, pl.def, { libraryId: item.id, vehicle: (typeof Library !== 'undefined' && Library.vehicleOf) ? Library.vehicleOf(item) : null });
+      VIEWER_HIST_CTL.importPackage({ kind: 'datalog-histograms', histograms: [def], mathChannels: Array.isArray(pl.mathChannels) ? pl.mathChannels : [] }, 'library item');
     }
-  } });
+  }
+  if(item.kind === 'math') useLibraryMath(item);
 }
 // Share the dash on screen as a whole dashboard: its gauge defs (roles stamped by dashStampRole so
 // it binds by meaning on another car; scorecards stripped -- staff-only) + a schematic thumbnail.
@@ -5142,6 +5151,61 @@ function shareDashToLibrary(){
     }
   });
 }
+
+// ---- Math channels in the library (Ken, 2026-09-11: "I want to add math channels to the library as well")
+// Shared ONE at a time, the way a histogram is, carrying every math channel its expression uses so it
+// computes on a stranger's machine: payload { kind:'math', mathChannels:[the channel, then what it uses] }.
+function shareMathToLibrary(mc, list){
+  if(!libraryAvailable() || !mc || typeof Histogram === 'undefined') return;
+  var chans = Histogram.mathChannelClosure(mc, list || ensureMath().defs).map(Histogram.packMathChannel).filter(Boolean);
+  if(!chans.length){ if(window.showToast) showToast('Write the expression before sharing it.'); return; }
+  Library.share({
+    kind: 'math', name: mc.name || 'Math channel',
+    payload: { kind: 'math', mathChannels: chans },
+    thumbSvg: Histogram.mathThumbnailSvg(mc, chans.length - 1),
+    vehicle: mc.vehicle || null,
+    libraryId: mc.libraryId || null,
+    onDone: function(item){
+      if(!item) return;
+      // Provenance only, so the next share offers Update: nothing to recompute, no re-render.
+      ensureMath().defs.forEach(function(d){
+        if(d.id === mc.id){ d.libraryId = item.id; d.vehicle = Library.vehicleOf ? Library.vehicleOf(item) : null; }
+      });
+      saveMathDefsLocal(VIEWER_MATH.defs);
+    }
+  });
+}
+// "Use": merge BY NAME into your own list. A channel you already have keeps yours -- nothing you built is
+// overwritten -- and new ones are added with references between them rewired onto your ids. Then the
+// manager opens on the channel you picked, so you can see what arrived.
+function useLibraryMath(item){
+  var incoming = (item && item.payload && Array.isArray(item.payload.mathChannels)) ? item.payload.mathChannels : [];
+  if(!incoming.length || typeof Histogram === 'undefined'){ if(window.showToast) showToast('That math channel is empty.'); return; }
+  if(!viewerIsPro()) return;
+  var m = Histogram.mergeMathChannels(ensureMath().defs, incoming);
+  var name = String(incoming[0].name || item.name || 'math channel');
+  var primary = Histogram.mathChannelByRef(m.list, name);
+  var isNew = !!primary && m.added.indexOf(primary) !== -1;
+  if(isNew){
+    primary.libraryId = item.id;
+    primary.vehicle = (typeof Library !== 'undefined' && Library.vehicleOf) ? Library.vehicleOf(item) : null;
+  }
+  var extra = m.added.length - (isNew ? 1 : 0);
+  if(m.added.length) saveMathChannels(m.list);
+  if(window.showToast) showToast(isNew
+    ? 'Added "' + name + '" to your math channels' + (extra ? ', with ' + extra + ' it uses' : '') + '.'
+    : 'You already have a math channel called "' + name + '", so yours was kept' + (extra ? '; added ' + extra + ' it uses' : '') + '.');
+  if(primary) openMathManagerFocused(primary.id);
+}
+function openMathManagerFocused(id){
+  var gl = histogramGlue();
+  if(typeof gl.openMathManager === 'function') gl.openMathManager({ focusId: id });
+}
+var MATH_LIBRARY_OPS = {
+  available: function(){ return libraryAvailable(); },
+  share: function(mc, list){ shareMathToLibrary(mc, list); },
+  browse: function(){ openLibrary('math'); }
+};
 
 // The Custom Dash lifecycle controls as a small pop-out anchored to the ⋯ button, styled like the
 // header dropdowns (reuses hdrItem + VIEWER_HDR_MENU, so the document-click / Escape closers already

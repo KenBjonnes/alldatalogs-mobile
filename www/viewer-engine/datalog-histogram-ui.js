@@ -990,6 +990,8 @@
       function openLibrary() {
         if (!libraryAvailable()) { toast('The library is not available here.'); return; }
         global.Library.open({ kind: 'histogram', onUse: function (item) {
+          // The library has a tab per kind: a dashboard or a math channel picked here goes to the viewer.
+          if (item && item.kind !== 'histogram' && typeof glue.useLibraryItem === 'function') { glue.useLibraryItem(item); return; }
           var pl = item && item.payload;
           if (!pl || !pl.def) { toast('That histogram is empty.'); return; }
           // Stamp the def with where it came from so "Share to library" can offer to update that entry.

@@ -817,6 +817,60 @@
     });
     return { list: list, idMap: idMap, added: added };
   }
+  // A math channel as a shared library item (Ken, 2026-09-11: "I want to add math channels to the library
+  // as well"): the channel itself FIRST, then every math channel its expression uses by [Name],
+  // transitively, so it computes on a stranger's machine. A [Name] that is not a math channel is a log
+  // channel and is left to the log. A cycle (X uses Y uses X) ends at the first repeat.
+  function mathChannelClosure(mc, list) {
+    var out = [], seen = {};
+    var add = function (m) {
+      if (!isObj(m) || !m.name) return;
+      var key = m.id ? 'id:' + m.id : 'name:' + normChannelName(m.name);
+      if (seen[key]) return;
+      seen[key] = true; out.push(m);
+      String(m.expression || '').replace(/\[([^\]]+)\]/g, function (_, ref) { add(mathChannelByRef(list, ref)); return _; });
+    };
+    add(mc);
+    return out;
+  }
+  // The library card's picture of a math channel: its name and unit over the expression, and how many
+  // other math channels ride along. Every string is XML-escaped -- other users see it as an <img>.
+  function xmlEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function wrapLines(s, width, maxLines) {
+    var words = String(s || '').replace(/\s+/g, ' ').trim().split(' '), lines = [], cur = '';
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i];
+      if (!w) continue;
+      while (w.length > width) { if (cur) { lines.push(cur); cur = ''; } lines.push(w.slice(0, width)); w = w.slice(width); }
+      if (!w) continue;
+      if (!cur) cur = w; else if ((cur + ' ' + w).length <= width) cur += ' ' + w; else { lines.push(cur); cur = w; }
+    }
+    if (cur) lines.push(cur);
+    if (lines.length > maxLines) {
+      lines = lines.slice(0, maxLines);
+      var last = lines[maxLines - 1];
+      lines[maxLines - 1] = (last.length >= width ? last.slice(0, width - 1) : last) + '\u2026';
+    }
+    return lines;
+  }
+  function mathThumbnailSvg(mc, extra) {
+    var m = packMathChannel(mc) || { name: isObj(mc) && mc.name ? String(mc.name) : 'Math channel', expression: isObj(mc) && mc.expression ? String(mc.expression) : '', unit: null };
+    var name = m.name.length > 24 ? m.name.slice(0, 23) + '\u2026' : m.name;
+    var sans = 'Segoe UI,Helvetica,Arial,sans-serif', mono = 'Consolas,Menlo,monospace';
+    var out = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" width="240" height="150">',
+      '<rect width="240" height="150" rx="10" fill="#111114"/>',
+      '<rect x="0.5" y="0.5" width="239" height="149" rx="10" fill="none" stroke="#26262c"/>',
+      '<text x="16" y="37" font-family="Georgia,serif" font-style="italic" font-size="26" fill="#f5a623">\u0192</text>',
+      '<text x="40" y="33" font-family="' + sans + '" font-size="15" font-weight="700" fill="#f2f2f4">' + xmlEsc(name) + '</text>'];
+    if (m.unit) out.push('<text x="40" y="50" font-family="' + sans + '" font-size="11" fill="#9a9aa2">' + xmlEsc(m.unit) + '</text>');
+    wrapLines(m.expression, 30, 3).forEach(function (ln, i) {
+      out.push('<text x="16" y="' + (80 + i * 17) + '" font-family="' + mono + '" font-size="12" fill="#22c55e">' + xmlEsc(ln) + '</text>');
+    });
+    var n = extra | 0;
+    if (n > 0) out.push('<text x="16" y="138" font-family="' + sans + '" font-size="10.5" fill="#6b6b76">+ ' + n + ' math channel' + (n === 1 ? '' : 's') + ' it uses</text>');
+    out.push('</svg>');
+    return out.join('');
+  }
 
   // ================================================================================================
   // 3. Binning core
@@ -1632,6 +1686,7 @@
     derivePagePatterns: derivePagePatterns, derivePagePattern: derivePagePattern, applyPagePattern: applyPagePattern,
     pageConcretes: pageConcretes, channelStringsOf: channelStringsOf, collapsePaged: collapsePaged,
     mathChannelDeps: mathChannelDeps, mergeMathChannels: mergeMathChannels, packMathChannel: packMathChannel,
+    mathChannelClosure: mathChannelClosure, mathThumbnailSvg: mathThumbnailSvg,
     // breakpoints
     parseBreakpoints: parseBreakpoints, sortBreakpoints: sortBreakpoints, reverseBreakpoints: reverseBreakpoints,
     formatBreakpoints: formatBreakpoints, formatNumber: fmtNum,

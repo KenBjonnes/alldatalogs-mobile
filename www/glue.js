@@ -22662,7 +22662,7 @@ ${suffix}`;
         const author = String(meta.display_name || (s.user.email || "").split("@")[0] || "AllDataLogs user").slice(0, 80);
         const row = {
           id: "lib_" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
-          kind: input.kind === "histogram" ? "histogram" : "gauges",
+          kind: ["gauges", "histogram", "math"].includes(String(input.kind)) ? String(input.kind) : "gauges",
           name: String(input.name || "").trim().slice(0, 120),
           description: String(input.description || "").trim().slice(0, 2e3),
           owner_id: s.user.id,
