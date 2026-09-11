@@ -107,6 +107,16 @@ var VIEWER_CHANNEL_VALUE_ELS = {}; // channel name -> the <span data-ch-value> c
 // block or its resize handle -- see wireGraphLegends(). Absent = the CSS default (top-right corner,
 // scale 1). A workspace convenience like graphCount/gaugeU below, not saved-view content.
 var VIEWER_LEGEND_POS = {};
+// The legend DOCKED to the left of every graph, HP Tuners style, instead of floating over the plot
+// (Ken, 2026-09-11: "give users the option to display it like HP tuners where the parameter name and
+// value is locked to the left of the graph ... drag the floating window into that area to the left and
+// it will snap into place, but if they want to move it back to a floater, they just drag it").
+// ONE switch for all graphs, not one per graph: a docked column narrows the plot, and the graphs must
+// keep identical plot areas or their time axes stop lining up and the crosshair is no longer one
+// straight line down them (Ken, 2026-07-24). Remembered across sessions, and saved in a Layout.
+var VIEWER_LEGEND_DOCK = false;
+var VIEWER_LEGEND_DOCK_KEY = 'pbdDatalogViewerLegendDock.v1';
+try { VIEWER_LEGEND_DOCK = !!(window.localStorage && localStorage.getItem(VIEWER_LEGEND_DOCK_KEY) === '1'); } catch(e){}
 
 // ---- Session persistence (per Ken: view mode + manual preset override should survive across
 // logs opened in the same tab session, but not permanently; sessionStorage clears on tab close). --
@@ -2802,22 +2812,44 @@ function renderGraphCountHtml(){
   return '<div class="dlv-graph-count" title="Number of graphs">' + btns + '</div>';
 }
 
+function legendDocked(){ return !!VIEWER_LEGEND_DOCK && !isMobileViewer(); }   // the phone never shows a legend
+var LEGEND_DOCK_ZONE = 96;   // px from a graph's left edge that count as "the dock" while dragging
+function setLegendDock(on, opts){
+  on = !!on;
+  if(on === !!VIEWER_LEGEND_DOCK) return;
+  VIEWER_LEGEND_DOCK = on;
+  try { if(window.localStorage) localStorage.setItem(VIEWER_LEGEND_DOCK_KEY, on ? '1' : '0'); } catch(e){}
+  // Undocking by dragging: the legend that was dragged out lands where it was let go.
+  if(opts && opts.panel != null && opts.pos) VIEWER_LEGEND_POS[opts.panel] = opts.pos;
+  saveViewerPrefs();
+  markLayoutDirty();   // part of a saved Layout, so switching it is an unsaved edit
+  renderViewerBody();  // the plot narrows or widens; rebuildChart keeps the zoom
+}
 function renderGraphLegendHtml(panelNum){
   var chans = channelsForSlot(panelNum, activeGraphSlots());
   if(!chans.length) return '';
+  var docked = legendDocked();
   var rows = chans.map(function(c){
     var color = channelColor(c);
     var label = (typeof shortChannelName === 'function') ? shortChannelName(c) : c;
+    // Docked reads like HP Tuners' left pane (Ken's screenshot, 2026-09-11): the short name with the
+    // unit in brackets -- "RPM (rpm)" -- as a small label over a large value; the full name on hover.
+    if(docked){
+      var unit = VIEWER_UNIT_BY_CHANNEL[c];
+      if(unit && unit !== 'na') label += ' (' + unit + ')';
+    }
     // Name + live value, then a dedicated remove "x" (only the x removes -- clicking the row itself
     // used to remove the channel, which was easy to trigger by accident). The x carries data-remove-ch,
     // which the generic remove handler (see wire below) already keys off.
     return '<div class="dlv-legend-row">' +
-           '<span class="dlv-legend-name" style="color:' + color + '">' + escapeHtml(label) + '</span>' +
+           '<span class="dlv-legend-name" style="color:' + color + '" title="' + escapeHtml(c) + '">' + escapeHtml(label) + '</span>' +
            '<span class="dlv-legend-val" style="color:' + color + '" data-legend-ch="' + escapeHtml(c) + '">--</span>' +
            '<button type="button" class="dlv-legend-x" data-remove-ch="' + escapeHtml(c) + '" ' +
              'title="Remove ' + escapeHtml(label) + ' from this graph" aria-label="Remove ' + escapeHtml(label) + '">&times;</button>' +
            '</div>';
   }).join('');
+  // Docked: a column down the graph's left side. No position, no scale -- drag it out to float it.
+  if(docked) return '<div class="dlv-graph-legend dlv-legend-dock" data-legend-panel="' + panelNum + '">' + rows + '</div>';
   // Drag the group to reposition it, or its resize handle to scale the whole thing (Ken, 2026-09-08).
   // pos is undefined until first touched -- the CSS default (top-right corner, scale 1) covers that.
   var pos = VIEWER_LEGEND_POS[panelNum];
@@ -2837,6 +2869,54 @@ function currentLegendPos(legend){
   return { top: legend.offsetTop, right: panelW - (legend.offsetLeft + legend.offsetWidth) };
 }
 function setLegendPos(panelNum, pos){ VIEWER_LEGEND_POS[panelNum] = pos; }
+// A docked legend: drag it out onto the plot to float every graph's legend again. It follows the pointer
+// while dragged; let go still inside the strip and it settles back where it was.
+// One column of tiles while they fit the graph's height (HP Tuners stacks a short list); two per row
+// once they would overflow it (HP Tuners' busier charts pair them). Re-run on every resize.
+function fitDockedLegends(){
+  document.querySelectorAll('.dlv-graph-legend.dlv-legend-dock').forEach(function(l){
+    l.classList.remove('dlv-dock-2col');
+    if(l.children.length > 1 && l.scrollHeight > l.clientHeight + 1) l.classList.add('dlv-dock-2col');
+  });
+}
+function wireDockedLegend(legend, panelNum, panel){
+  var st = null;
+  legend.addEventListener('pointerdown', function(e){
+    if(e.button !== 0) return;
+    if(e.target.closest('.dlv-legend-x')) return;
+    st = { x: e.clientX, y: e.clientY, id: e.pointerId, active: false, out: false };
+    try { legend.setPointerCapture(e.pointerId); } catch(_){}
+  });
+  legend.addEventListener('pointermove', function(e){
+    if(!st || st.id !== e.pointerId) return;
+    var dx = e.clientX - st.x, dy = e.clientY - st.y;
+    if(!st.active){
+      if(Math.abs(dx) < 4 && Math.abs(dy) < 4) return;   // a click (or a scroll of a long column) is not a drag
+      st.active = true;
+      legend.classList.add('dlv-legend-dragging');
+    }
+    legend.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    // Out on the plot, clear of the strip, it will float when let go.
+    var pr = panel.getBoundingClientRect();
+    st.out = e.clientX > pr.left + LEGEND_DOCK_ZONE + 40;
+    legend.classList.toggle('dlv-legend-leaving', st.out);
+  });
+  function end(e, cancelled){
+    if(!st || st.id !== e.pointerId) return;
+    var s = st; st = null;
+    try { legend.releasePointerCapture(s.id); } catch(_){}
+    legend.classList.remove('dlv-legend-dragging', 'dlv-legend-leaving');
+    if(!s.active || cancelled || !s.out){ legend.style.transform = ''; return; }
+    // Land it where it was let go: its top-right corner just up and to the right of the pointer, in the
+    // same panel-relative top/right the floating drag keeps.
+    var pr = panel.getBoundingClientRect();
+    var top = clampNum(e.clientY - pr.top - 10, 0, Math.max(0, pr.height - 20));
+    var right = clampNum(pr.right - e.clientX - 20, 0, Math.max(0, pr.width - 40));
+    setLegendDock(false, { panel: panelNum, pos: { top: top, right: right, scale: (VIEWER_LEGEND_POS[panelNum] || {}).scale || 1 } });
+  }
+  legend.addEventListener('pointerup', function(e){ end(e, false); });
+  legend.addEventListener('pointercancel', function(e){ end(e, true); });
+}
 // Drag the legend block to reposition it, or its own resize handle to scale it as a whole -- each
 // graph panel's legend is independent (Ken, 2026-09-08: "drag the group of parameter names and
 // resize them as a group"). Position is stored as top/right (matching the CSS anchor corner) so
@@ -2846,6 +2926,7 @@ function wireGraphLegends(){
     var panelNum = Number(legend.getAttribute('data-legend-panel'));
     var panel = legend.closest('.dlv-graph-panel');
     if(!panel) return;
+    if(legend.classList.contains('dlv-legend-dock')){ wireDockedLegend(legend, panelNum, panel); fitDockedLegends(); return; }
     var moveSt = null, resizeSt = null;
 
     legend.addEventListener('pointerdown', function(e){
@@ -2868,12 +2949,21 @@ function wireGraphLegends(){
       var right = clampNum(moveSt.right - dx, 0, Math.max(0, moveSt.panelW - 40));
       legend.style.top = top + 'px'; legend.style.right = right + 'px';
       setLegendPos(panelNum, { top: top, right: right, scale: (VIEWER_LEGEND_POS[panelNum] || {}).scale || 1 });
+      // Over the graph's left edge? Light up the strip it will snap into (desktop only -- the phone
+      // never shows a legend at all).
+      var pr = panel.getBoundingClientRect();
+      moveSt.inDock = !isMobileViewer() && e.clientX < pr.left + LEGEND_DOCK_ZONE && e.clientY > pr.top && e.clientY < pr.bottom;
+      panel.classList.toggle('dlv-dock-hot', moveSt.inDock);
     });
     function endMove(e){
       if(!moveSt || moveSt.id !== e.pointerId) return;
-      if(moveSt.active){ legend.classList.remove('dlv-legend-dragging'); saveViewerPrefs(); }
-      try { legend.releasePointerCapture(moveSt.id); } catch(_){}
-      moveSt = null;
+      var st = moveSt; moveSt = null;
+      try { legend.releasePointerCapture(st.id); } catch(_){}
+      panel.classList.remove('dlv-dock-hot');
+      if(!st.active) return;
+      legend.classList.remove('dlv-legend-dragging');
+      if(st.inDock){ setLegendDock(true); return; }   // snapped into the left strip: dock every graph's legend
+      saveViewerPrefs();
     }
     legend.addEventListener('pointerup', endMove);
     legend.addEventListener('pointercancel', endMove);
@@ -2988,7 +3078,7 @@ function renderViewerBody(){
           activeGraphSlots().map(function(slot){
             // legend is a SIBLING of the canvas wrap, not a child: rebuildChart() replaces the
             // wrap's innerHTML with a fresh <canvas>, which would wipe anything inside it.
-            return '<div class="dlv-graph-panel" data-slot="' + slot + '">' +
+            return '<div class="dlv-graph-panel' + (legendDocked() ? ' dlv-legend-docked' : '') + '" data-slot="' + slot + '">' +
               // BigData watermark, upper graph only, desktop only. A SIBLING of the canvas wrap (like
               // the legend, and for the same reason) so rebuildChart replacing the wrap's innerHTML
               // can't wipe it; positioned top-right and non-interactive over the plot.
@@ -5653,6 +5743,7 @@ function gaugeChannelFor(def){
 // ---------------------------------------------------------------------------------------------
 function resizeViewerCharts(){
   Object.keys(viewerCharts).forEach(function(k){ if(viewerCharts[k]) viewerCharts[k].resize(); });
+  fitDockedLegends();        // a shorter graph may need the docked tiles two to a row
   drawCrosshairOverlays();   // new plot area, new pixel for the same time
 }
 // The effective gauge unit, read back by measuring a known element. --dlv-gauge-u is an
@@ -5896,6 +5987,7 @@ function buildConfig(kind){
     mathChannels: mathChannelsForSave(),  // the named calculated channels those tables reference
     histGauges: histDashGaugesForSave(),  // the gauges behind the Histograms tab (null when none)
     smoothing: smoothingForSave(),        // per-channel smoothing windows (ms), null when none
+    legendDock: !!VIEWER_LEGEND_DOCK,     // legends docked to the left of the graphs (HP Tuners style)
   };
 }
 // Back-compat alias for the single composite save.
@@ -6041,6 +6133,12 @@ function applyViewConfig(cfg, meta){
   VIEWER_LAYOUT_DIRTY = false;
   if(meta.kind === 'saved' && !meta.readOnly) rememberLastSaved('view', meta.id, meta.name);
   if(cfg.smoothing && typeof cfg.smoothing === 'object') setSmoothingMap(cfg.smoothing);
+  // Docked or floating legends (0.1.47+). A Layout saved before the choice existed has no field and
+  // leaves whatever the user has now.
+  if(typeof cfg.legendDock === 'boolean' && cfg.legendDock !== !!VIEWER_LEGEND_DOCK){
+    VIEWER_LEGEND_DOCK = cfg.legendDock;
+    try { if(window.localStorage) localStorage.setItem(VIEWER_LEGEND_DOCK_KEY, cfg.legendDock ? '1' : '0'); } catch(e){}
+  }
   // A layout remembers its literal graph channels; restore them (those this log has). A legacy/built-in
   // config with no graph snapshot -- or one none of whose channels exist here -- falls back to the
   // role-based defaults.

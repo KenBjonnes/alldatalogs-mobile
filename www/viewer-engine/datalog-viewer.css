@@ -474,6 +474,38 @@ tr:hover .dlv-ch-smooth,.dlv-ch-smooth.on{opacity:1;}
 .dlv-graph-legend:hover .dlv-legend-resize,.dlv-legend-resize:focus-visible{opacity:1;}
 .dlv-legend-resize:hover::before{border-color:var(--red, #d1132e);}
 @media (hover:none){ .dlv-legend-resize{opacity:1;} }
+/* ---- Legend DOCKED to the left of every graph, HP Tuners style (Ken, 2026-09-11) --------------
+   One fixed width for every graph: the plots have to stay identical so the time axes line up and the
+   crosshair is one straight line down them. The panel's left padding makes the room; an empty panel
+   gets it too for the same reason. */
+.dlv-graphs{--dlv-dock-w:188px;}
+.dlv-graph-panel.dlv-legend-docked{padding-left:calc(var(--dlv-dock-w) + 16px);}
+.dlv-graph-legend.dlv-legend-dock{top:8px;bottom:8px;left:8px;right:auto;width:var(--dlv-dock-w);
+  box-sizing:border-box;transform:none;transform-origin:0 0;
+  /* HP Tuners' left pane: tiles, one column while they fit, two per row when they don't
+     (fitDockedLegends adds .dlv-dock-2col). */
+  display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:7px 4px;
+  overflow-y:auto;overflow-x:hidden;background:rgba(8,8,11,.35);
+  border:1px solid var(--card-border, #26262c);border-radius:6px;padding:6px 5px;cursor:grab;}
+.dlv-legend-dock.dlv-dock-2col{grid-template-columns:repeat(2, minmax(0,1fr));}
+/* A tile: the label with its unit over a large value, both in the channel colour, centred. */
+.dlv-legend-dock .dlv-legend-row{position:relative;display:flex;flex-direction:column;align-items:center;
+  gap:1px;padding:2px 2px 3px;text-align:center;}
+.dlv-legend-dock .dlv-legend-name{font-size:10.5px;font-weight:600;letter-spacing:0;text-transform:none;
+  line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dlv-legend-dock .dlv-legend-val{font-size:20px;line-height:1.1;min-width:0;text-align:center;}
+.dlv-legend-dock .dlv-legend-x{position:absolute;top:0;right:0;opacity:0;}
+.dlv-legend-dock .dlv-legend-row:hover .dlv-legend-x{opacity:.8;}
+.dlv-legend-dock.dlv-legend-dragging{z-index:6;cursor:grabbing;box-shadow:0 8px 24px rgba(0,0,0,.55);
+  background:rgba(8,8,11,.9);}
+.dlv-legend-dock.dlv-legend-leaving{border-color:var(--amber, #f5a623);}
+/* A floating legend dragged over a graph's left edge: the strip it will snap into lights up. */
+.dlv-graph-panel.dlv-dock-hot::before{content:'';position:absolute;left:8px;top:8px;bottom:8px;
+  width:var(--dlv-dock-w);box-sizing:border-box;border:2px dashed var(--amber, #f5a623);border-radius:6px;
+  background:rgba(245,166,35,.08);z-index:2;pointer-events:none;}
+/* The graph-count buttons and the watermark sit at the plot's left; move them clear of the column. */
+.dlv-legend-docked .dlv-graph-count{left:calc(var(--dlv-dock-w) + 66px);}
+.dlv-legend-docked .dlv-graph-watermark{left:calc(var(--dlv-dock-w) + 166px);}
 /* ---- graph-count buttons (upper graph, top-left) --------------------------------------------
    Upper is the master panel and always on screen, so the control can never vanish with the thing
    it controls. Quiet until hovered -- it's a setting you touch when you change desks, not a tool. */
