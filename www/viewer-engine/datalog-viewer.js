@@ -5637,7 +5637,8 @@ function dashAssignMenu(e, g){
   // channel/range/warning menu -- open its own modal (datalog-scorecard.js).
   if(g.type === 'scorecard'){
     if(typeof Scorecard !== 'undefined' && Scorecard.openConfig){
-      Scorecard.openConfig(g, function(){ evaluateDashScorecards(); });
+      // Its right-click never shows the gauge panel (where Delete gauge lives), so the delete rides along.
+      Scorecard.openConfig(g, function(){ evaluateDashScorecards(); }, { onDelete: function(){ dashDelete(g); } });
     }
     return;
   }

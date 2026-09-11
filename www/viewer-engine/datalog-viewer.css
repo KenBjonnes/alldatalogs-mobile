@@ -1713,6 +1713,13 @@ button.dlv-dash-paste:hover{border-color:var(--amber, #f5a623);}
 .dlv-sc-cfg-tabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim, #9a9aa2);font-size:12px;font-weight:700;padding:6px 10px;cursor:pointer;}
 .dlv-sc-cfg-tabs button.on{color:var(--text, #f2f2f4);border-bottom-color:var(--red, #d1132e);}
 .dlv-sc-cfg-body{padding:12px 14px;overflow-y:auto;}
+/* Delete scorecard: a scorecard's right-click opens this dialog, not the gauge panel, so its delete lives here.
+   First click arms it (red, "Click again ..."), a second click within 4 s removes the scorecard. */
+.dlv-sc-cfg-foot{display:flex;justify-content:flex-end;padding:10px 14px;border-top:1px solid var(--card-border, #26262c);}
+.dlv-sc-cfg-del{background:none;border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);
+  border-radius:6px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;}
+.dlv-sc-cfg-del:hover{border-color:var(--red, #d1132e);color:var(--text, #f2f2f4);}
+.dlv-sc-cfg-del.armed{background:var(--red, #d1132e);border-color:var(--red, #d1132e);color:#fff;font-weight:700;}
 .dlv-sc-cfg-row{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:12.5px;color:var(--text, #f2f2f4);}
 .dlv-sc-cfg-row input[type=text],.dlv-sc-cfg-row select{flex:1;min-width:0;background:#0b0b0e;border:1px solid var(--card-border, #26262c);color:var(--text, #f2f2f4);border-radius:6px;padding:6px 8px;font-size:12px;}
 .dlv-sc-cfg-help,.dlv-sc-cfg-soon{font-size:11px;color:var(--text-dim, #9a9aa2);}

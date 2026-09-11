@@ -879,26 +879,45 @@
     // ---- Config UI ------------------------------------------------------------------------------
     // Opened from dashAssignMenu when the component is a scorecard. Sections: General / Categories /
     // Range. Kept functional + compact; reuses the viewer's overlay/menu styling classes.
-    SC.openConfig = function (def, onChange) {
+    // opts.onDelete (optional): the host can take this scorecard off its dashboard. Every other gauge deletes
+    // from its right-click panel, but a scorecard's right-click opens THIS dialog instead, so without it there
+    // was no way to remove one (Ken, 2026-09-11). Two clicks: a scorecard carries a lot of setup.
+    var DELETE_LABEL = '&#128465; Delete scorecard';
+    SC.openConfig = function (def, onChange, opts) {
       migrateDef(def);
+      var canDelete = !!(opts && typeof opts.onDelete === 'function');
       var ovl = document.createElement('div');
       ovl.className = 'dlv-sc-cfg-ovl';
-      ovl.innerHTML = configHtml(def);
+      ovl.innerHTML = configHtml(def, canDelete);
       document.body.appendChild(ovl);
       function close() { if (ovl.parentNode) ovl.parentNode.removeChild(ovl); }
       function commit() { def.scHubVersion = SCORECARD_SCHEMA_VERSION; if (onChange) onChange(def); }
       ovl.addEventListener('click', function (e) { if (e.target === ovl || e.target.closest('[data-sc-close]')) close(); });
       wireConfig(ovl, def, function () { rerenderConfigBody(ovl, def); commit(); }, commit);
+      var del = ovl.querySelector('[data-sc-delete]'), disarm = null;
+      if (del) del.addEventListener('click', function () {
+        if (!del.classList.contains('armed')) {
+          del.classList.add('armed');
+          del.textContent = 'Click again to delete this scorecard';
+          disarm = setTimeout(function () { del.classList.remove('armed'); del.innerHTML = DELETE_LABEL; }, 4000);
+          return;
+        }
+        clearTimeout(disarm);
+        close();
+        opts.onDelete(def);
+      });
       return { close: close };
     };
 
-    function configHtml(def) {
+    function configHtml(def, canDelete) {
       return '<div class="dlv-sc-cfg" role="dialog" aria-label="Scorecard settings">' +
         '<div class="dlv-sc-cfg-head"><b>Scorecard settings</b><button type="button" class="dlv-sc-cfg-x" data-sc-close aria-label="Close">×</button></div>' +
         '<div class="dlv-sc-cfg-tabs"><button type="button" class="on" data-sc-tab="general">General</button>' +
         '<button type="button" data-sc-tab="categories">Categories</button>' +
         '<button type="button" data-sc-tab="range">Evaluation range</button></div>' +
-        '<div class="dlv-sc-cfg-body" data-sc-body></div></div>';
+        '<div class="dlv-sc-cfg-body" data-sc-body></div>' +
+        (canDelete ? '<div class="dlv-sc-cfg-foot"><button type="button" class="dlv-sc-cfg-del" data-sc-delete>' + DELETE_LABEL + '</button></div>' : '') +
+        '</div>';
     }
     function rerenderConfigBody(ovl, def) {
       var tab = ovl.querySelector('.dlv-sc-cfg-tabs .on');
