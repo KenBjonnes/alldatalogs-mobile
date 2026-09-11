@@ -327,7 +327,11 @@ tbody.dlv-dragging *{user-select:none;}
    Channel column takes 100% of whatever's left), the table can never render wider than the panel,
    so there's nothing left for a horizontal scrollbar to appear for. Only overflow-y (the styled
    scrollbar above) remains. */
-.dlv-channel-table-wrap{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0;}
+.dlv-channel-table-wrap{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0;
+  /* The windowed list swaps rows in and out as it scrolls, with spacers keeping the total height
+     exact. Scroll anchoring would "help" by nudging scrollTop when the rows above the fold change --
+     which they do on every swap -- so the list positions itself and anchoring is off. */
+  overflow-anchor:none;}
 table.dlv-channel-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:11.5px;}
 table.dlv-channel-table thead th{
   position:sticky;top:0;z-index:2;background:#1a1a1f;color:var(--text-faint, #5c5c66);
@@ -346,6 +350,13 @@ table.dlv-channel-table thead th.dlv-th-center{text-align:center;padding-left:2p
    cell text to the viewer's own light colour; inner buttons/dots set their own colour and are untouched. */
 table.dlv-channel-table tbody td{padding:5px 6px;border-bottom:1px solid #1c1c21;vertical-align:middle;overflow:hidden;color:var(--text, #f2f2f4);}
 table.dlv-channel-table tbody tr:hover{background:var(--bg-elev, #111114);}
+/* Every channel row is pinned to a whole number of pixels (measureChanRows sets --dlv-row-h from the
+   natural height, rounded up). A fractional row height is snapped differently depending on where the
+   row starts, which walked a windowed list's rows away from their true places. */
+table.dlv-channel-table tbody tr[data-ch]{height:var(--dlv-row-h, auto);}
+/* Stand-ins for the rows a long list is not rendering: exact height, nothing else. */
+table.dlv-channel-table tbody tr.dlv-row-spacer > td{padding:0;border:0;}
+table.dlv-channel-table tbody tr.dlv-row-spacer:hover{background:transparent;}
 table.dlv-channel-table tbody tr.dlv-row-selected{background:rgba(209,19,46,0.06);}
 /* Two-line channel cell: name on top, live value + unit underneath -- every channel's current
    value is visible at a glance (not just selected/graphed ones), updated on every cursor move via
@@ -1304,12 +1315,16 @@ button.dlv-dash-paste:hover{border-color:var(--amber, #f5a623);}
      prototype pin column) shifted the positions once already, and nth-child(3) then hid the NAME
      cell -- the phone drawer showed checkboxes and values with no channel names (Ken, 2026-09-08,
      first phone-app build). */
+  /* Channel ROWS only: a section heading and a windowed list's spacer are single-cell rows whose
+     one cell is also the "last child", so an unscoped td rule hid every heading in the phone drawer
+     (shipped that way in 0.1.41) and flattened every spacer to nothing (found 2026-09-11, when the
+     windowed list measured 1,265 px tall against 35,823). */
   .dlv-mobile .dlv-channel-table col:nth-last-child(1),
   .dlv-mobile .dlv-channel-table col:nth-last-child(2),
   .dlv-mobile .dlv-channel-table th:nth-last-child(1),
   .dlv-mobile .dlv-channel-table th:nth-last-child(2),
-  .dlv-mobile .dlv-channel-table td:nth-last-child(1),
-  .dlv-mobile .dlv-channel-table td:nth-last-child(2){display:none;}
+  .dlv-mobile .dlv-channel-table tr[data-ch] > td:nth-last-child(1),
+  .dlv-mobile .dlv-channel-table tr[data-ch] > td:nth-last-child(2){display:none;}
   .dlv-mobile .dlv-channel-table .dlv-ch-cell{display:table-cell;}
   /* Per-graph chips/controls belong to a multi-panel layout. */
   .dlv-mobile .dlv-graph-head{display:none;}

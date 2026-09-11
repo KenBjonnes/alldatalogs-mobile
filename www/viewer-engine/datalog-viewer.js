@@ -934,6 +934,8 @@ function setKeypadOpen(open){
   VIEWER_KEYPAD_OPEN = open;
   var panel = document.querySelector('.dlv-channel-panel');
   if(panel) panel.classList.toggle('dlv-keypad-open', open);
+  // The open keypad hides every row's value line, so the rows change height under a windowed list.
+  if(measureChanRows(true)) syncChannelWindow(true);
 }
 // Re-filters without rebuilding the panel, so the keypad doesn't flicker or lose its place.
 function applySearch(next){
@@ -1112,9 +1114,13 @@ function toggleSectCollapsed(id){
   try { if(window.localStorage) localStorage.setItem(VIEWER_SECT_KEY, JSON.stringify(m)); } catch(e){}
   rerenderChannelRows();
 }
-// Column count for a section heading's colspan -- the prototype adds a pin column, so this can't be a
-// literal (the phone also hides the last two columns, which a colspan may safely overshoot).
-function chanColCount(){ return VIEWER_CHAN_PROTOTYPE ? 7 : 6; }
+// Column count for a section heading's (and a windowed spacer's) colspan -- the prototype adds a pin
+// column, so this can't be a literal. The phone hides the last two columns, and the colspan must NOT
+// overshoot them: a cell spanning columns the table does not show makes it invent phantom columns,
+// which squeezed the channel names in the drawer the moment the headings became visible (2026-09-11;
+// until then an unscoped phone CSS rule had been hiding the headings themselves). renderViewerBody
+// rebuilds everything when the phone/desktop breakpoint is crossed, so this is re-read on the switch.
+function chanColCount(){ return (VIEWER_CHAN_PROTOTYPE ? 7 : 6) - (isMobileViewer() ? 2 : 0); }
 function renderSectHeaderHtml(id, label, count, collapsed){
   var ico = '';
   CHAN_SECTIONS.forEach(function(s){ if(s[0] === id) ico = s[2]; });
@@ -1132,20 +1138,155 @@ function orderSectRows(list){
   return VIEWER_CHAN_ORDER.filter(function(c){ return list.indexOf(c) !== -1; })
     .concat(list.filter(function(c){ return VIEWER_CHAN_ORDER.indexOf(c) === -1; }));
 }
-function chanSectionsHtml(rows, q){
+// ---- Windowed channel list ---------------------------------------------------------------------
+// A real HP Tuners log can carry 524 channels. The list is an HTML table, and a table re-lays-out as
+// ONE unit -- CSS containment does not apply to table rows -- so writing the ~20 live values on screen
+// cost as much as writing all 524: 28 ms a cursor frame with 524 rows in the page against 4 ms with
+// 3, and 25 ms just to build the list on every redraw (Ken, 2026-09-10: "still lag on the cursor line";
+// measured in scripts/.smoke/rows-probe.mjs). So past CHAN_WINDOW_MIN_ROWS the list renders only the
+// rows in and near the viewport, with a spacer row standing in for each hidden run. Every section
+// heading is always rendered (there are at most four, and they are sticky, which needs them in the
+// DOM). Rows are a uniform height -- 48.8 px on the desktop, all 524 of them -- and the heights used
+// for the spacers are re-measured after every render, so the phone's larger rows place correctly too.
+// A shorter list (after a search, a fold, or on an ordinary log) is rendered whole, exactly as before.
+var CHAN_WINDOW_MIN_ROWS = 150;
+var CHAN_WINDOW_OVERSCAN = 14;       // rows kept rendered beyond each edge of the viewport
+var VIEWER_CHAN_MODEL = null;        // sections of the last render: [{id, label, collapsed, rows:[...]}]
+var VIEWER_CHAN_WIN = null;          // { windowed, lo, hi } -- the tbody pixel range the DOM covers
+var VIEWER_ROW_H = 48.8, VIEWER_SECT_H = 25, VIEWER_THEAD_H = 26.5;   // re-measured by measureChanRows
+var VIEWER_CHAN_DRAGGING = false;    // a row drag is in progress: never swap the rows out under it
+function chanSectionModel(rows, q){
   var by = { __fav: [], logged: [], math: [], calc: [] };
   rows.forEach(function(c){ (isFavoriteChannel(c) ? by.__fav : by[channelKind(c)]).push(c); });
-  var html = '';
+  var model = [];
   CHAN_SECTIONS.forEach(function(s){
     var list = by[s[0]];
     if(!list.length) return;                       // no empty headings -- most logs have no math channels
     // A search is a deliberate narrowing: never answer one with a collapsed heading and no rows.
-    var collapsed = !q && sectCollapsed(s[0]);
-    html += renderSectHeaderHtml(s[0], s[1], list.length, collapsed);
-    if(!collapsed) html += orderSectRows(list).map(function(c){ return renderOneChannelRow(c, false, s[0]); }).join('');
+    model.push({ id: s[0], label: s[1], collapsed: !q && sectCollapsed(s[0]), rows: orderSectRows(list) });
   });
+  return model;
+}
+function chanRenderedRowCount(model){
+  var n = 0;
+  model.forEach(function(sec){ if(!sec.collapsed) n += sec.rows.length; });
+  return n;
+}
+function chanSpacerHtml(h){
+  return '<tr class="dlv-row-spacer" aria-hidden="true"><td colspan="' + chanColCount() + '" style="height:' +
+    Math.max(0, h).toFixed(1) + 'px"></td></tr>';
+}
+// The viewport in tbody coordinates. Before the new list is mounted (renderViewerBody builds its HTML
+// while the OLD panel is still in the page) the old wrap is exactly the right answer; with no wrap at
+// all yet -- the first open -- assume the top of the list and a window's worth of height.
+function chanViewport(){
+  var wrap = document.querySelector('.dlv-channel-table-wrap');
+  var top = 0, h = 0;
+  if(wrap){ top = wrap.scrollTop; h = wrap.clientHeight; }
+  if(!h) h = window.innerHeight || 900;
+  return { top: top - VIEWER_THEAD_H, bottom: top - VIEWER_THEAD_H + h };
+}
+function chanSectionsHtml(rows, q){
+  var model = chanSectionModel(rows, q);
+  VIEWER_CHAN_MODEL = model;
+  var html = '';
+  if(chanRenderedRowCount(model) <= CHAN_WINDOW_MIN_ROWS){
+    VIEWER_CHAN_WIN = { windowed: false };
+    model.forEach(function(sec){
+      html += renderSectHeaderHtml(sec.id, sec.label, sec.rows.length, sec.collapsed);
+      if(!sec.collapsed) html += sec.rows.map(function(c){ return renderOneChannelRow(c, false, sec.id); }).join('');
+    });
+    return html;
+  }
+  var vp = chanViewport(), rh = VIEWER_ROW_H;
+  var lo = vp.top - CHAN_WINDOW_OVERSCAN * rh, hi = vp.bottom + CHAN_WINDOW_OVERSCAN * rh;
+  var y = 0;
+  model.forEach(function(sec){
+    html += renderSectHeaderHtml(sec.id, sec.label, sec.rows.length, sec.collapsed);
+    y += VIEWER_SECT_H;
+    if(sec.collapsed) return;
+    var n = sec.rows.length;
+    var i0 = Math.max(0, Math.min(n, Math.floor((lo - y) / rh)));
+    var i1 = Math.max(i0, Math.min(n, Math.ceil((hi - y) / rh)));
+    if(i0 > 0) html += chanSpacerHtml(i0 * rh);
+    for(var i = i0; i < i1; i++) html += renderOneChannelRow(sec.rows[i], false, sec.id);
+    if(i1 < n) html += chanSpacerHtml((n - i1) * rh);
+    y += n * rh;
+  });
+  VIEWER_CHAN_WIN = { windowed: true, lo: lo, hi: hi };
   return html;
 }
+// Every channel in the order the list currently shows it -- hidden-by-window and folded rows
+// included -- then anything a search filtered out, as before. A drag splices into this (commitDragOrder).
+function chanFlatOrder(){
+  var out = [], seen = {};
+  (VIEWER_CHAN_MODEL || []).forEach(function(sec){
+    sec.rows.forEach(function(c){ if(!seen[c]){ seen[c] = 1; out.push(c); } });
+  });
+  VIEWER_DATA.channels.forEach(function(c){ if(!seen[c] && !isPinned(c)){ seen[c] = 1; out.push(c); } });
+  return out;
+}
+// Heights the spacers are built from, read off what was just rendered. Returns true when they moved
+// enough that the window should be rebuilt (the phone's rows are taller; the keypad hides the value line).
+//
+// Every row is pinned to a WHOLE number of CSS pixels (--dlv-row-h, the natural height rounded up).
+// Rows are a uniform 48.8 px, but a table snaps fractional rows differently depending on where they
+// start: behind a spacer they packed at 48.33 px against 48.83 px in the full list, and over 500 rows
+// that walked the rendered stretch 196 px away from where the full list would have it -- the wrong
+// channels under the pointer (scripts/.smoke/pitch-probe.mjs). With an integer height there is no
+// fraction to snap, and a spacer of n rows is exactly n rows tall. The natural height is re-read with
+// the pin lifted, so the phone's larger rows and the keypad's value-less rows get their own number.
+// The natural height is only re-read when it can have changed: a freshly built table carries no pin
+// (renderViewerBody makes a new one -- which is also how the phone/desktop switch arrives), and the
+// phone keypad passes renatural=true because it hides every row's value line. Re-reading it on every
+// rebuild cost two forced layouts a time, which is most of a scroll-time rebuild.
+function measureChanRows(renatural){
+  var body = document.getElementById('dlvChannelBody');
+  if(!body) return false;
+  var changed = false;
+  var table = body.parentNode;
+  var row = body.querySelector('tr[data-ch]'), head = body.querySelector('tr.dlv-sect-row');
+  var thead = table && table.querySelector('thead');
+  var rh = 0;
+  if(row && table){
+    var pinned = parseFloat(table.style.getPropertyValue('--dlv-row-h')) || 0;
+    if(pinned && !renatural){
+      rh = pinned;
+    } else {
+      table.style.removeProperty('--dlv-row-h');
+      var natural = row.getBoundingClientRect().height;
+      if(natural > 4) rh = Math.ceil(natural - 0.01);
+      else rh = pinned;                                  // hidden (a closed drawer): keep the last pin
+      if(rh) table.style.setProperty('--dlv-row-h', rh + 'px');
+    }
+  }
+  var sh = head ? head.getBoundingClientRect().height : 0;
+  var th = thead ? thead.getBoundingClientRect().height : 0;
+  if(rh > 4 && rh !== VIEWER_ROW_H){ VIEWER_ROW_H = rh; changed = true; }   // an integer pin: exact
+  if(sh > 4 && Math.abs(sh - VIEWER_SECT_H) > 0.25){ VIEWER_SECT_H = sh; changed = true; }
+  if(th > 4 && Math.abs(th - VIEWER_THEAD_H) > 0.25){ VIEWER_THEAD_H = th; changed = true; }
+  return changed;
+}
+// Rebuild the rendered stretch when the viewport has moved out of it (or when forced: heights changed,
+// the panel was resized, the list was remounted). Never mid-drag -- the row being dragged is a DOM node.
+function syncChannelWindow(force){
+  if(VIEWER_CHAN_DRAGGING || !VIEWER_CHAN_WIN || !VIEWER_CHAN_WIN.windowed) return;
+  var body = document.getElementById('dlvChannelBody');
+  if(!body) return;
+  if(!force){
+    var vp = chanViewport(), slack = (CHAN_WINDOW_OVERSCAN / 2) * VIEWER_ROW_H;
+    if(vp.top >= VIEWER_CHAN_WIN.lo + slack && vp.bottom <= VIEWER_CHAN_WIN.hi - slack) return;
+  }
+  body.innerHTML = renderChannelRowsHtml();
+  refreshChannelValueRefs();
+  refreshVisibleRowValues();
+}
+var CHAN_SCROLL_RAF = null;
+function onChannelListScroll(){
+  if(CHAN_SCROLL_RAF !== null) return;
+  CHAN_SCROLL_RAF = requestAnimationFrame(function(){ CHAN_SCROLL_RAF = null; syncChannelWindow(false); });
+}
+window.addEventListener('resize', function(){ syncChannelWindow(false); });
 
 function channelMatchesSearch(c, q, groupHits){
   if(!channelPassesKind(c)) return false;
@@ -1195,9 +1336,11 @@ function channelListScrollTop(){
   return wrap ? wrap.scrollTop : 0;
 }
 function restoreChannelListScroll(y){
-  if(!y) return;
   var wrap = document.querySelector('.dlv-channel-table-wrap');
-  if(wrap) wrap.scrollTop = y;
+  if(wrap && y) wrap.scrollTop = y;
+  // The rows were rendered for the old panel's viewport; now that the new one is mounted and sized,
+  // make sure the rendered stretch is the one on screen.
+  syncChannelWindow(true);
 }
 function rerenderChannelRows(){
   var body = document.getElementById('dlvChannelBody');
@@ -1249,6 +1392,7 @@ function wireChannelDrag(body){
       // as a click rather than a one-pixel reorder.
       if(Math.abs(e.clientY - st.y) < 4 && Math.abs(e.clientX - st.x) < 4) return;
       st.active = true;
+      VIEWER_CHAN_DRAGGING = true;   // the windowed list must not swap rows out from under the drag
       st.row.classList.add('dlv-row-dragging');
       body.classList.add('dlv-dragging');
       var graphs = document.querySelector('.dlv-graphs');
@@ -1281,7 +1425,10 @@ function wireChannelDrag(body){
       }
     }
     try { body.releasePointerCapture(st.id); } catch(_){}
+    var wasActive = st.active;
     st = null;
+    VIEWER_CHAN_DRAGGING = false;
+    if(wasActive) syncChannelWindow(true);   // the viewport may have moved while the window held still
   }
   body.addEventListener('pointerup', end);
   body.addEventListener('pointercancel', end);
@@ -1302,11 +1449,23 @@ function commitDragOrder(body, pinned){
   var sel = 'tr[data-ch]' + (pinned ? '.dlv-row-pinned' : ':not(.dlv-row-pinned)');
   var order = [].slice.call(body.querySelectorAll(sel)).map(function(tr){ return tr.getAttribute('data-ch'); });
   if(pinned){ VIEWER_PINNED = order; return; }
-  // Only the currently-visible rows were dragged; anything filtered out keeps its relative place at
-  // the end, so a drag performed while searching doesn't silently discard the rest of the list.
-  var seen = {};
-  order.forEach(function(c){ seen[c] = 1; });
-  VIEWER_CHAN_ORDER = order.concat(VIEWER_DATA.channels.filter(function(c){ return !seen[c] && !isPinned(c); }));
+  // Only the RENDERED rows are in the DOM: whatever a search filtered out, whatever sits in a folded
+  // section, and -- on a long, windowed list -- everything outside the visible stretch. So the new
+  // order of the rendered rows is spliced back into the positions they held in the full order, and
+  // every other channel keeps exactly its place. (A drag is confined to one section, so each position
+  // stays in its section.) Anything a search filtered out still trails at the end, as before.
+  var base = chanFlatOrder();
+  var inDom = {};
+  order.forEach(function(c){ inDom[c] = 1; });
+  var slots = [];
+  base.forEach(function(c, i){ if(inDom[c]) slots.push(i); });
+  if(slots.length !== order.length){
+    // The model and the DOM disagree (should not happen); fall back to the old rule, never lose a row.
+    VIEWER_CHAN_ORDER = order.concat(VIEWER_DATA.channels.filter(function(c){ return !inDom[c] && !isPinned(c); }));
+    return;
+  }
+  slots.forEach(function(pos, k){ base[pos] = order[k]; });
+  VIEWER_CHAN_ORDER = base;
 }
 
 function sortRows(rows){
@@ -3046,6 +3205,8 @@ function wireChannelPanelEvents(){
   });
   wireKeypad();
   wireKindBar();
+  var listWrap = document.querySelector('.dlv-channel-table-wrap');
+  if(listWrap) listWrap.addEventListener('scroll', onChannelListScroll, { passive: true });
   // Tapping a channel means you've found what you were filtering for -- give the list its space
   // back without making the user hunt for Done.
   var bodyEl = document.getElementById('dlvChannelBody');
@@ -3193,51 +3354,17 @@ function refreshChannelValueRefs(){
   document.querySelectorAll('#dlvChannelBody [data-ch-value]').forEach(function(el){
     VIEWER_CHANNEL_VALUE_ELS[el.getAttribute('data-ch-value')] = el;
   });
-  watchVisibleRows();
+  // New heights (the phone's rows, the keypad hiding the value line) mean the spacers were built
+  // from the wrong numbers: rebuild once with the measured ones. measureChanRows only reports a
+  // change past a quarter pixel, so this settles after one pass.
+  if(measureChanRows() && VIEWER_CHAN_WIN && VIEWER_CHAN_WIN.windowed) syncChannelWindow(true);
 }
 
-// ---- Which rows are actually on screen --------------------------------------------------------
-// The live value on every row is the point (Ken asked for it), but a real HP Tuners log can carry
-// 524 channels and the panel shows about 17 of them. Rewriting all 524 text nodes per cursor move
-// cost 1.3 ms of JS and 12.4 ms of LAYOUT -- the browser re-laying-out the whole list every frame,
-// which is most of why the cursor felt heavy on a big log (Ken, 2026-09-10: "still lag on the cursor
-// line"). An IntersectionObserver against the scrolling wrap keeps a set of the rows in view, and
-// only those are written; a row scrolling in is filled by the observer's own callback, so nothing is
-// ever seen stale. With no observer available (or before its first callback) every row is written,
-// exactly as before.
-var VIEWER_ROW_VIS = null;      // { channel: true } for rows in or near the viewport
-var VIEWER_ROW_OBS = null;
-function watchVisibleRows(){
-  if(VIEWER_ROW_OBS){ try { VIEWER_ROW_OBS.disconnect(); } catch(e){} VIEWER_ROW_OBS = null; }
-  VIEWER_ROW_VIS = null;
-  var wrap = document.querySelector('.dlv-channel-table-wrap');
-  if(!wrap || typeof IntersectionObserver !== 'function') return;
-  var vis = {};
-  VIEWER_ROW_OBS = new IntersectionObserver(function(entries){
-    var changed = false;
-    entries.forEach(function(en){
-      var ch = en.target.getAttribute('data-ch-value');
-      if(!ch) return;
-      if(en.isIntersecting){ if(!vis[ch]){ vis[ch] = true; changed = true; } }
-      else if(vis[ch]){ delete vis[ch]; changed = true; }
-    });
-    // A row that just scrolled in was not being written while it was hidden, so fill it now.
-    if(changed) refreshVisibleRowValues();
-  // A screen's worth of margin: rows are filled before they can be seen, so a fast scroll never
-  // shows a blank or stale reading.
-  }, { root: wrap, rootMargin: '200px 0px' });
-  VIEWER_ROW_VIS = vis;
-  Object.keys(VIEWER_CHANNEL_VALUE_ELS).forEach(function(ch){
-    try { VIEWER_ROW_OBS.observe(VIEWER_CHANNEL_VALUE_ELS[ch]); } catch(e){}
-  });
-}
-function rowValueChannels(){
-  if(VIEWER_ROW_VIS){
-    var keys = Object.keys(VIEWER_ROW_VIS);
-    if(keys.length) return keys;
-  }
-  return Object.keys(VIEWER_CHANNEL_VALUE_ELS);   // first paint, or no observer
-}
+// ---- Which rows get their live value written ----------------------------------------------------
+// The ones that are rendered. On a long list that is only the visible stretch plus its overscan (see
+// the windowed channel list); on a short one it is every row, which is cheap because the table is
+// small. (An IntersectionObserver did this job for one release, before the list itself was windowed.)
+function rowValueChannels(){ return Object.keys(VIEWER_CHANNEL_VALUE_ELS); }
 function cursorSampleIndex(dataX){
   if(!VIEWER_DATA || !VIEWER_DATA.time || !VIEWER_DATA.time.length) return 0;
   return dataX != null ? nearestTimeIndex(VIEWER_DATA.time, dataX) : VIEWER_DATA.time.length - 1;
