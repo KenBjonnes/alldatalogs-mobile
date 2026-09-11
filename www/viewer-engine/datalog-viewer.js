@@ -1808,13 +1808,37 @@ function formatRaceTime(t){
   var s = Math.abs(d).toFixed(3);
   return (d < 0 ? '-' : '+') + s;
 }
+// The log's own time at the cursor -- what the readout shows when no race zero is set (Ken,
+// 2026-09-11: "I also want to add a time display when we are not in race time. just show the raw time
+// from the log"). A minus sign only when the log itself is negative (some logs start before 0).
+function formatLogTime(t){
+  if(t == null || !isFinite(t)) return '--';
+  return (t < 0 ? '-' : '') + Math.abs(t).toFixed(3);
+}
+// The readout is a FIXED width (Ken, 2026-09-11: "the area for the time display needs to be fixed
+// width. right now if you scroll through the graph things jump around as numbers change"). It had a
+// min-width of 72 px, so +9.999 -> +10.000, or a time going negative, grew the block and slid the zoom
+// bar beside it on every crossing. The width is sized in ch (tabular digits are exactly 1ch) from THIS
+// log -- its furthest time from zero and its whole span, whichever is wider -- so it fits every value
+// either mode can show, and neither scrubbing nor setting/clearing the race zero moves anything.
+function timeReadoutChars(){
+  var T = VIEWER_DATA && VIEWER_DATA.time;
+  if(!T || !T.length) return 8;
+  var first = T[0], last = T[T.length - 1];
+  var widest = Math.max(Math.abs(first), Math.abs(last), Math.abs(last - first));
+  return ('+' + widest.toFixed(3)).length;
+}
 var RACE_HINT = 'Right-click anywhere on a graph to set the zero point there.';
 
 function renderRaceTimeHtml(){
   var armed = VIEWER_RACE_ZERO != null;
+  // +0.4ch of slack so a bold minus or plus never grazes the edge.
+  var width = (timeReadoutChars() + 0.4).toFixed(1) + 'ch';
   return '<div class="dlv-race' + (armed ? ' armed' : '') + '" id="dlvRace">' +
-    '<div class="dlv-race-label">Race</div>' +
-    '<div class="dlv-race-value" id="dlvRaceValue">' + (armed ? '+0.000' : '--') + '</div>' +
+    '<div class="dlv-race-label">' + (armed ? 'Race' : 'Time') + '</div>' +
+    '<div class="dlv-race-value" id="dlvRaceValue" style="width:' + width + '" title="' +
+      (armed ? 'Race time: seconds from the zero point you set' : 'Log time at the cursor') + '">' +
+      (armed ? '+0.000' : '--') + '</div>' +
     '<div class="dlv-race-unit">s</div>' +
     '<button type="button" class="dlv-race-btn' + proLockClass() + '" id="dlvRaceSetBtn" title="' +
       (viewerIsPro() ? RACE_HINT : PRO_LOCK_MSG) + '">' +
@@ -6830,7 +6854,7 @@ function updateAtCursor(dataX){
   // the race clock read the same value for several pixels of travel.
   var cursorT = (dataX != null) ? dataX : VIEWER_DATA.time[idx];
   var raceEl = document.getElementById('dlvRaceValue');
-  if(raceEl) raceEl.textContent = formatRaceTime(cursorT);
+  if(raceEl) raceEl.textContent = (VIEWER_RACE_ZERO != null) ? formatRaceTime(cursorT) : formatLogTime(cursorT);
   updateScrubberPlayhead(cursorT);
 }
 function cssEscape(s){
