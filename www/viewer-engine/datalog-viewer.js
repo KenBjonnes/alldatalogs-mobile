@@ -24,6 +24,24 @@
  */
 
 var CHANNEL_COLORS = ['#d1132e','#22c55e','#f5a623','#3b82f6','#a855f7','#14b8a6','#eab308','#ec4899','#84cc16','#06b6d4'];
+// Colours the user picked for a channel (Ken, 2026-09-11: "right click on a graph parameter and change the
+// color of both the text display and corresponding graph line"). channel name -> '#rrggbb'. Every colour on
+// screen comes from channelColor, so one entry here recolours the line, its axis numbers, the legend name
+// and value, the card and the zoom-bar trace together. Keyed by channel NAME, so it follows the channel to
+// every log (localStorage), and saved with a Layout. The picker offers the ten defaults plus six extras.
+var CHANNEL_COLOR_EXTRA = ['#ffffff','#9ca3af','#f97316','#0ea5e9','#fb7185','#c084fc'];
+var VIEWER_CHANNEL_COLOR = {};
+var VIEWER_CHANNEL_COLOR_KEY = 'pbdDatalogViewerChannelColors.v1';
+function isHexColor(c){ return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c); }
+function cleanColorMap(m){
+  var out = {};
+  if(m && typeof m === 'object') Object.keys(m).forEach(function(k){ if(isHexColor(m[k])) out[k] = m[k].toLowerCase(); });
+  return out;
+}
+try { if(window.localStorage) VIEWER_CHANNEL_COLOR = cleanColorMap(JSON.parse(localStorage.getItem(VIEWER_CHANNEL_COLOR_KEY) || '{}')); } catch(e){}
+function saveChannelColors(){
+  try { if(window.localStorage) localStorage.setItem(VIEWER_CHANNEL_COLOR_KEY, JSON.stringify(VIEWER_CHANNEL_COLOR)); } catch(e){}
+}
 // Two real naming conventions show up in Ken's HP Tuners exports -- PTDIAG short codes
 // (ENGINE_SPEED, MAP, ...) and the human-readable names used by real "HP Tuners CSV Log File"
 // exports (Engine RPM, Manifold Absolute Pressure, ...). Used as the fallback default-channel pick
@@ -786,6 +804,7 @@ function computeChannelStats(data){
 }
 
 function channelColor(ch){
+  if(VIEWER_CHANNEL_COLOR[ch]) return VIEWER_CHANNEL_COLOR[ch];
   var idx = VIEWER_SELECTED.indexOf(ch);
   return CHANNEL_COLORS[(idx < 0 ? 0 : idx) % CHANNEL_COLORS.length];
 }
@@ -1966,6 +1985,20 @@ document.addEventListener('click', function(){ if(typeof closePerfMenu === 'func
 document.addEventListener('keydown', function(e){
   if(e.key === 'Escape' && typeof closePerfMenu === 'function') closePerfMenu();
 });
+// Right-click a channel in a graph legend (docked or floating) or its card to recolour it. Delegated from the
+// document because both are rebuilt on every render. The phone has no right-click and no legend.
+document.addEventListener('contextmenu', function(e){
+  var t = e.target;
+  if(!t || !t.closest || isMobileViewer()) return;
+  var row = t.closest('.dlv-graph-legend .dlv-legend-row, .dlv-card[data-card-ch]');
+  if(!row) return;
+  var ch = row.getAttribute('data-card-ch');
+  if(!ch){ var v = row.querySelector('[data-legend-ch]'); ch = v ? v.getAttribute('data-legend-ch') : null; }
+  if(!ch) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openChannelColorMenu(e, ch);
+});
 
 function openGraphMenu(e, dataX, channels, chart){
   closeGraphMenu();
@@ -2072,6 +2105,66 @@ function openGraphMenu(e, dataX, channels, chart){
       if(ev.key === 'Enter'){ ev.preventDefault(); applyAxisRow(inp.closest('.dlv-ctx-axis'), false); }
     });
   });
+}
+
+// The colour menu for one channel: sixteen swatches (the current one ringed), a full colour picker, and
+// Default colour once one has been picked. Picking applies at once -- no OK button to miss.
+function openChannelColorMenu(e, ch){
+  closeGraphMenu();
+  closeGaugeMenu();
+  var cur = channelColor(ch).toLowerCase();
+  var swatches = CHANNEL_COLORS.concat(CHANNEL_COLOR_EXTRA).map(function(c){
+    return '<button type="button" class="dlv-color-sw' + (c === cur ? ' dlv-color-on' : '') + '" data-color="' + c + '"' +
+      ' style="background:' + c + '" title="' + c + '" aria-label="Colour ' + c + '"></button>';
+  }).join('');
+  var m = document.createElement('div');
+  m.className = 'dlv-ctxmenu dlv-color-menu';
+  m.setAttribute('data-color-ch', ch);
+  m.addEventListener('click', function(ev){ ev.stopPropagation(); });
+  m.addEventListener('contextmenu', function(ev){ ev.preventDefault(); ev.stopPropagation(); });
+  m.innerHTML =
+    '<div class="dlv-ctx-head" style="color:' + cur + '" title="' + escapeHtml(ch) + '">' + escapeHtml(shortChannelName(ch)) + ' colour</div>' +
+    '<div class="dlv-color-grid">' + swatches + '</div>' +
+    '<label class="dlv-ctx-item dlv-color-custom">Custom colour<input type="color" class="dlv-color-in" value="' + cur + '"></label>' +
+    (VIEWER_CHANNEL_COLOR[ch] ? '<button type="button" class="dlv-ctx-item" data-a="reset">Default colour</button>' : '') +
+    '<button type="button" class="dlv-ctx-item dlv-ctx-cancel" data-a="cancel">Cancel</button>';
+  document.body.appendChild(m);
+  // Same placement rule as the graph menu: flip rather than hang off-screen.
+  var mw = m.offsetWidth, mh = m.offsetHeight, pad = 8;
+  var left = (e.clientX + mw + pad <= window.innerWidth) ? e.clientX
+           : (e.clientX - mw - pad >= 0 ? e.clientX - mw : Math.max(pad, window.innerWidth - mw - pad));
+  var top = (e.clientY + mh + pad <= window.innerHeight) ? e.clientY : Math.max(pad, window.innerHeight - mh - pad);
+  m.style.left = Math.max(pad, left) + 'px';
+  m.style.top = Math.max(pad, top) + 'px';
+  VIEWER_GRAPH_MENU = m;   // so the usual outside-click and Escape close it
+  m.querySelectorAll('.dlv-color-sw').forEach(function(b){
+    b.addEventListener('click', function(){ closeGraphMenu(); setChannelColor(ch, b.getAttribute('data-color')); });
+  });
+  // 'change' fires once the picker closes; 'input' would rebuild the graphs on every drag of the hue.
+  var inp = m.querySelector('.dlv-color-in');
+  inp.addEventListener('change', function(){ var v = inp.value; closeGraphMenu(); setChannelColor(ch, v); });
+  m.querySelectorAll('.dlv-ctx-item[data-a]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var a = b.getAttribute('data-a');
+      closeGraphMenu();
+      if(a === 'reset') setChannelColor(ch, null);
+    });
+  });
+}
+function setChannelColor(ch, color){
+  if(color && !isHexColor(color)) return;
+  if(color) VIEWER_CHANNEL_COLOR[ch] = color.toLowerCase();
+  else delete VIEWER_CHANNEL_COLOR[ch];
+  saveChannelColors();
+  markLayoutDirty();    // part of a saved Layout
+  renderViewerBody();   // the line, its axis, the legend and the card all read channelColor; the zoom is kept
+}
+function channelColorsForSave(){
+  var out = null;
+  VIEWER_SELECTED.forEach(function(ch){
+    if(VIEWER_CHANNEL_COLOR[ch]){ out = out || {}; out[ch] = VIEWER_CHANNEL_COLOR[ch]; }
+  });
+  return out;
 }
 
 function wireRaceTime(){
@@ -6170,6 +6263,7 @@ function buildConfig(kind){
     smoothing: smoothingForSave(),        // per-channel smoothing windows (ms), null when none
     legendDock: !!VIEWER_LEGEND_DOCK,     // legends docked to the left of the graphs (HP Tuners style)
     legendFloat: !VIEWER_LEGEND_DOCK,     // 1.0.1+: floating is the deliberate choice (docked is the default)
+    channelColors: channelColorsForSave(), // colours picked for the channels this Layout shows, null when none
   };
 }
 // Back-compat alias for the single composite save.
@@ -6315,6 +6409,12 @@ function applyViewConfig(cfg, meta){
   VIEWER_LAYOUT_DIRTY = false;
   if(meta.kind === 'saved' && !meta.readOnly) rememberLastSaved('view', meta.id, meta.name);
   if(cfg.smoothing && typeof cfg.smoothing === 'object') setSmoothingMap(cfg.smoothing);
+  // Colours a Layout carries win for those channels; any other colour you picked stays as it was.
+  if(cfg.channelColors && typeof cfg.channelColors === 'object'){
+    var incomingColors = cleanColorMap(cfg.channelColors);
+    Object.keys(incomingColors).forEach(function(k){ VIEWER_CHANNEL_COLOR[k] = incomingColors[k]; });
+    saveChannelColors();
+  }
   // Docked or floating legends. Docked is the default, so what a Layout can FORCE is floating, and only one
   // saved by 1.0.1+ says so deliberately (legendFloat). A 1.0.0 Layout recorded legendDock:false simply
   // because nobody had docked yet, so a bare false is not taken as a choice; legendDock:true still docks.

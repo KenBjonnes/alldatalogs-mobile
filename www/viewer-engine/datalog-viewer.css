@@ -604,6 +604,14 @@ tr:hover .dlv-ch-smooth,.dlv-ch-smooth.on{opacity:1;}
   border-radius:5px;padding:3px 8px;font-size:11px;font-weight:700;cursor:pointer;}
 .dlv-ctx-axis-btn:hover{background:var(--red, #d1132e);color:#fff;}
 .dlv-ctx-axis-auto{background:transparent;border:1px solid var(--card-border, #26262c);color:var(--text-dim, #9a9aa2);}
+/* Right-click a channel in a legend or its card -> its colour: sixteen swatches, a picker, Default colour. */
+.dlv-color-grid{display:grid;grid-template-columns:repeat(8, 20px);gap:6px;padding:2px 8px 8px;}
+.dlv-color-sw{width:20px;height:20px;border-radius:5px;border:1px solid rgba(255,255,255,.18);padding:0;cursor:pointer;}
+.dlv-color-sw:hover{transform:scale(1.12);}
+.dlv-color-sw.dlv-color-on{outline:2px solid #fff;outline-offset:1px;}
+.dlv-color-custom{justify-content:space-between;}
+.dlv-color-in{width:34px;height:22px;padding:0;border:1px solid var(--card-border, #26262c);border-radius:5px;
+  background:none;cursor:pointer;}
 
 /* ---- RACE TIME (desktop) ---------------------------------------------------------------------
    Sits in the scrubber row, which is the one strip that's always on screen -- the header auto-hides
