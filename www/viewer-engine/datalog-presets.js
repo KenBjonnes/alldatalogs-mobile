@@ -52,7 +52,7 @@ var NORMALIZED_CHANNEL_ROLES = {
   driveshaft_speed:        { label: 'Driveshaft',         aliases: ['Driveshaft', 'Driveshaft RPM', 'DRIVESHAFT RPM', 'Driveshaft_RPM', 'Drive Shaft Speed', 'Driveshaft Speed', 'Prop Shaft Speed'] },
   longitudinal_g:          { label: 'Accel G',            aliases: ['Accel G', 'Longitudinal G', 'Longitudinal Accel', 'X Accel Corrected', 'X Accel Correcte', 'Accel_G', 'Long G', 'G Force Longitudinal', 'Accelerometer X'] },
   boost_pressure:          { label: 'Boost',              aliases: ['BOOST', 'Boost Pressure', 'Boost PSIG'] },
-  manifold_absolute_pressure: { label: 'MAP',             aliases: ['MAP', 'Manifold Absolute Pressure', 'Manifold Pressure', 'Measured Manifold Pressure'] },
+  manifold_absolute_pressure: { label: 'MAP',             aliases: ['MAP', 'Manifold Absolute Pressure', 'Manifold Pressure', 'Measured Manifold Pressure', 'Intake Manifold Absolute Pressure'] },
   barometric_pressure:     { label: 'Baro',               aliases: ['BARO', 'Barometric Pressure', 'Baro Pressure', 'Ambient Pressure'] },
   throttle_position:       { label: 'Throttle',           aliases: ['TPS_PCT', 'Throttle Position', 'Throttle Angle', 'TPS', 'throttle position absolute'] },
   // The blade in DEGREES (Ford logs carry both 'Throttle Position' % and 'Throttle Angle' deg) -- the actual that pairs
@@ -60,7 +60,10 @@ var NORMALIZED_CHANNEL_ROLES = {
   throttle_angle:          { label: 'Throttle Angle',     aliases: ['Throttle Angle', 'Throttle Angle Actual', 'Throttle Actual Angle', 'ETC Angle', 'TP Angle', 'Throttle Blade Angle'] },
   // What the PCM asked the blade to do -- 'the ultimate test' for throttle control (Ken, 2026-09-09).
   desired_throttle:        { label: 'Desired TP',         aliases: ['Throttle Desired Angle', 'Desired Throttle Angle', 'Throttle Angle Desired', 'Desired Throttle', 'Desired Throttle Position', 'Throttle Position Desired', 'Throttle Desired', 'TP Desired', 'TP_DSD', 'TPDSD', 'ETC Desired Angle', 'ETC Desired', 'Desired TP', 'Commanded Throttle', 'Commanded Throttle Position', 'Throttle Position Commanded', 'Throttle Commanded', 'TP_CMD', 'ETC_DSD'] },
-  accelerator_pedal_position: { label: 'Pedal',           aliases: ['APP_PCT_PEDAL', 'Accelerator Pedal Position', 'Throttle Pedal', 'Pedal Position', 'accel pedal position relative', 'Pedal Position Source'] },
+  accelerator_pedal_position: { label: 'Pedal',           aliases: ['APP_PCT_PEDAL', 'Accelerator Pedal Position', 'Throttle Pedal', 'Pedal Position', 'accel pedal position relative', 'Pedal Position Source',
+    // SAE pedal PIDs (Ken, 2026-09-15: a log naming the pedal only by its SAE PID left the pedal unmapped). The
+    // RELATIVE pedal reads 0-100 % like Ford's own channel, so it goes first; D is the first raw sensor.
+    'Relative Accelerator Pedal Position', 'Accelerator Pedal Position D', 'Accelerator Position D', 'Accel Pedal Position D', 'Accel Pedal Position'] },
   spark_advance:           { label: 'Spark',              aliases: ['SPKSAF_SA', 'Timing Advance', 'Spark Advance', 'Ignition Timing', 'Ignition Angle'] },
   trans_temp:              { label: 'Trans Temp',         aliases: ['TFT', 'Trans Fluid Temp', 'Trans Temp', 'Transmission Fluid Temp', 'Line Temp', 'Transmission temperature', 'Transmission Oil Temperature'] },
   engine_coolant_temp:     { label: 'ECT',                aliases: ['ECT', 'Engine Coolant Temp', 'CTS', 'Engine temp.', 'engine coolant temp F', 'Coolant Temperature'] },
@@ -96,20 +99,22 @@ var NORMALIZED_CHANNEL_ROLES = {
   // not a measurement). These feed the AFR gauge, which auto-ranges per fuel (this car runs methanol).
   afr_bank_1:              { label: 'AFR Bank 1',         aliases: ['AFR Left', 'AFR Bank 1', 'AFR Average', 'Air Fuel Ratio Bank 1', 'O2 General'] },
   afr_bank_2:              { label: 'AFR Bank 2',         aliases: ['AFR Right', 'AFR Bank 2', 'Air Fuel Ratio Bank 2'] },
-  ltft_bank_1:             { label: 'LTFT Bank 1',        aliases: ['LTFT_B1', 'Long Term Fuel Trim Bank 1', 'LTFT Bank 1'] },
-  ltft_bank_2:             { label: 'LTFT Bank 2',        aliases: ['LTFT_B2', 'Long Term Fuel Trim Bank 2', 'LTFT Bank 2'] },
+  ltft_bank_1:             { label: 'LTFT Bank 1',        aliases: ['LTFT_B1', 'Long Term Fuel Trim Bank 1', 'LTFT Bank 1', 'Long Term Fuel Trim 1', 'LTFT 1'] },
+  ltft_bank_2:             { label: 'LTFT Bank 2',        aliases: ['LTFT_B2', 'Long Term Fuel Trim Bank 2', 'LTFT Bank 2', 'Long Term Fuel Trim 2', 'LTFT 2'] },
   // Holley 'CL Comp' (closed-loop compensation, %) is Holley's short-term fuel trim -- the live
   // correction the ECU is applying to hit target AFR -- so it maps to STFT bank 1 (Ken, 2026-07-24).
   // Holley logs a single closed-loop comp, so bank 2 stays N/A.
-  stft_bank_1:             { label: 'STFT Bank 1',        aliases: ['STFT_B1', 'Short Term Fuel Trim Bank 1', 'STFT Bank 1', 'CL Comp', 'O2 Closed Loop', 'O2 Control Bank 1 Short Term Fuel Trim'] },
-  stft_bank_2:             { label: 'STFT Bank 2',        aliases: ['STFT_B2', 'Short Term Fuel Trim Bank 2', 'STFT Bank 2', 'O2 Control Bank 2 Short Term Fuel Trim'] },
+  stft_bank_1:             { label: 'STFT Bank 1',        aliases: ['STFT_B1', 'Short Term Fuel Trim Bank 1', 'STFT Bank 1', 'CL Comp', 'O2 Closed Loop', 'O2 Control Bank 1 Short Term Fuel Trim',
+    // 'Short Term Fuel Trim 1 (SAE)' -- the numbered SAE spelling, no 'Bank' (Ken, 2026-09-15).
+    'Short Term Fuel Trim 1', 'STFT 1'] },
+  stft_bank_2:             { label: 'STFT Bank 2',        aliases: ['STFT_B2', 'Short Term Fuel Trim Bank 2', 'STFT Bank 2', 'O2 Control Bank 2 Short Term Fuel Trim', 'Short Term Fuel Trim 2', 'STFT 2'] },
   exhaust_cam:             { label: 'Exhaust Cam',        aliases: ['EX_CAM', 'Exhaust Cam', 'Exhaust Camshaft Position', 'VCT Exhaust Cam Phase Angle', 'Exhaust Cam Angle', 'VTC Exhaust Bank 1 Position', 'variable valve timing exhaust bank 1 actual'] },
   intake_cam:              { label: 'Intake Cam',         aliases: ['IN_CAM', 'Intake Cam', 'Intake Camshaft Position', 'VCT Intake Cam Phase Angle', 'Intake Cam Angle', 'VTC Intake Bank 1 Position', 'variable valve timing intake bank 1 actual'] },
   desired_load:            { label: 'Desired Load',       aliases: ['LOAD_DES', 'Desired Load'] },
   // "Absolute Load (SAE)" is the generic SAE load PID and sits LAST on purpose (Ken, 2026-07-22):
   // where a vehicle logs a real Air/Actual Load it should win, and the SAE PID is the fallback for
   // logs that have nothing else. Alias order IS priority -- see resolveChannelRoles.
-  actual_load:             { label: 'Load',               aliases: ['LOAD_ACT', 'Air Load', 'Actual Load', 'Absolute Load (SAE)', 'load', 'Load - Normalised Air Mass Flow'] },
+  actual_load:             { label: 'Load',               aliases: ['LOAD_ACT', 'Air Load', 'Actual Load', 'Absolute Load (SAE)', 'load', 'Load - Normalised Air Mass Flow', 'Calculated Engine Load'] },
   // ---- Scorecard roles (added 2026-07-27): concepts the Scorecard evaluators request that had no
   // role yet. APPENDED (never reordered) so dev/alias-check.js keeps passing. Aliases are best-effort
   // across HP Tuners / Holley / FuelTech naming; individual evaluators degrade to Not Evaluated when
@@ -154,8 +159,10 @@ function normalizeForMatch(s){
 // Deliberately scoped to role matching only -- normalizeForMatch is also used for unit lookups,
 // and this has no business there. Exact names always win: the suffix is only stripped as a second
 // pass, so a log carrying BOTH "Engine RPM" and "Engine RPM (SAE)" binds to the plain one.
+// A trailing duplicate marker -- "WB EQ Ratio 1 (SAE) (2)", which a decoder writes when two channels share a
+// name -- is dropped in the same second pass, before and after the "(SAE)".
 function normalizeChannelForRole(s){
-  return normalizeForMatch(s).replace(/\s*\(sae\)$/, '');
+  return normalizeForMatch(s).replace(/(\s*\(\d+\))+$/, '').replace(/\s*\(sae\)$/, '').replace(/(\s*\(\d+\))+$/, '');
 }
 
 // Resolves every role in NORMALIZED_CHANNEL_ROLES against the actual channel names present in an
@@ -617,6 +624,31 @@ function roleForChannelName(name){
     }
   }
   return looseHit;
+}
+
+// The channel on THIS log that a saved NAME means (Ken, 2026-09-15: a Layout and histograms built on a log
+// that says "Engine RPM" / "WB EQ Ratio Bank 1" found nothing on one that says "Engine RPM (SAE)" / "WB EQ
+// Ratio 1 (SAE)", so no graphs came up and the tables said missing parameter). In order: the exact name; the
+// same name spelled differently (case, spaces, underscores); the same name without "(SAE)" or a "(2)"
+// marker, on either side; then the ROLE the name is an alias of, as resolved on this log. null when none.
+var EQUIV_INDEX = { list: null, len: -1, norm: null, loose: null };
+function equivalentChannel(name, channelNames, resolvedRoles){
+  if(!name || !channelNames || !channelNames.length) return null;
+  if(channelNames.indexOf(name) !== -1) return name;
+  if(EQUIV_INDEX.list !== channelNames || EQUIV_INDEX.len !== channelNames.length){
+    EQUIV_INDEX = { list: channelNames, len: channelNames.length, norm: {}, loose: {} };
+    for(var i = 0; i < channelNames.length; i++){
+      var c = channelNames[i], n = normalizeForMatch(c), l = normalizeChannelForRole(c);
+      if(EQUIV_INDEX.norm[n] === undefined) EQUIV_INDEX.norm[n] = c;
+      if(EQUIV_INDEX.loose[l] === undefined) EQUIV_INDEX.loose[l] = c;
+    }
+  }
+  var hit = EQUIV_INDEX.norm[normalizeForMatch(name)];
+  if(hit !== undefined) return hit;
+  hit = EQUIV_INDEX.loose[normalizeChannelForRole(name)];
+  if(hit !== undefined) return hit;
+  var role = roleForChannelName(name), viaRole = (role && resolvedRoles) ? resolvedRoles[role] : null;
+  return (viaRole && channelNames.indexOf(viaRole) !== -1) ? viaRole : null;
 }
 
 // ---- Value labels: numeric state codes -> text ---------------------------------------------------

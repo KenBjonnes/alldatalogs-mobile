@@ -286,7 +286,15 @@
       if (p.role && roles[p.role] && has(roles[p.role])) return roles[p.role];
       if (p.channel && has(p.channel)) return p.channel;
       if (p.channel && byNorm[normName(p.channel)] && has(byNorm[normName(p.channel)])) return byNorm[normName(p.channel)];
+      if (p.channel) { var eq = equiv(p.channel); if (eq) return eq; }
       return null;
+    }
+    // The same channel under this log's spelling (presets' equivalentChannel: "(SAE)", "(2)", or the role the
+    // name is an alias of) -- a table built on "Engine RPM" works on a log that logs "Engine RPM (SAE)".
+    function equiv(name) {
+      if (typeof equivalentChannel !== 'function') return null;
+      var c = equivalentChannel(name, channels, roles);
+      return (c && has(c)) ? c : null;
     }
     // Math channels currently being compiled, by id: a channel whose expression references itself
     // (directly, or A -> B -> A) resolves to null instead of recursing forever.
@@ -317,6 +325,8 @@
         var cm = mathChannelValues(mc);
         if (cm) return { values: cm.values, unit: mc.unit || null, levels: null, label: mc.name || name, channel: null, source: 'mathChannel' };
       }
+      var eq = equiv(name);
+      if (eq) return entry(eq, eq, 'channel');
       return null;
     }
     function compileMath(expr) {

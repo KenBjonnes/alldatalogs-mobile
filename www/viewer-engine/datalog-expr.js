@@ -989,12 +989,23 @@
       var hit = byNorm[normName(name)];
       return hit === undefined ? null : hit;
     }
+    // Last resort, in a viewer page: the same channel under this log's spelling -- "[Engine RPM]" on a log that
+    // logs "Engine RPM (SAE)" (the presets' equivalentChannel; absent under node, where this is a no-op).
+    function equiv(name) {
+      var g = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : null);
+      if (!g || typeof g.equivalentChannel !== 'function') return null;
+      var hit = g.equivalentChannel(name, Object.keys(series), g.VIEWER_RESOLVED_ROLES || {});
+      return hit && series[hit] ? hit : null;
+    }
     var resolve = function (name) {
       var key = Object.prototype.hasOwnProperty.call(series, name) && series[name] ? name : loose(name);
       if (key && series[key]) { return { values: series[key], levels: levels[key] || null }; }
-      return typeof fallback === 'function' ? fallback(name) : null;
+      var fb = typeof fallback === 'function' ? fallback(name) : null;
+      if (fb) return fb;
+      var eq = equiv(name);
+      return eq ? { values: series[eq], levels: levels[eq] || null } : null;
     };
-    resolve.channelFor = function (name) { return Object.prototype.hasOwnProperty.call(series, name) && series[name] ? name : loose(name); };
+    resolve.channelFor = function (name) { return Object.prototype.hasOwnProperty.call(series, name) && series[name] ? name : (loose(name) || equiv(name)); };
     return resolve;
   }
 

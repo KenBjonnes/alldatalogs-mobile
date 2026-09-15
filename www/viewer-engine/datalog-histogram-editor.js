@@ -203,6 +203,10 @@
       if (!isObj(param)) return null;
       if (param.channel && series[param.channel]) return chanRec(param.channel, param.label);
       if (param.role && roles[param.role] && series[roles[param.role]]) return chanRec(roles[param.role], param.label);
+      // The same channel under this log's spelling ("Engine RPM" saved, "Engine RPM (SAE)" logged) -- but a named
+      // math channel of that exact name still wins, so it is tried after those below.
+      var eqName = (param.channel && typeof equivalentChannel === 'function') ? equivalentChannel(param.channel, data.channels || Object.keys(series), roles) : null;
+      if (eqName && series[eqName] && !findMathChannel(param.channel)) return chanRec(eqName, param.label);
       // A by-NAME reference to a named math channel ({channel:'Total Fuel Trim 1'}, a paged parameter
       // with its page filled in) -- same rule as HistogramUI's resolver (Ken, 2026-09-09).
       if (param.channel && !param.mathChannelId) {

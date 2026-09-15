@@ -6357,8 +6357,10 @@ function applyGraphsSnapshot(graphs){
   var chans = (VIEWER_DATA && VIEWER_DATA.channels) || [];
   [[GRAPH_SLOT_UPPER, graphs.upper], [GRAPH_SLOT_MIDDLE, graphs.middle],
    [GRAPH_SLOT_MIDDLE2, graphs.middle2], [GRAPH_SLOT_LOWER, graphs.lower]].forEach(function(pair){
-    (pair[1] || []).forEach(function(ch){
-      if(chans.indexOf(ch) === -1) return;
+    (pair[1] || []).forEach(function(saved){
+      // The same channel under this log's spelling -- "Engine RPM" saved, "Engine RPM (SAE)" logged (Ken, 2026-09-15).
+      var ch = (typeof equivalentChannel === 'function') ? equivalentChannel(saved, chans, VIEWER_RESOLVED_ROLES) : (chans.indexOf(saved) !== -1 ? saved : null);
+      if(!ch) return;
       if(VIEWER_SELECTED.indexOf(ch) === -1) VIEWER_SELECTED.push(ch);
       VIEWER_PANEL_ASSIGN[ch] = pair[0];
     });
