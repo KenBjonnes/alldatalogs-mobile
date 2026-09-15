@@ -22,6 +22,10 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default also installs the long-retired "tools" package; the runner's cmdline-tools 16.0
+          # no longer lists it and the step fails (2026-09-15). Gradle fetches the platform and build tools it needs.
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
       - run: npm ci --ignore-scripts
       - run: npm run payload:check
