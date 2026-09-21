@@ -27,9 +27,12 @@ var DVCore = (() => {
     convertHolleyDlToCsv: () => convertHolleyDlToCsv,
     convertHplToCsv: () => convertHplToCsv,
     convertLdToCsv: () => convertLdToCsv,
+    convertTrbToCsv: () => convertTrbToCsv,
+    isApTrb: () => isApTrb,
     isHaltechCsv: () => isHaltechCsv,
     parseDatalogCsv: () => parseDatalogCsv,
-    parseHaltechCsv: () => parseHaltechCsv
+    parseHaltechCsv: () => parseHaltechCsv,
+    readTrbRunInfo: () => readTrbRunInfo
   });
 
   // ../../../../websites/Alldatalogs/packages/datalog-core/src/decimate.ts
@@ -1916,7 +1919,7 @@ var DVCore = (() => {
     const rows = Math.round(maxT * outRate) + 1;
     const dt = 1 / outRate;
     const q = (s) => '"' + String(s == null ? "" : s).replace(/"/g, '""') + '"';
-    const fmt2 = (v) => {
+    const fmt3 = (v) => {
       let s = v.toFixed(3);
       if (s.indexOf(".") >= 0) s = s.replace(/\.?0+$/, "");
       return s;
@@ -1937,7 +1940,7 @@ var DVCore = (() => {
     const cells = new Array(chans.length + 1);
     for (let r = 0; r < rows; r++) {
       const t = r * dt;
-      cells[0] = fmt2(t);
+      cells[0] = fmt3(t);
       for (let c = 0; c < chans.length; c++) {
         const ch = chans[c];
         const s = t * ch.freq;
@@ -1951,7 +1954,7 @@ var DVCore = (() => {
           const frac = s - i0;
           v = ch.vals[i0] * (1 - frac) + ch.vals[i0 + 1] * frac;
         } else v = ch.vals[i0];
-        cells[c + 1] = ch.isFloat ? fmt2(v) : String(Math.round(v));
+        cells[c + 1] = ch.isFloat ? fmt3(v) : String(Math.round(v));
       }
       out.push(cells.join(","));
     }
@@ -2095,6 +2098,202 @@ var DVCore = (() => {
       const cells = new Array(nCh + 1);
       cells[0] = fmt(time);
       for (let k = 0; k < nCh; k++) cells[k + 1] = fmt(dv.getFloat32(base + 8 + k * 8, true));
+      parts.push(cells.join(","));
+    }
+    return parts.join("\n");
+  }
+
+  // ../../../../websites/Alldatalogs/packages/datalog-core/src/dyno/trb-to-csv.ts
+  var MARKER = "HPCurveTest_DataTrace";
+  var TRB_SLOT_CHANNELS = {
+    0: { name: "Time", unit: "s" },
+    1: { name: "Distance", unit: "mi" },
+    2: { name: "Vehicle Speed", unit: "mph" },
+    5: { name: "Acceleration", unit: "mph/s" },
+    10: { name: "Roller Torque", unit: "lb-ft" },
+    23: { name: "Roller Torque (2)", unit: "lb-ft" },
+    26: { name: "Roller Torque (3)", unit: "lb-ft" },
+    28: { name: "Roller Torque B", unit: "lb-ft" },
+    31: { name: "Roller Torque B (2)", unit: "lb-ft" },
+    33: { name: "Roller Power", unit: "hp" },
+    36: { name: "Roller Power (2)", unit: "hp" },
+    38: { name: "Engine RPM", unit: "rpm" },
+    40: { name: "Air Temp", unit: "\xB0F" },
+    41: { name: "Barometer", unit: "inHg" },
+    42: { name: "Humidity", unit: "%" },
+    43: { name: "SAE Factor", unit: "ratio" },
+    52: { name: "Torque", unit: "lb-ft" },
+    53: { name: "Torque (corrected)", unit: "lb-ft" },
+    56: { name: "Power", unit: "hp" },
+    57: { name: "Power (corrected)", unit: "hp" },
+    60: { name: "AFR LH", unit: "afr" },
+    61: { name: "AFR RH", unit: "afr" }
+  };
+  function pstr(buf, o, maxLen) {
+    if (o + 2 > buf.length) return null;
+    const n = buf[o] | buf[o + 1] << 8;
+    if (n < 1 || n > maxLen || o + 2 + n > buf.length) return null;
+    for (let i = o + 2; i < o + 2 + n; i++) {
+      const b = buf[i];
+      if (b < 32 || b > 126) return null;
+    }
+    let s = "";
+    for (let i = o + 2; i < o + 2 + n; i++) s += String.fromCharCode(buf[i]);
+    return s;
+  }
+  function strBlock(buf, from, count, stopAt) {
+    const items = [];
+    let i = from;
+    while (items.length < count && i < stopAt) {
+      const s = pstr(buf, i, 80);
+      if (s !== null) {
+        items.push(s);
+        i += 2 + s.length;
+      } else {
+        i += 1;
+      }
+    }
+    return { items, next: i };
+  }
+  function oleDate(dv, o) {
+    if (o + 8 > dv.byteLength) return null;
+    const v = dv.getFloat64(o, true);
+    if (!isFinite(v) || v < 1 || v > 2e5) return null;
+    const secs = Math.round((v - 25569) * 86400);
+    return new Date(secs * 1e3).toISOString().replace(".000Z", "Z");
+  }
+  function findMarker(buf) {
+    const limit = Math.min(buf.length, 1 << 16);
+    const first = MARKER.charCodeAt(0);
+    outer: for (let i = 0; i + MARKER.length <= limit; i++) {
+      if (buf[i] !== first) continue;
+      for (let k = 1; k < MARKER.length; k++) {
+        if (buf[i + k] !== MARKER.charCodeAt(k)) continue outer;
+      }
+      return i;
+    }
+    return -1;
+  }
+  function isApTrb(buf) {
+    return buf.length > 512 && findMarker(buf) >= 0;
+  }
+  var MAX_CHANNELS = 1024;
+  function detectTrbLayout(buf) {
+    const mark = findMarker(buf);
+    if (mark < 0) throw new Error("Not a dyno .TRB run file (no HPCurveTest_DataTrace section).");
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const L = buf.length;
+    const scanEnd = Math.min(L - 24, mark + (1 << 16));
+    for (let o = mark + MARKER.length; o <= scanEnd; o += 2) {
+      const channels = dv.getUint16(o, true);
+      if (channels < 2 || channels > MAX_CHANNELS) continue;
+      const samples = dv.getUint32(o + 4, true);
+      if (samples < 2 || samples > 5e7) continue;
+      if (dv.getUint32(o + 8, true) !== 0) continue;
+      if (dv.getUint32(o + 12, true) !== channels) continue;
+      if (dv.getUint32(o + 16, true) !== 0) continue;
+      const dataStart = o + 20;
+      const dataBytes = samples * channels * 4;
+      if (dataStart + dataBytes > L) continue;
+      const tailBytes = L - dataStart - dataBytes;
+      if (tailBytes < channels * 2 || tailBytes % 2 !== 0) continue;
+      const slotMap = [];
+      for (let i = 0; i < tailBytes / 2; i++) slotMap.push(dv.getInt16(dataStart + dataBytes + i * 2, true));
+      const columnSlots = [];
+      let want = 0;
+      for (let slot = 0; slot < slotMap.length && want < channels; slot++) {
+        const c = slotMap[slot];
+        if (c === -1) continue;
+        if (c !== want) break;
+        columnSlots.push(slot);
+        want++;
+      }
+      return { dataStart, channels, samples, slotMap, columnSlots: want === channels ? columnSlots : null };
+    }
+    throw new Error("Not a readable dyno .TRB run file (no verifiable sample block).");
+  }
+  function readTrbRunInfo(input) {
+    const buf = input instanceof Uint8Array ? input : new Uint8Array(input);
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const mark = findMarker(buf);
+    const stop = mark > 0 ? mark : Math.min(buf.length, 4096);
+    const layout = detectTrbLayout(buf);
+    const shop = strBlock(buf, 6, 7, stop);
+    const customer = strBlock(buf, 126, 7, stop);
+    const note = strBlock(buf, 238, 1, stop);
+    const vehicle = strBlock(buf, 312, 7, stop);
+    const names = strBlock(buf, 418, 16, stop);
+    const units = strBlock(buf, names.next, 16, stop);
+    const meterChannels = names.items.map((n, i) => ({ name: n, unit: units.items[i] || "" }));
+    const last = layout.dataStart + (layout.samples - 1) * layout.channels * 4;
+    const duration = layout.samples > 1 ? dv.getFloat32(last, true) - dv.getFloat32(layout.dataStart, true) : 0;
+    return {
+      shop: shop.items,
+      customer: customer.items,
+      vehicle: vehicle.items,
+      note: note.items[0] || "",
+      runAt: oleDate(dv, 222),
+      savedAt: oleDate(dv, 400),
+      meterChannels,
+      channels: layout.channels,
+      samples: layout.samples,
+      duration: isFinite(duration) ? duration : 0
+    };
+  }
+  function fmt2(v) {
+    if (!isFinite(v)) return "";
+    if (v === 0) return "0";
+    const a = Math.abs(v);
+    if (a >= 1e-4 && a < 1e7) {
+      let s = v.toFixed(6);
+      if (s.indexOf(".") >= 0) s = s.replace(/\.?0+$/, "");
+      return s;
+    }
+    return v.toPrecision(7);
+  }
+  function columnLabels(layout) {
+    const names = [];
+    const units = [];
+    for (let c = 0; c < layout.channels; c++) {
+      const slot = layout.columnSlots ? layout.columnSlots[c] : -1;
+      const known = slot >= 0 ? TRB_SLOT_CHANNELS[slot] : void 0;
+      if (known) {
+        names.push(known.name);
+        units.push(known.unit);
+      } else {
+        names.push(slot >= 0 ? `Dyno Slot ${slot}` : `Channel ${c + 1}`);
+        units.push("");
+      }
+    }
+    return { names, units };
+  }
+  function convertTrbToCsv(input) {
+    const buf = input instanceof Uint8Array ? input : new Uint8Array(input);
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const layout = detectTrbLayout(buf);
+    const { channels, samples, dataStart } = layout;
+    const { names, units } = columnLabels(layout);
+    const col0 = (r) => dv.getFloat32(dataStart + r * channels * 4, true);
+    let timeIsCol0 = Math.abs(col0(0)) < 1 && isFinite(col0(samples - 1));
+    if (timeIsCol0) {
+      for (let r = 1; r < samples; r++) {
+        if (!(col0(r) >= col0(r - 1) - 1e-6)) {
+          timeIsCol0 = false;
+          break;
+        }
+      }
+    }
+    const span = timeIsCol0 ? col0(samples - 1) - col0(0) : 0;
+    const dt = timeIsCol0 && span > 0 ? span / (samples - 1) : 0.01;
+    const first = timeIsCol0 ? 1 : 0;
+    const parts = [];
+    parts.push("Offset," + names.slice(first).join(","));
+    parts.push("sec," + units.slice(first).join(","));
+    const cells = new Array(channels - first + 1);
+    for (let r = 0; r < samples; r++) {
+      const base = dataStart + r * channels * 4;
+      cells[0] = fmt2(timeIsCol0 ? col0(r) - col0(0) : r * dt);
+      for (let c = first; c < channels; c++) cells[c - first + 1] = fmt2(dv.getFloat32(base + c * 4, true));
       parts.push(cells.join(","));
     }
     return parts.join("\n");

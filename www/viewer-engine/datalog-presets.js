@@ -53,7 +53,7 @@ var NORMALIZED_CHANNEL_ROLES = {
   longitudinal_g:          { label: 'Accel G',            aliases: ['Accel G', 'Longitudinal G', 'Longitudinal Accel', 'X Accel Corrected', 'X Accel Correcte', 'Accel_G', 'Long G', 'G Force Longitudinal', 'Accelerometer X'] },
   boost_pressure:          { label: 'Boost',              aliases: ['BOOST', 'Boost Pressure', 'Boost PSIG'] },
   manifold_absolute_pressure: { label: 'MAP',             aliases: ['MAP', 'Manifold Absolute Pressure', 'Manifold Pressure', 'Measured Manifold Pressure', 'Intake Manifold Absolute Pressure'] },
-  barometric_pressure:     { label: 'Baro',               aliases: ['BARO', 'Barometric Pressure', 'Baro Pressure', 'Ambient Pressure'] },
+  barometric_pressure:     { label: 'Baro',               aliases: ['BARO', 'Barometric Pressure', 'Baro Pressure', 'Ambient Pressure', 'Barometer'] },
   throttle_position:       { label: 'Throttle',           aliases: ['TPS_PCT', 'Throttle Position', 'Throttle Angle', 'TPS', 'throttle position absolute'] },
   // The blade in DEGREES (Ford logs carry both 'Throttle Position' % and 'Throttle Angle' deg) -- the actual that pairs
   // with a desired throttle logged in degrees. 'Throttle Angle' stays an alias of throttle_position as well.
@@ -97,8 +97,8 @@ var NORMALIZED_CHANNEL_ROLES = {
   // FuelTech logs wideband as AFR under "O2 ..." names: O2 General is the measured wideband (what a
   // tuner watches); O2 Closed Loop is the corrected value; O2 Target is the target (NOT mapped -- it's
   // not a measurement). These feed the AFR gauge, which auto-ranges per fuel (this car runs methanol).
-  afr_bank_1:              { label: 'AFR Bank 1',         aliases: ['AFR Left', 'AFR Bank 1', 'AFR Average', 'Air Fuel Ratio Bank 1', 'O2 General'] },
-  afr_bank_2:              { label: 'AFR Bank 2',         aliases: ['AFR Right', 'AFR Bank 2', 'Air Fuel Ratio Bank 2'] },
+  afr_bank_1:              { label: 'AFR Bank 1',         aliases: ['AFR Left', 'AFR Bank 1', 'AFR Average', 'Air Fuel Ratio Bank 1', 'O2 General', 'AFR LH'] },
+  afr_bank_2:              { label: 'AFR Bank 2',         aliases: ['AFR Right', 'AFR Bank 2', 'Air Fuel Ratio Bank 2', 'AFR RH'] },
   ltft_bank_1:             { label: 'LTFT Bank 1',        aliases: ['LTFT_B1', 'Long Term Fuel Trim Bank 1', 'LTFT Bank 1', 'Long Term Fuel Trim 1', 'LTFT 1'] },
   ltft_bank_2:             { label: 'LTFT Bank 2',        aliases: ['LTFT_B2', 'Long Term Fuel Trim Bank 2', 'LTFT Bank 2', 'Long Term Fuel Trim 2', 'LTFT 2'] },
   // Holley 'CL Comp' (closed-loop compensation, %) is Holley's short-term fuel trim -- the live

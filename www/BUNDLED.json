@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-09-15T13:59:09.090Z",
+  "builtAt": "2026-09-21T15:01:50.975Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
     "siteRepo": "C:/websites/Alldatalogs",
-    "siteCommit": "b1d9e44"
+    "siteCommit": "d5663d1"
   },
   "files": {
     "viewer-engine/datalog-viewer.css": {
@@ -23,8 +23,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-histogram-editor.css"
     },
     "viewer-engine/datalog-presets.js": {
-      "sha256": "7c5d6246c4f89987c492ce09f99947e25622fc24204bc4693b49b53e76bb42ad",
-      "bytes": 90167,
+      "sha256": "3acdcddc7271bb89648c733b5b0bcb48b6eed0082d90dd75675dd18122f94386",
+      "bytes": 90200,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-presets.js"
     },
     "viewer-engine/datalog-gauges.js": {
@@ -88,8 +88,8 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-vehicles.js"
     },
     "viewer-engine/datalog-viewer.js": {
-      "sha256": "7f85326ff5c913d3896dd078c33373cc50d6b61b6ae8a5575857f8fa11bbd737",
-      "bytes": 511168,
+      "sha256": "03a328f5d0f1618a695dd31accaa967b4970e0d07d88120ee2957419d8f4d220",
+      "bytes": 512170,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.js"
     },
     "viewer-engine/runtime.js": {
@@ -128,18 +128,18 @@
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/app.css"
     },
     "viewer-engine/dvcore.js": {
-      "sha256": "3c91cac8a66c5a2369aaeedf7da5846612cfb343355754b0c0a8690b5c6657d8",
-      "bytes": 84898,
+      "sha256": "618c4a2e5e2751bb7725b3e2f78f8131cffaebf312511b6b18c75034b458c3b2",
+      "bytes": 92729,
       "from": "C:/websites/Alldatalogs/packages/datalog-core/browser/entry.ts (esbuild)"
     },
     "glue.js": {
-      "sha256": "b31cb4918c8a96b888f66933bb96d56a689d662d3449f1418918f597e236e15f",
-      "bytes": 903565,
+      "sha256": "00d27cbbc53c773aa69c4558f909eba0943ddcf1a5651f12055ffd6d5138cc38",
+      "bytes": 903699,
       "from": "C:/Users/kenbj/Code/alldatalogs-mobile/src/glue.ts (esbuild)"
     },
     "parse-worker.js": {
-      "sha256": "9b42e66572ffd829829f25f6cd393700e30a4cbc07a683a3cb8e5495c406b748",
-      "bytes": 166093,
+      "sha256": "6c17e9373cca509b203e3992c24c53c20766a5c83dcac361b4cd50de89e091ea",
+      "bytes": 174006,
       "from": "apps/web/public/parse-worker.js (esbuild)"
     },
     "index.html": {

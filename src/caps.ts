@@ -2,15 +2,16 @@
 import { DEFAULT_CAPS, type Caps } from './config.ts';
 import type { DeviceClass } from './native.ts';
 
-export type Fmt = 'CSV' | 'HPL' | 'MoTeC' | 'Holley';
+export type Fmt = 'CSV' | 'HPL' | 'MoTeC' | 'Holley' | 'Dyno';
 
 export function fmtOf(name: string): Fmt {
   const l = String(name || '').toLowerCase();
-  return l.endsWith('.hpl') ? 'HPL' : l.endsWith('.ld') ? 'MoTeC' : l.endsWith('.dl') ? 'Holley' : 'CSV';
+  return l.endsWith('.hpl') ? 'HPL' : l.endsWith('.ld') ? 'MoTeC' : l.endsWith('.dl') ? 'Holley'
+    : l.endsWith('.trb') ? 'Dyno' : 'CSV';
 }
 
 export function isLogName(name: string): boolean {
-  return /\.(hpl|csv|ld|dl|msl|mlg)$/i.test(String(name || ''));
+  return /\.(hpl|csv|ld|dl|msl|mlg|trb)$/i.test(String(name || ''));
 }
 
 /** Largest file (bytes) this tier + device may open. */

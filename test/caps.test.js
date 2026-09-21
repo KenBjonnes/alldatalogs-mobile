@@ -10,6 +10,8 @@ test('format from extension', () => {
   assert.equal(fmtOf('c.csv'), 'CSV'); assert.equal(fmtOf('noext'), 'CSV');
   assert.ok(isLogName('x.hpl') && isLogName('x.CSV') && !isLogName('x.png'));
   assert.ok(isLogName('idle.msl') && isLogName('IDLE.MLG'), 'MegaSquirt / TunerStudio text logs');
+  assert.equal(fmtOf('Type-6.TRB'), 'Dyno');
+  assert.ok(isLogName('run.trb') && isLogName('RUN.TRB'), 'chassis dyno run files');
 });
 test('free tier is one cap for every format and device', () => {
   for (const device of ['phone', 'tablet']) for (const fmt of ['CSV', 'HPL', 'MoTeC', 'Holley']) {

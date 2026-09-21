@@ -150,6 +150,7 @@ function decodeSync(fmt: string, buf: ArrayBuffer): any {
   if (fmt === 'HPL') csv = D.convertHplToCsv(bytes, (d: Uint8Array) => window.pako.inflateRaw(d), { interpolate: true, usUnits: true });
   else if (fmt === 'MoTeC') csv = D.convertLdToCsv(bytes);
   else if (fmt === 'Holley') csv = D.convertHolleyDlToCsv(bytes);
+  else if (fmt === 'Dyno') csv = D.convertTrbToCsv(bytes);
   else csv = new TextDecoder().decode(bytes);
   return D.parseDatalogCsv(csv);
 }

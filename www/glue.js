@@ -1678,8 +1678,8 @@
   };
   var DEFAULT_CAPS = {
     free: 15,
-    phone: { CSV: 80, HPL: 25, MoTeC: 40, Holley: 40 },
-    tablet: { CSV: 150, HPL: 50, MoTeC: 80, Holley: 80 },
+    phone: { CSV: 80, HPL: 25, MoTeC: 40, Holley: 40, Dyno: 40 },
+    tablet: { CSV: 150, HPL: 50, MoTeC: 80, Holley: 80, Dyno: 80 },
     fullCellsPhone: 8e6,
     fullCellsTablet: 2e7
   };
@@ -22887,10 +22887,10 @@ ${suffix}`;
   // src/caps.ts
   function fmtOf(name) {
     const l = String(name || "").toLowerCase();
-    return l.endsWith(".hpl") ? "HPL" : l.endsWith(".ld") ? "MoTeC" : l.endsWith(".dl") ? "Holley" : "CSV";
+    return l.endsWith(".hpl") ? "HPL" : l.endsWith(".ld") ? "MoTeC" : l.endsWith(".dl") ? "Holley" : l.endsWith(".trb") ? "Dyno" : "CSV";
   }
   function isLogName(name) {
-    return /\.(hpl|csv|ld|dl|msl|mlg)$/i.test(String(name || ""));
+    return /\.(hpl|csv|ld|dl|msl|mlg|trb)$/i.test(String(name || ""));
   }
   function capBytes(opts) {
     const caps2 = opts.caps || DEFAULT_CAPS;
@@ -22933,7 +22933,7 @@ ${suffix}`;
     const p = await pickLog();
     if (!p) return null;
     if (/\.hlg(zip)?$/i.test(p.name)) throw new Error("Haltech .hlg logs are encrypted by NSP. Export the log as CSV in NSP (File > Export) and open that.");
-    if (!isLogName(p.name)) throw new Error(`"${p.name}" is not a datalog. BigData opens .csv (incl. SCT, Haltech, FuelTech exports), .hpl, .dl, .msl and .ld files.`);
+    if (!isLogName(p.name)) throw new Error(`"${p.name}" is not a datalog. BigData opens .csv (incl. SCT, Haltech, FuelTech exports), .hpl, .dl, .msl and .ld files and .trb dyno runs.`);
     const blob = p.blob || (p.webPath ? await blobFromWebPath(p.webPath) : null);
     if (!blob) throw new Error("The picker returned no file data.");
     return { name: p.name, size: blob.size || p.size, file: new File([blob], p.name), origin: "picker", uri: p.path || p.webPath };
@@ -23299,6 +23299,7 @@ ${suffix}`;
     if (fmt === "HPL") csv = D.convertHplToCsv(bytes, (d) => window.pako.inflateRaw(d), { interpolate: true, usUnits: true });
     else if (fmt === "MoTeC") csv = D.convertLdToCsv(bytes);
     else if (fmt === "Holley") csv = D.convertHolleyDlToCsv(bytes);
+    else if (fmt === "Dyno") csv = D.convertTrbToCsv(bytes);
     else csv = new TextDecoder().decode(bytes);
     return D.parseDatalogCsv(csv);
   }

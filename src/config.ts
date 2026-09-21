@@ -22,8 +22,8 @@ export const ENTITLEMENT_KEYS: Record<string, string> = {
 export interface Caps { free: number; phone: Record<string, number>; tablet: Record<string, number>; fullCellsPhone: number; fullCellsTablet: number }
 export const DEFAULT_CAPS: Caps = {
   free: 15,
-  phone: { CSV: 80, HPL: 25, MoTeC: 40, Holley: 40 },
-  tablet: { CSV: 150, HPL: 50, MoTeC: 80, Holley: 80 },
+  phone: { CSV: 80, HPL: 25, MoTeC: 40, Holley: 40, Dyno: 40 },
+  tablet: { CSV: 150, HPL: 50, MoTeC: 80, Holley: 80, Dyno: 80 },
   fullCellsPhone: 8_000_000,
   fullCellsTablet: 20_000_000,
 };

@@ -304,6 +304,7 @@ function adlLogFormat(){
   if(/\.ld$/.test(n))  return 'ld';
   if(/\.csv$/.test(n)) return 'csv';
   if(/\.msl$/.test(n) || /\.mlg$/.test(n)) return 'msl';   // MegaSquirt / TunerStudio text log
+  if(/\.trb$/.test(n)) return 'trb';   // dyno run file (a dyno RUN, not an ECU log)
   var ext = n.indexOf('.') >= 0 ? n.split('.').pop() : '';
   return ext || 'unknown';
 }
@@ -774,6 +775,18 @@ function pickDefaultChannels(){
       any = true;
     });
   });
+  // A dyno run's whole point is the power curve, and neither power nor torque has a role (no ECU logs
+  // them), so the role pass above leaves a .TRB showing rpm and road speed alone. Put the curve on the
+  // lower graph whenever the log carries channels named exactly Power and Torque, which is what the
+  // dyno converter writes. Additive: it never displaces what the roles chose.
+  if(VIEWER_DATA && VIEWER_DATA.channels.indexOf('Power') !== -1 && VIEWER_DATA.channels.indexOf('Torque') !== -1){
+    ['Torque', 'Power'].forEach(function(ch){
+      if(VIEWER_SELECTED.indexOf(ch) !== -1) return;
+      VIEWER_SELECTED.push(ch);
+      VIEWER_PANEL_ASSIGN[ch] = GRAPH_SLOT_LOWER;
+      any = true;
+    });
+  }
   if(any) return;
   var picks = QUICK_CHANNELS.filter(function(c){ return VIEWER_DATA.channels.indexOf(c) !== -1; }).slice(0, 4);
   picks.forEach(function(ch, i){
@@ -852,7 +865,7 @@ function renderHeaderHtml(){
     '<div class="dlv-header-actions">' +
       '<button type="button" class="dlv-btn dlv-btn-menu" id="dlvAnalyzeBtn" title="Compare, performance data">Analyze &#9662;</button>' +
       '<button type="button" class="dlv-btn dlv-btn-menu" id="dlvLayoutBtn" title="Views, dashboards, download">Layout &#9662;</button>' +
-      '<input type="file" id="dlvCompareFile" accept=".csv,.hpl,.ld,.dl,.msl,.mlg" hidden>' +
+      '<input type="file" id="dlvCompareFile" accept=".csv,.hpl,.ld,.dl,.msl,.mlg,.trb" hidden>' +
       '<button type="button" class="dlv-close" id="viewerCloseBtn2" title="Close">&times;</button>' +
     '</div>' +
   '</div>' +
@@ -2452,6 +2465,9 @@ function builtinLoadLogFile(file){
     } else if(lower.slice(-3) === '.dl'){
       if(typeof DV.convertHolleyDlToCsv !== 'function') throw new Error('This page cannot decode Holley .dl files.');
       csvText = DV.convertHolleyDlToCsv(bytes);
+    } else if(lower.slice(-4) === '.trb'){
+      if(typeof DV.convertTrbToCsv !== 'function') throw new Error('This page cannot decode dyno .TRB files.');
+      csvText = DV.convertTrbToCsv(bytes);
     } else {
       csvText = decodeCsvBytes(bytes);
     }
