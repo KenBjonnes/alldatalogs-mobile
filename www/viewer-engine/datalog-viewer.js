@@ -2322,6 +2322,107 @@ function compareDatasetsFor(channels){
   return out;
 }
 
+// ---- Reading the comparison's value at the cursor ----------------------------------------------
+// Until 1.0.12 the compare log was draw-only: you could SEE the dashed trace but there was no number
+// for it anywhere (Ken, 2026-10-05). The legend now carries B's value under A's, which means three
+// things the overlay never had to get right.
+//
+// 1. B HAS ITS OWN CLOCK. The dashed trace is drawn at `t + offset`, so a cursor at primary time
+//    dataX is asking B about `dataX - offset`. Read B at its own time or every number is wrong by
+//    however far the two runs are nudged apart.
+// 2. B HAS ITS OWN SAMPLES. They do not line up with the primary's, so the primary's cursor index is
+//    meaningless here -- this does its own search over B's time array.
+// 3. B HAS ITS OWN LEVEL TABLE. For a categorical channel the stored number is an index into the
+//    table of the log it came from, and two logs enumerate their levels in whatever order the values
+//    first appeared. Formatting B's index through the PRIMARY's table would print a confident, wrong
+//    state name -- so formatCompareValue below always reads B's own table.
+
+// Min/max of a channel in the comparison log, computed once per log. Only the docked legend's width
+// fitting needs these, and it re-runs on every resize frame, so a scan per frame is not acceptable.
+// The cache lives on VIEWER_COMPARE, so loading a different comparison drops it with the log.
+function compareStatsFor(bName){
+  var cd = VIEWER_COMPARE && VIEWER_COMPARE.data;
+  if(!cd || !bName) return null;
+  var cache = VIEWER_COMPARE._stats || (VIEWER_COMPARE._stats = {});
+  if(Object.prototype.hasOwnProperty.call(cache, bName)) return cache[bName];
+  var vals = cd.series[bName], min = Infinity, max = -Infinity;
+  if(vals){
+    for(var i = 0; i < vals.length; i++){
+      var v = vals[i];
+      if(v == null || !isFinite(v)) continue;
+      if(v < min) min = v;
+      if(v > max) max = v;
+    }
+  }
+  return (cache[bName] = isFinite(min) ? { min: min, max: max } : null);
+}
+
+// The comparison log's value at a PRIMARY-time cursor. `bName` is the already-matched channel in B
+// (the legend resolves it once at render time rather than re-matching on every mouse move); without
+// it this matches on the spot. Returns null outside B's recording rather than clamping to its first
+// or last sample, because a flat number at the end of a trace that is not there reads as data.
+function compareValueAtCursor(ch, bName, dataX){
+  var cd = VIEWER_COMPARE && VIEWER_COMPARE.data;
+  if(!cd || dataX == null || !isFinite(dataX)) return null;
+  if(!bName){
+    var m = compareChannelFor(ch);
+    if(!m) return null;
+    bName = m.name;
+  }
+  var series = cd.series[bName], t = cd.time;
+  if(!series || !t || !t.length) return null;
+  var cmpT = dataX - compareOffsetMs() / 1000;       // primary-time -> compare-time
+  var last = t.length - 1;
+  if(cmpT < t[0] || cmpT > t[last]) return null;
+  // B's own time array, which has nothing to do with the primary's sample index.
+  var lo = 0, hi = last;
+  while(hi - lo > 1){
+    var mid = (lo + hi) >> 1;
+    if(t[mid] <= cmpT) lo = mid; else hi = mid;
+  }
+  // Categorical: nearest level. There is no value between "Hard Lock" and "Fixed Lock", the same
+  // rule valueAtCursor applies to the primary.
+  if(cd.textLevels && cd.textLevels[bName]) return series[(cmpT - t[lo] <= t[hi] - cmpT) ? lo : hi];
+  var v0 = series[lo], v1 = series[hi];
+  var ok0 = (v0 != null && isFinite(v0)), ok1 = (v1 != null && isFinite(v1));
+  if(!ok0) return ok1 ? v1 : null;
+  if(!ok1) return v0;
+  var span = t[hi] - t[lo];
+  return span > 0 ? v0 + (v1 - v0) * ((cmpT - t[lo]) / span) : v0;
+}
+
+// B's value as text. Categorical channels resolve through B'S OWN level table (see 3. above); a
+// plain number goes through the normal readout path so it rounds and picks up this channel's
+// code->label map exactly as the primary's number does.
+function formatCompareValue(v, bName, ch){
+  var cd = VIEWER_COMPARE && VIEWER_COMPARE.data;
+  var levels = (cd && cd.textLevels && cd.textLevels[bName]) || null;
+  if(levels){
+    if(v == null || !isFinite(v)) return '--';
+    return levels[Math.round(v)] != null ? levels[Math.round(v)] : '--';
+  }
+  // The primary is categorical and B is not: B's number is a code in its own right, so it must NOT
+  // be read through the primary's level table. Show the bare figure.
+  if(isTextChannel(ch)){
+    if(v == null || !isFinite(v)) return '--';
+    return (Math.abs(v - Math.round(v)) < 1e-9) ? String(Math.round(v)) : v.toFixed(2);
+  }
+  return formatReadoutValue(v, ch);
+}
+
+// "~" marks a value read from a channel that is NOT named the same in B. compareChannelFor matches
+// by role and by normalized name, which is what makes a comparison useful across two templates, but
+// a number from "Absolute Load (SAE)" shown silently under "Air Load" would be a quiet lie -- the
+// graph's own dataset label already says "(B: ...)", and this is the legend's version of that.
+var COMPARE_APPROX_MARK = '\u2248';
+// Outside B's recording this reads "--", the same as any value the primary does not have, rather
+// than emptying: a line that disappears and comes back changes the row's height, which in a docked
+// legend means a column fitted while it was empty overflows the moment the cursor enters B.
+function compareValueText(v, bName, ch, approx){
+  if(v == null) return '--';
+  return (approx ? COMPARE_APPROX_MARK : '') + formatCompareValue(v, bName, ch);
+}
+
 // A file name is often long and VIN-stamped ("Log-0009-1ZVBP8CF3D5246050.hpl"); the menu only needs
 // enough to tell the two logs apart.
 function shortLogName(n){
@@ -2954,9 +3055,21 @@ function renderGraphLegendHtml(panelNum){
     // Name + live value, then a dedicated remove "x" (only the x removes -- clicking the row itself
     // used to remove the channel, which was easy to trigger by accident). The x carries data-remove-ch,
     // which the generic remove handler (see wire below) already keys off.
+    // While a comparison is loaded, the dashed trace gets a value of its own under the primary's,
+    // in the faded trace colour with a dashed underline so the number and the line it belongs to
+    // read as the same thing. Only channels the comparison ACTUALLY has get one: no match means no
+    // dashed trace either, and an always-present empty line would cost a row of dock height for
+    // nothing. The matched name is resolved HERE, once, so the cursor loop never re-matches.
+    var cmp = VIEWER_COMPARE ? compareChannelFor(c) : null;
+    var cmpHtml = !cmp ? '' :
+      '<span class="dlv-legend-val-b" style="color:' + fadeColor(color, COMPARE_ALPHA) + '"' +
+        ' data-legend-ch-b="' + escapeHtml(c) + '" data-cmp-src="' + escapeHtml(cmp.name) + '"' +
+        (cmp.exact ? '' : ' data-cmp-approx="1"') +
+        ' title="' + escapeHtml(VIEWER_COMPARE.name) + ': ' + escapeHtml(cmp.name) + '">--</span>';
     return '<div class="dlv-legend-row">' +
            '<span class="dlv-legend-name" style="color:' + color + '" title="' + escapeHtml(c) + '">' + escapeHtml(label) + '</span>' +
            '<span class="dlv-legend-val" style="color:' + color + '" data-legend-ch="' + escapeHtml(c) + '">--</span>' +
+           cmpHtml +
            '<button type="button" class="dlv-legend-x" data-remove-ch="' + escapeHtml(c) + '" ' +
              'title="Remove ' + escapeHtml(label) + ' from this graph" aria-label="Remove ' + escapeHtml(label) + '">&times;</button>' +
            '</div>';
@@ -3013,6 +3126,9 @@ function dockConfigsFor(n){
   return out;
 }
 var DOCK_NAME_PX = 10.5, DOCK_VAL_PX = 20, DOCK_INLINE_VAL_PX = 14;
+// The comparison's value is smaller than the primary's: it is the reference, not what you read.
+// Must match the font sizes in the .dlv-legend-val-b rules, or the fit reserves the wrong width.
+var DOCK_B_VAL_PX = 13, DOCK_B_INLINE_VAL_PX = 11, DOCK_B_GAP = 4;
 // Whole plain words only; an empty abbreviation drops the word ("Wheel Spin Detected" -> "Wheel Spin").
 var DOCK_ABBREV = {
   estimated:'est', estimate:'est', estimation:'est', acceleration:'accel', accelerator:'accel',
@@ -3073,6 +3189,26 @@ function dockPickLabel(parts, maxW, px, weight, family){
   if(parts.unit && room >= dockTextW('WWWW', px, weight, family)) return dockMiddleFit(last, room, px, weight, family) + parts.unit;
   return dockMiddleFit(last, maxW, px, weight, family);
 }
+// The same, for the comparison's value under it: every text IT can show. Empty when no comparison
+// is loaded or this channel has no match in it, which is what makes the width reserve disappear
+// again the moment the comparison is removed.
+function dockWidestValuesB(ch, bName, approx){
+  var cd = VIEWER_COMPARE && VIEWER_COMPARE.data;
+  if(!cd || !bName) return [];
+  var mark = approx ? COMPARE_APPROX_MARK : '';
+  var levels = cd.textLevels && cd.textLevels[bName];
+  var out = ['--'];
+  if(levels){
+    levels.forEach(function(l){ if(l != null) out.push(mark + String(l)); });
+    return out;
+  }
+  var st = compareStatsFor(bName);
+  if(st){
+    out.push(mark + formatCompareValue(st.min, bName, ch), mark + formatCompareValue(st.max, bName, ch));
+    if(st.min < 0) out.push(mark + formatCompareValue(-Math.max(Math.abs(st.min), Math.abs(st.max)), bName, ch));
+  }
+  return out;
+}
 // Every text this channel's value can show, so the widest one is what the tile is sized for.
 function dockWidestValues(ch){
   var out = ['--'];
@@ -3092,10 +3228,16 @@ function dockApplyConfig(l, cfg, info, c, force){
   // 4 px of tile padding, 2 px of slack so a measuring rounding never trips the CSS ellipsis
   var tileW = (c.inner - c.gapX * (cfg.cols - 1)) / cfg.cols - 6;
   var nPx = DOCK_NAME_PX * cfg.scale, vPx = (inline ? DOCK_INLINE_VAL_PX : DOCK_VAL_PX) * cfg.scale;
+  var bPx = (inline ? DOCK_B_INLINE_VAL_PX : DOCK_B_VAL_PX) * cfg.scale;
   // Each row's widest value; inline, the name gets what is left beside it (at least a few letters).
   var minName = dockTextW('WWW', nPx, c.wN, c.family);
   var valueW = info.map(function(i){
-    return Math.max.apply(null, i.widest.map(function(t){ return dockTextW(t, vPx, c.wV, c.family); }));
+    var w = Math.max.apply(null, i.widest.map(function(t){ return dockTextW(t, vPx, c.wV, c.family); }));
+    if(!i.widestB.length) return w;
+    // A comparison value sits BESIDE the primary's inline (one line is the point of inline mode) and
+    // BELOW it when stacked, so it adds to the width in one mode and merely has to fit in the other.
+    var bw = Math.max.apply(null, i.widestB.map(function(t){ return dockTextW(t, bPx, c.wV, c.family); }));
+    return inline ? w + DOCK_B_GAP + bw : Math.max(w, bw);
   });
   var valuesFit = valueW.every(function(w){ return inline ? w + 4 + minName <= tileW : w <= tileW; });
   if(!valuesFit && !force) return false;
@@ -3124,7 +3266,10 @@ function fitDockedLegend(l){
   var gapX = parseFloat(cs.columnGap) || 4;   // the same 4 px in both modes (only the row gap differs)
   var info = rows.map(function(r){
     var ch = r.querySelector('[data-legend-ch]').getAttribute('data-legend-ch');
-    return { row: r, ch: ch, nameEl: r.querySelector('.dlv-legend-name'), parts: dockLabelParts(ch), widest: dockWidestValues(ch) };
+    var bEl = r.querySelector('[data-legend-ch-b]');
+    return { row: r, ch: ch, nameEl: r.querySelector('.dlv-legend-name'), parts: dockLabelParts(ch),
+             widest: dockWidestValues(ch),
+             widestB: bEl ? dockWidestValuesB(ch, bEl.getAttribute('data-cmp-src'), bEl.hasAttribute('data-cmp-approx')) : [] };
   });
   var c = { inner: inner, gapX: gapX, wN: wN, wV: wV, family: family };
   var configs = dockConfigsFor(rows.length);
@@ -7394,6 +7539,16 @@ function updateAtCursor(dataX){
     var lch = el.getAttribute('data-legend-ch');
     el.textContent = formatReadoutValue(valueAtCursor(lch, idx, dataX), lch);
   });
+  // The comparison's value, on the same cursor. Guarded so an ordinary single-log session pays
+  // nothing for this on a pointer that reports several hundred positions a second; the elements only
+  // exist while a comparison is loaded anyway, and a removed comparison re-renders the legends.
+  if(VIEWER_COMPARE){
+    document.querySelectorAll('[data-legend-ch-b]').forEach(function(el){
+      var lch = el.getAttribute('data-legend-ch-b'), src = el.getAttribute('data-cmp-src');
+      var txt = compareValueText(compareValueAtCursor(lch, src, dataX), src, lch, el.hasAttribute('data-cmp-approx'));
+      if(el.textContent !== txt) el.textContent = txt;
+    });
+  }
   // Race time and the scrubber playhead follow the CURSOR, not the nearest row -- snapping these to
   // sample times froze the playhead completely while the mouse crossed a sample's width, and made
   // the race clock read the same value for several pixels of travel.
