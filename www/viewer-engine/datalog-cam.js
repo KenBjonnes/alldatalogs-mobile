@@ -696,10 +696,12 @@
     if (state && state.modal && state.root && state.root.parentNode) state.root.parentNode.removeChild(state.root);
     if (state && !state.modal && state.root) state.root.innerHTML = '';
     document.removeEventListener('keydown', onKey);
+    global.removeEventListener('pointerup', onRelease, true);
     state = null;
     if (cb) { try { cb(); } catch (e) {} }   // the viewer stops pushing cursor values
   }
   function onKey(e) { if (e.key === 'Escape' && state && state.modal) close(); }
+  function onRelease() { if (state) state.dragging = false; }
 
   // ---- the diagram ------------------------------------------------------------------------------
   //
@@ -940,10 +942,15 @@
       state.epA = (L.exhaustCh && ve !== null) ? ve : 0;
     }
     if (liveRaf !== null) return;
-    liveRaf = (global.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(function () {
+    var raf = global.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
+    var tick = function () {
+      // Never rebuild while a slider is held: the values keep landing in state, and the repaint just
+      // waits for the release.
+      if (state && state.dragging) { liveRaf = raf(tick); return; }
       liveRaf = null;
       render();
-    });
+    };
+    liveRaf = raf(tick);
   }
   function isLive() { return !!(state && state.live); }
 
@@ -996,20 +1003,39 @@
     });
     var clearB = ovl.querySelector('.dlv-cam-clearb');
     if (clearB) clearB.addEventListener('click', function () { state.b = ''; render(); });
-    // The slider and the number box edit the same value; moving the slider repaints live, so the
-    // diagram follows the drag rather than waiting for release.
-    ovl.querySelectorAll('[data-pos]').forEach(function (el) {
-      var ev = el.type === 'range' ? 'input' : 'change';
-      el.addEventListener(ev, function () {
-        var K = cam();
-        var slot = el.getAttribute('data-slot'), which = el.getAttribute('data-pos');
-        var v = parseFloat(el.value);
-        if (!isFinite(v)) return;
-        v = K.clampPosition(state.engine, which, v);
-        var key = (which === 'intake' ? 'ip' : 'ep') + slot.toUpperCase();
-        state[key] = v;
-        render();
-      });
+    // The slider and the number box edit the same value.
+    //
+    // WHILE DRAGGING, ONLY THE NUMBER MOVES. The first version repainted on every 'input' event, and a
+    // repaint rebuilds this whole body -- the slider included -- so the control under the pointer was
+    // replaced after the first step and the drag died, leaving the thumb moving a notch at a time
+    // (Ken, 2026-10-29: "you can only move them in very small increments ... when you click on a slider
+    // you should be able to move it the entire way with just the number updating, then when you let go
+    // it redoes the graph"). So 'input' only mirrors the value into its number box, and the commit and
+    // repaint happen on 'change', which a range fires once, on release.
+    function commit(el) {
+      var K = cam();
+      var slot = el.getAttribute('data-slot'), which = el.getAttribute('data-pos');
+      var v = parseFloat(el.value);
+      if (!isFinite(v)) return;
+      v = K.clampPosition(state.engine, which, v);
+      var key = (which === 'intake' ? 'ip' : 'ep') + slot.toUpperCase();
+      state[key] = v;
+      state.dragging = false;
+      render();
+    }
+    ovl.querySelectorAll('input[type=range][data-pos]').forEach(function (el) {
+      var twin = function () {
+        return ovl.querySelector('input.dlv-cam-num[data-slot="' + el.getAttribute('data-slot') +
+          '"][data-pos="' + el.getAttribute('data-pos') + '"]');
+      };
+      // A drag in progress also holds off a repaint from the log, which would rebuild the slider out
+      // from under the pointer exactly the way the old per-step repaint did.
+      el.addEventListener('pointerdown', function () { state.dragging = true; });
+      el.addEventListener('input', function () { var n = twin(); if (n) n.value = el.value; });
+      el.addEventListener('change', function () { commit(el); });
+    });
+    ovl.querySelectorAll('input.dlv-cam-num[data-pos]').forEach(function (el) {
+      el.addEventListener('change', function () { commit(el); });
     });
   }
 
@@ -1067,6 +1093,7 @@
     if (!docked) ovl.addEventListener('click', function (e) { if (e.target === ovl) close(); });
     ovl.querySelector('.dlv-cam-x').addEventListener('click', close);
     document.addEventListener('keydown', onKey);
+    global.addEventListener('pointerup', onRelease, true);
     render();
   }
 
@@ -1083,6 +1110,7 @@
     ensureStyle();
     container.innerHTML = shellHtml(false);
     state = freshState(opts, container, false);
+    global.addEventListener('pointerup', onRelease, true);
     render();
     return true;
   }
