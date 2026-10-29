@@ -2485,6 +2485,22 @@ function camLiveChannels(){
   var exhaust = pick(['Exhaust Cam Angle'], 'exhaust_cam');
   return (intake || exhaust) ? { intake: intake, exhaust: exhaust } : null;
 }
+// Which Coyote this log came from, so the panel opens on the right generation instead of the last one
+// picked (Ken, 2026-10-29, on a 2024 log: "its only showing the gen 3 cams ... should be gen4"). The
+// host's vehicle record wins when it names a Mustang and a year; otherwise the VIN HP Tuners writes
+// into the file name. null = nothing to go on, and the panel keeps the last pick.
+function camEngineForLog(){
+  var K = window.DatalogCam;
+  if(!K || !K.vinEngine) return null;
+  var v = getCurrentVehicleMeta() || {};
+  var y = parseInt(v.year, 10);
+  if(isFinite(y) && /mustang/i.test(String(v.model || v.name || '')) && !/gt ?350|gt ?500|shelby|eco/i.test(String(v.model || v.name || ''))){
+    var g = y >= 2024 ? 'coyote-gen4' : y >= 2018 ? 'coyote-gen3' : y >= 2015 ? 'coyote-gen2' : y >= 2011 ? 'coyote-gen1' : null;
+    if(g) return { engine: g, why: y + ' Mustang, from this vehicle’s record.' };
+  }
+  var f = K.vinEngine(VIEWER_FILE_NAME);
+  return f ? { engine: f.engine, why: f.year + ' Mustang, from the VIN in this log’s file name.' } : null;
+}
 var VIEWER_CAM_LIVE = null;   // { intake, exhaust } while the cam panel is following this log
 function pushCamLive(idx, dataX){
   if(!VIEWER_CAM_LIVE || !window.DatalogCamUI || !VIEWER_DATA) return;
@@ -2512,12 +2528,20 @@ function openCamTiming(){
     // Dock below the header and the mode tabs, so the viewer's own controls stay reachable.
     var tabs = document.querySelector('#viewerOverlay .dlv-mode-tabs') || document.querySelector('#viewerOverlay .dlv-header');
     var top = tabs ? Math.round(tabs.getBoundingClientRect().bottom) : 0;
-    window.DatalogCamUI.open(live ? {
+    // ALWAYS docked from inside a log, whether or not the log says where the cams are. It used to fall
+    // back to the full-screen pop-up when there were no cam channels to follow, which covered the log
+    // you had open and stopped you scrolling it (Ken, 2026-10-29: "when in a log and you click analyze,
+    // it brings a pop up window up so you can't use the log or scroll through it"). With no channels it
+    // simply sits beside the log as a reference; with them it follows the cursor too.
+    var fromLog = camEngineForLog();
+    window.DatalogCamUI.open({
       docked: true,
       top: top,
-      live: live,
+      engine: fromLog ? fromLog.engine : undefined,
+      engineWhy: fromLog ? fromLog.why : undefined,
+      live: live || undefined,
       onClose: function(){ VIEWER_CAM_LIVE = null; },
-    } : {});
+    });
     if(live){
       VIEWER_CAM_LIVE = live;
       // Show where the cams are right now rather than waiting for the first mouse move.

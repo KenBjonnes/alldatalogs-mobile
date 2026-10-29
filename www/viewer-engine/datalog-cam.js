@@ -104,6 +104,21 @@
    */
   function separation(ev) { return (num(ev.icl) + num(ev.ecl)) / 2; }
 
+  /**
+   * The four events from what a cam card actually prints: duration at .050" and the two centrelines
+   * at park (ICL degrees ATDC, ECL degrees BTDC). Exact inverse of events() at park, for a lobe that
+   * is symmetric about its centreline:
+   *   ivo = durI/2 − ICL      ivc = durI/2 − 180 + ICL
+   *   evc = durE/2 − ECL      evo = durE/2 − 180 + ECL
+   * e.g. Comp 243420, 227/229 at 118/136 → −4.5 / 51.5 / 70.5 / −21.5, which is its card.
+   */
+  function fromCard(durI, durE, icl, ecl) {
+    return {
+      ivo: durI / 2 - icl, ivc: durI / 2 - 180 + icl,
+      evo: durE / 2 - 180 + ecl, evc: durE / 2 - ecl,
+    };
+  }
+
   /** Everything, in one call. */
   function solve(cam, intakePos, exhaustPos) {
     var ev = events(cam, intakePos, exhaustPos);
@@ -240,14 +255,14 @@
     },
     'coyote-gen3': {
       label: 'Coyote Gen 3 — 2018-23 Mustang GT',
-      stockCam: 'coyote-gen3-stock',
+      stockCam: 'coyote-gen3-stock-050',
       intake:  { min: -20, max: 50, park: 'mid-lock' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
       source: 'intake read from Ken’s calibration; exhaust park assumed unchanged from Gen 2',
     },
     'coyote-gen4': {
       label: 'Coyote Gen 4 — 2024+ Mustang GT',
-      stockCam: 'coyote-gen4-stock',
+      stockCam: 'coyote-gen4-stock-050',
       // Centre-parked intake like Gen 2 and Gen 3 (Ken, 2026-10-29). The travel figures are
       // Gen 2's, carried across on the strength of "Gen 2 and newer" rather than measured on a
       // Gen 4 -- no cam card for this engine exists yet, so treat the LIMITS as provisional even
@@ -271,6 +286,12 @@
   // are off a cam card, some are derived from a calibration, and some rest on a builder-endorsed
   // figure that no factory document confirms. A tuner deciding whether to trust a number needs to see
   // which, and a row that says where it came from is worth more than one that looks authoritative.
+  //
+  // `valveIntake` / `valveExhaust`, where present, are VALVE lift as the maker printed it, and win
+  // over lobe lift × ratio: the aftermarket prints valve lift, and dividing it by a guessed ratio
+  // only to multiply it back would be a round trip that can only add error.
+  var COMP3_NOTE = 'compcams.com: duration @ .050" and LSA only. Placed by the intake centreline from the cam ' +
+    'card (ECL = 2 × LSA − ICL); advertised figures are compcams.com’s current ones (Summit prints 6-10° more).';
   var CAMS = {
     // --- factory ---------------------------------------------------------------------------------
     'coyote-gen1-stock': {
@@ -289,17 +310,17 @@
                   'the intake is Gen 1’s lobe sitting 30° more advanced.',
     },
     'coyote-gen3-stock': {
-      label: 'Stock Coyote Gen 3 (2018-23)', engine: 'coyote-gen3', stock: true,
+      label: 'Stock Coyote Gen 3 (2018-23) — calibration events', engine: 'coyote-gen3', stock: true,
       // At the CALIBRATION's checking height, not .050" — Gen 3's .050" duration is unpublished.
       ivo: 20, ivc: 59, evo: 75, evc: 9, height: 'calibration',
       seatIntake: 259, seatExhaust: 264, lobeIntake: null, lobeExhaust: null,
       provenance: 'intake read from Ken’s calibration (open 340 / close 599 → 259°, ICL ' +
-                  '109.5 ATDC); exhaust closing 369 → 9° ATDC, its duration inferred by ' +
-                  'assuming the Gen 2 park ECL of 123° BTDC still applies. Ford valve lift 14 mm; ' +
-                  'lobe lift unpublished.',
+                  '109.5 ATDC); exhaust closing 369 → 9° ATDC, its duration set by the park ECL of ' +
+                  '123° BTDC, which L&M’s 2018 tune sheet prints as the stock exhaust centreline. ' +
+                  'Ford valve lift 14 mm; lobe lift unpublished.',
     },
     'coyote-gen4-stock': {
-      label: 'Stock Coyote Gen 4 (2024+)', engine: 'coyote-gen4', stock: true,
+      label: 'Stock Coyote Gen 4 (2024+) — calibration events', engine: 'coyote-gen4', stock: true,
       ivo: -10, ivc: 90, evo: 80, evc: 14, height: 'calibration',
       seatIntake: 260, seatExhaust: 274, lobeIntake: null, lobeExhaust: null,
       provenance: 'intake read from Ken’s calibration (open 370 / close 630 → 260°, ICL ' +
@@ -307,6 +328,36 @@
                   '→ 14° ATDC; its duration ASSUMES a 123° BTDC park centreline carried ' +
                   'over, which Gen 4 may well have changed. Treat the exhaust as provisional.',
     },
+
+    // --- stock Gen 3 / Gen 4 at .050", ESTIMATED -----------------------------------------------------
+    // Ken, 2026-10-29: the Gen 3 durations are "way too high ... we need them at .050". They are: the
+    // rows above are at the calibration's own (low, unstated) checking height. Nobody publishes a .050"
+    // figure for either engine -- searched 2026-10-29: Ford, Comp, L&M, GSC, the forums; the one
+    // ".050" figure in circulation (Summit's 260/263) is Gen 1's bare duration pair with no height.
+    // So these are DERIVED, and say so in their names:
+    //   * Gen 3's calibration events are IDENTICAL to Gen 2's (340 / 599 / 369 against 340 / 239 /
+    //     369; 599 and 239 are the same event), and Gen 2's cam is MEASURED at 211/211 @ .050" (Comp's
+    //     worksheet). The calibration-to-.050 gap on Gen 2 is 48° intake (259 → 211) and 53° exhaust
+    //     (264 → 211).
+    //   * Gen 3: 259 − 48 = 211 and 264 − 53 = 211, at the calibration's 109.5 ICL and L&M's printed
+    //     123 park ECL. A LOWER bound: Gen 3 lifts 14 mm against Gen 2's 13, which spends a little
+    //     more crank angle above .050".
+    //   * Gen 4: the same gaps on its 260 / 274 → 212 / 221, at the calibration's 140 ICL and an
+    //     assumed 123 ECL. Shakier -- different lift (Ford: 13 mm) and the exhaust is itself inferred.
+    // One degreed stock cam replaces both rows.
+    'coyote-gen3-stock-050': Object.assign({ label: 'Stock Coyote Gen 3 (2018-23) — .050 ESTIMATE', engine: 'coyote-gen3', stock: true },
+      fromCard(211, 211, 109.5, 123), { height: '.050', seatIntake: 259, seatExhaust: 264,
+      valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'ESTIMATE, not published anywhere: Gen 2’s measured 211/211 @ .050" carried across, because Gen 3’s ' +
+                  'calibration events are identical to Gen 2’s. Park ICL 109.5 from the calibration, ECL 123 from L&M’s ' +
+                  'tune sheet, valve lift Ford’s 14 mm. Likely a few degrees short (more lift than Gen 2). Degree a ' +
+                  'stock cam to replace it.' }),
+    'coyote-gen4-stock-050': Object.assign({ label: 'Stock Coyote Gen 4 (2024+) — .050 ESTIMATE', engine: 'coyote-gen4', stock: true },
+      fromCard(212, 221, 140, 123), { height: '.050', seatIntake: 260, seatExhaust: 274,
+      valveIntake: 0.512, valveExhaust: 0.512,
+      provenance: 'ESTIMATE, not published anywhere: the calibration’s 260/274 less Gen 2’s measured calibration-to-.050 ' +
+                  'gaps (48° / 53°). ICL 140 from the calibration; ECL 123 ASSUMED carried over. Valve lift 13 mm per ' +
+                  'Ford’s Gen 4 tech sheet. Treat as rough until a stock cam is degreed.' }),
 
     // --- Comp, Gen 1 (191xxx NA / Blower series) --------------------------------------------------
     // From Ken's own master list, which the proofread checked against Comp's published @.050"
@@ -351,7 +402,125 @@
     'comp-243480': { label: 'Comp CY-r 243480', engine: 'coyote-gen2',
       ivo: -4.5, ivc: 63.5, evo: 86.5, evc: -21.5, height: '.050', seatIntake: 275, seatExhaust: 275,
       lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 239/245 @ .050", park ICL 124.0 / ECL 144.0' },
+
+    // --- L&M Engines ------------------------------------------------------------------------------
+    // L&M prints duration @ .050" and, for these, the centrelines "with Phasers Parked" in so many
+    // words, which makes them the best-placed aftermarket Gen 3 cams found. Lift is printed with no
+    // basis; .551" can only be valve lift on this follower, so it is carried as valve lift.
+    'lm-c18-iope': Object.assign({ label: 'L&M LM-C18-IOPE (Intake Only + Paired Exhaust)', engine: 'coyote-gen3' },
+      fromCard(232, 234, 117, 135), { height: '.050', valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'lmengines.com: 232/234 @ .050", "Parked Centerlines Intake - 117, Exhaust - 135". ' +
+                  'Events computed from those, assuming symmetric lobes. Advertised duration unpublished.' }),
+    'lm-c18-lm2': Object.assign({ label: 'L&M LM-C18-LM2', engine: 'coyote-gen3' },
+      fromCard(239, 244, 117, 133), { height: '.050', valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'lmengines.com: 239/244 @ .050", "Parked Centerlines Intake - 117, Exhaust - 133". ' +
+                  'Events computed from those, assuming symmetric lobes. Advertised duration unpublished.' }),
+    // Intake-only: L&M gives the intake's two half-events about its centreline (an asymmetric lobe,
+    // so these are exact rather than assumed), and the exhaust stays stock.
+    'lm-c11-io': { label: 'L&M LM-C11-IO (Intake Only, stock exhaust)', engine: 'coyote-gen1',
+      ivo: -(129 - 107), ivc: 129 + 120 - 180, evo: 48.5, evc: -17.5, height: '.050',
+      valveIntake: 0.472, lobeExhaust: 0.216,
+      provenance: 'lmengines.com: intake "asymmetrical 107 deg Open & 120 deg Close" @ .050" about a ' +
+                  '129° parked centreline; the exhaust is the stock Gen 1 cam.' },
+
+    // --- GSC Power-Division -----------------------------------------------------------------------
+    // GSC prints a "Center Line" pair without saying what it is measured from. It is read here as
+    // PARK, because that is the only reading that fits: Gen 3's 120/138 sits beside L&M's parked
+    // 117/135 and Comp's parked Gen 2 118-124 / 136-144, and Gen 4's intake 142-146 lands next to the
+    // 140° park centreline read independently out of Ken's Gen 4 calibration. Still an inference --
+    // the provenance says so.
+    'gsc-7073s1': { label: 'GSC S1 — 7073S1', engine: 'coyote-gen3',
+      ivo: -5, ivc: 57, evo: 81, evc: -17, height: '.050', seatIntake: 290, seatExhaust: 300,
+      valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: GSC_CARD('232/244') },
+    'gsc-7073s2': { label: 'GSC S2 — 7073S2', engine: 'coyote-gen3',
+      ivo: -2, ivc: 61, evo: 83, evc: -11, height: '.050', seatIntake: 292, seatExhaust: 316,
+      valveIntake: 0.560, valveExhaust: 0.560,
+      provenance: GSC_CARD('239/252') },
+    'gsc-7073r2': { label: 'GSC R2 — 7073R2', engine: 'coyote-gen3',
+      ivo: -2, ivc: 61, evo: 77, evc: -16, height: '.050', seatIntake: 292, seatExhaust: 304,
+      valveIntake: 0.560, valveExhaust: 0.560,
+      provenance: GSC_CARD('239/241') },
+    'gsc-7073r3': { label: 'GSC R3 — 7073R3', engine: 'coyote-gen3',
+      ivo: 1, ivc: 65, evo: 83, evc: -11, height: '.050', seatIntake: 300, seatExhaust: 316,
+      valveIntake: 0.560, valveExhaust: 0.560,
+      provenance: GSC_CARD('246/252') },
+    'gsc-7079s1': Object.assign({ label: 'GSC S1 — 7079S1', engine: 'coyote-gen4' },
+      fromCard(232, 235, 142, 134), { height: '.050', seatIntake: 290, seatExhaust: 292,
+      valveIntake: 0.551, valveExhaust: 0.551, provenance: GSC_NOTE('232/235 @ .050", "Center Line" 142/134') }),
+    'gsc-7079r2': Object.assign({ label: 'GSC R2 — 7079R2', engine: 'coyote-gen4' },
+      fromCard(239, 241, 146, 138), { height: '.050', seatIntake: 292, seatExhaust: 304,
+      valveIntake: 0.560, valveExhaust: 0.560, provenance: GSC_NOTE('239/241 @ .050", "Center Line" 146/138') }),
+    'gsc-7079r3': Object.assign({ label: 'GSC R3 — 7079R3', engine: 'coyote-gen4' },
+      fromCard(246, 252, 146, 138), { height: '.050', seatIntake: 300, seatExhaust: 316,
+      valveIntake: 0.560, valveExhaust: 0.560, provenance: GSC_NOTE('246/252 @ .050", "Center Line" 146/138') }),
+
+    // --- Comp, Gen 3 (433xxx) — the centreline comes off YOUR cam card ----------------------------
+    // Comp publishes duration @ .050" and LSA for these and no centreline anywhere. On every Gen 2
+    // card Comp's LSA is exactly the park separation ((ICL + ECL) / 2: 243420 is (118 + 136) / 2 =
+    // 127, its LSA), so one number -- the intake centreline printed on the card in the box --
+    // places the whole cam: ECL = 2 × LSA − ICL. Until it is typed in, the cam is drawn at Comp's
+    // Gen 2 practice of an intake ground 9° advanced of the LSA, and says so on screen.
+    'comp-433420': { label: 'Comp XFI NSR Stage 1 — 433420', engine: 'coyote-gen3', card: { durI: 228, durE: 230, lsa: 123 },
+      height: '.050', seatIntake: 270, seatExhaust: 277, valveIntake: 0.550, valveExhaust: 0.550, provenance: COMP3_NOTE },
+    'comp-433430': { label: 'Comp XFI NSR Stage 2 — 433430', engine: 'coyote-gen3', card: { durI: 232, durE: 234, lsa: 125 },
+      height: '.050', seatIntake: 274, seatExhaust: 281, valveIntake: 0.550, valveExhaust: 0.550, provenance: COMP3_NOTE },
+    'comp-433560': { label: 'Comp XFI VSR Stage 1 Blower/Turbo — 433560', engine: 'coyote-gen3', card: { durI: 232, durE: 238, lsa: 126 },
+      height: '.050', seatIntake: 274, seatExhaust: 285, valveIntake: 0.580, valveExhaust: 0.580, provenance: COMP3_NOTE },
+    'comp-433580': { label: 'Comp XFI VSR Stage 2 Blower/Turbo — 433580', engine: 'coyote-gen3', card: { durI: 240, durE: 246, lsa: 128 },
+      height: '.050', seatIntake: 282, seatExhaust: 293, valveIntake: 0.590, valveExhaust: 0.590,
+      provenance: COMP3_NOTE + ' Summit prints LSA 130 and .580" exhaust lift for this one; Comp’s own 128 / .590" is used.' },
+    'comp-433700': { label: 'Comp Thumpr NSR Stage 1 — 433700', engine: 'coyote-gen3', card: { durI: 228, durE: 238, lsa: 124 },
+      height: '.050', seatIntake: 270, seatExhaust: 300, valveIntake: 0.550, valveExhaust: 0.540, provenance: COMP3_NOTE },
+    'comp-433710': { label: 'Comp Mutha’ Thumpr NSR Stage 2 — 433710', engine: 'coyote-gen3', card: { durI: 232, durE: 242, lsa: 126 },
+      height: '.050', seatIntake: 274, seatExhaust: 304, valveIntake: 0.550, valveExhaust: 0.540, provenance: COMP3_NOTE },
   };
+
+  // GSC's Gen 3 cam cards (power-division.com/pages/cam-cards) print all four events at .050" valve lift,
+  // so those rows carry the card's events as printed. They put the centrelines a degree or two off the
+  // printed 120/138 -- normal for an asymmetric lobe, whose peak is not midway between its .050 points.
+  // R2's card prints exhaust 245 but its own events sum to 241, which is what the product page says.
+  function GSC_CARD(durs) {
+    return 'GSC cam card: ' + durs + ' @ .050", events as printed, centrelines printed 120 ATDC / 138 BTDC ' +
+      '(LSA 129). The card does not say these are at park; read that way, as every other maker’s park ' +
+      'centrelines for Gen 3 sit within a few degrees. GSC prints its follower ratio as 1.89.';
+  }
+  function GSC_NOTE(s) {
+    return 'power-division.com: ' + s + '. GSC does not say what its centreline is measured from; it is ' +
+      'read as phasers parked (see the note in the code). Events computed assuming symmetric lobes.';
+  }
+  // Comp's Gen 2 cards grind the intake 9-10° advanced of the LSA; with no Gen 3 card it is the
+  // nearest published practice, and it is only ever a stand-in until the real card is typed in.
+  var CARD_ASSUMED_ADVANCE = 9;
+
+  /**
+   * A cam ready to draw. Most rows already are; a row that needs its centreline from the user's
+   * cam card (`card`) gets its events from the centreline supplied, or the stated stand-in.
+   */
+  function resolveCam(cam, icl) {
+    if (!cam || !cam.card) return cam;
+    var c = cam.card;
+    var assumed = !(typeof icl === 'number' && isFinite(icl));
+    var i = assumed ? c.lsa - CARD_ASSUMED_ADVANCE : icl;
+    return Object.assign({}, cam, fromCard(c.durI, c.durE, i, 2 * c.lsa - i),
+      { cardIcl: i, cardIclAssumed: assumed });
+  }
+
+  /**
+   * "Your own cam card" for an engine: four numbers off any card -- duration @ .050" and the two
+   * park centrelines -- for the cams nobody publishes (every Gen 4 aftermarket cam but GSC's, for one).
+   */
+  function customCam(engineId, c) {
+    c = c || {};
+    var e = ENGINES[engineId] ? engineId : 'coyote-gen1';
+    var d = { durI: 230, durE: 234, icl: 118, ecl: 134 };
+    var v = {};
+    Object.keys(d).forEach(function (k) { v[k] = (typeof c[k] === 'number' && isFinite(c[k])) ? c[k] : d[k]; });
+    return Object.assign({ label: 'Your own cam card', engine: e, custom: v },
+      fromCard(v.durI, v.durE, v.icl, v.ecl),
+      { height: '.050', provenance: 'typed in from a cam card: ' + v.durI + '/' + v.durE + ' @ .050", park ICL ' +
+        v.icl + ' / ECL ' + v.ecl + '. Events computed assuming symmetric lobes.' });
+  }
 
   // The roller finger follower's ratio. Nobody publishes it — not Ford, not the cam grinders, and
   // Comp notes that a finger follower's ratio "is never static" through the lift curve anyway. It is
@@ -360,6 +529,7 @@
   // default here rather than a constant, and the UI exposes it, because the only honest version of
   // this number is one the user can replace with what they measured.
   var FOLLOWER_RATIO = 2.01;
+  var SEAT_RAMP_ASSUMED = 20;
 
   /** Valve lift at full lift, or null when the cam's lobe lift is unknown. */
   function valveLift(lobeLift, ratio) {
@@ -380,10 +550,13 @@
   // because the cams it is least true of are exactly the ones people reach for.
   function liftProfile(cam, intakePos, exhaustPos, ratio) {
     var ev = solve(cam, intakePos, exhaustPos);
-    var rampI = (num(cam.seatIntake) - ev.intakeDuration) / 2;
-    var rampE = (num(cam.seatExhaust) - ev.exhaustDuration) / 2;
-    var liftI = valveLift(cam.lobeIntake, ratio);
-    var liftE = valveLift(cam.lobeExhaust, ratio);
+    // No published seat duration: draw the ramp with the 20° a side (40° total) that every Comp
+    // Coyote grind with both figures shows, and say it was assumed. The diagram is the only consumer.
+    var hasSeat = function (v) { return typeof v === 'number' && isFinite(v); };
+    var rampI = hasSeat(cam.seatIntake) ? (cam.seatIntake - ev.intakeDuration) / 2 : SEAT_RAMP_ASSUMED;
+    var rampE = hasSeat(cam.seatExhaust) ? (cam.seatExhaust - ev.exhaustDuration) / 2 : SEAT_RAMP_ASSUMED;
+    var liftI = hasSeat(cam.valveIntake) ? cam.valveIntake : valveLift(cam.lobeIntake, ratio);
+    var liftE = hasSeat(cam.valveExhaust) ? cam.valveExhaust : valveLift(cam.lobeExhaust, ratio);
     // Intake: opens ev.ivo BTDC (so at −ivo in this frame) and closes ev.ivc ABDC (at 180 + ivc).
     var iOpen = -ev.ivo, iClose = 180 + ev.ivc;
     // Exhaust: opens ev.evo BBDC, i.e. a full stroke plus that before the overlap TDC, and closes
@@ -392,6 +565,7 @@
     return {
       events: ev,
       symmetricLobeAssumed: true,
+      seatAssumed: !hasSeat(cam.seatIntake) || !hasSeat(cam.seatExhaust),
       intake: {
         seatOpen: iOpen - rampI, open: iOpen, peak: ev.icl, close: iClose, seatClose: iClose + rampI,
         peakLift: liftI,
@@ -415,6 +589,57 @@
         return A.label < B.label ? -1 : A.label > B.label ? 1 : 0;
       })
       .map(function (k) { return { id: k, cam: CAMS[k] }; });
+  }
+
+  // ---- which engine a log came from ---------------------------------------------------------------
+  //
+  // Ken, 2026-10-29, opening a 2024 log: "its only showing the gen 3 cams as an option ... should be
+  // gen4". The panel opened on whatever engine was picked last. The log itself rarely says -- the .hpl
+  // decoder reads no vehicle block -- but HP Tuners names its logs with the VIN ("Log-0012-<VIN>.hpl",
+  // "log-000011-<date>-<VIN>.hpl"), and a Mustang VIN carries the model year and the engine.
+  //
+  // Only a VIN whose CHECK DIGIT is right is believed: HP Tuners writes a placeholder VIN on some logs
+  // (it starts "HPT"), and a year letter read out of that would be a confident wrong answer. Only a
+  // Mustang (VIN line P8, 1ZV or 1FA) with a Coyote engine letter is placed -- F is the 5.0 GT, 0 the
+  // Bullitt / Mach 1 / Dark Horse 5.0 -- because the truck generations split on different years and the
+  // GT350 / GT500 / EcoBoost are not Coyotes. Anything else returns null and the last pick stands.
+  var VIN_TR = { A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7, H: 8, J: 1, K: 2, L: 3, M: 4, N: 5, P: 7,
+    R: 9, S: 2, T: 3, U: 4, V: 5, W: 6, X: 7, Y: 8, Z: 9 };
+  var VIN_W = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
+  var VIN_YEARS = 'ABCDEFGHJKLMNPRSTVWXY123456789';   // 2010 .. 2039
+  function vinValid(v) {
+    var sum = 0;
+    for (var i = 0; i < 17; i++) {
+      var ch = v.charAt(i);
+      var n = /\d/.test(ch) ? +ch : VIN_TR[ch];
+      if (n === undefined) return false;
+      sum += n * VIN_W[i];
+    }
+    var r = sum % 11;
+    return v.charAt(8) === (r === 10 ? 'X' : String(r));
+  }
+  function mustangGen(year) {
+    if (year >= 2024) return 'coyote-gen4';
+    if (year >= 2018) return 'coyote-gen3';
+    if (year >= 2015) return 'coyote-gen2';
+    if (year >= 2011) return 'coyote-gen1';
+    return null;
+  }
+  /** { engine, year, vin } from the first valid Coyote-Mustang VIN in `text` (a file name), or null. */
+  function vinEngine(text) {
+    var re = /(?:^|[^A-Z0-9])([A-HJ-NPR-Z0-9]{17})(?=$|[^A-Z0-9])/g, m;
+    var s = String(text || '').toUpperCase();
+    while ((m = re.exec(s))) {
+      var v = m[1];
+      if (!vinValid(v)) continue;
+      if (!/^(1ZV|1FA)/.test(v) || v.substr(4, 2) !== 'P8') return null;   // a real VIN, not a Mustang
+      if (v.charAt(7) !== 'F' && v.charAt(7) !== '0') return null;           // a Mustang, not a Coyote
+      var yi = VIN_YEARS.indexOf(v.charAt(9));
+      var year = yi < 0 ? null : 2010 + yi;
+      var engine = year ? mustangGen(year) : null;
+      return engine ? { engine: engine, year: year, vin: v } : null;
+    }
+    return null;
   }
 
   /**
@@ -492,6 +717,11 @@
     calCloseAbdc: calCloseAbdc,
     calCloseAtdc: calCloseAtdc,
     camsFor: camsFor,
+    fromCard: fromCard,
+    resolveCam: resolveCam,
+    customCam: customCam,
+    vinEngine: vinEngine,
+    CARD_ASSUMED_ADVANCE: CARD_ASSUMED_ADVANCE,
     checkPosition: checkPosition,
     clampPosition: clampPosition,
     fordAt: fordAt,
@@ -499,7 +729,7 @@
     CAMS: CAMS,
     FORD_WOT: FORD_WOT,
     FOLLOWER_RATIO: FOLLOWER_RATIO,
-    VERSION: 'cam@1.0.0',
+    VERSION: 'cam@1.1.0',
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
 
@@ -599,6 +829,14 @@
     '.dlv-cam-clearb:hover{color:var(--red, #d1132e);}',
     '.dlv-cam-sel{width:100%;background:var(--card, #121216);color:var(--text, #e8e8ea);',
     '  border:1px solid var(--card-border, #26262c);border-radius:5px;padding:5px 7px;font:inherit;font-size:12px;}',
+    '.dlv-cam-engwhy{color:var(--text, #e8e8ea);font-weight:700;}',
+    '/* The numbers off a cam card, for a grind whose timing is not published in full. */',
+    '.dlv-cam-cardin{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:8px;align-items:flex-end;}',
+    '.dlv-cam-cardin label{display:flex;flex-direction:column;gap:2px;font-size:9.5px;font-weight:700;',
+    '  letter-spacing:.3px;text-transform:uppercase;color:var(--text-dim, #9a9aa2);}',
+    '.dlv-cam-cardin .dlv-cam-num{width:76px;}',
+    '.dlv-cam-cardin b{font-size:12px;color:var(--text, #e8e8ea);padding:5px 0;}',
+    '.dlv-cam-cardin em{flex:1 1 100%;font-style:normal;font-size:9.5px;color:var(--text-faint, #5c5c66);}',
     '.dlv-cam-pos{display:grid;grid-template-columns:58px 1fr 68px;align-items:center;gap:7px;margin-top:8px;',
     '  font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--text-dim, #9a9aa2);}',
     '.dlv-cam-pos input[type=range]{width:100%;accent-color:var(--red, #d1132e);}',
@@ -811,10 +1049,21 @@
   // ---- one cam's controls ---------------------------------------------------------------------------
   function camColumnHtml(slot, engineId, sel, ip, ep, fromLog) {
     var K = cam();
-    var opts = K.camsFor(engineId).map(function (x) {
-      return '<option value="' + esc(x.id) + '"' + (x.id === sel ? ' selected' : '') + '>' +
-        esc(x.cam.label) + '</option>';
-    }).join('');
+    // Grouped, so the aftermarket grinds read as a list of their own rather than hiding under the
+    // stock cam (Ken, 2026-10-29: "need to be able to select aftermarket cams if they are in the
+    // list"), and the last entry is always the user's own card, for the cams nobody publishes.
+    var opt = function (id, label) {
+      return '<option value="' + esc(id) + '"' + (id === sel ? ' selected' : '') + '>' + esc(label) + '</option>';
+    };
+    var list = K.camsFor(engineId);
+    var factory = list.filter(function (x) { return x.cam.stock; });
+    var after = list.filter(function (x) { return !x.cam.stock; });
+    var opts =
+      '<optgroup label="Factory">' + factory.map(function (x) { return opt(x.id, x.cam.label); }).join('') + '</optgroup>' +
+      '<optgroup label="Aftermarket">' + (after.length
+        ? after.map(function (x) { return opt(x.id, x.cam.label + (x.cam.card ? ' (needs card ICL)' : '')); }).join('')
+        : '<option disabled>none published with timing data yet</option>') + '</optgroup>' +
+      '<optgroup label="Other">' + opt(CUSTOM_ID, 'Your own cam card…') + '</optgroup>';
     var e = K.ENGINES[engineId] || { intake: { min: -50, max: 50 }, exhaust: { min: -50, max: 50 } };
     // A position driven by the log is shown but not editable: typing into it would be overwritten
     // on the next cursor move, which reads as the box fighting you. The number box shows the RAW
@@ -839,8 +1088,47 @@
       '</div>' +
       '<select class="dlv-cam-sel" data-slot="' + slot + '">' +
         (slot === 'b' ? '<option value="">— none —</option>' : '') + opts + '</select>' +
+      cardInputsHtml(slot, sel) +
       pos('Intake', ip, e.intake) + pos('Exhaust', ep, e.exhaust) +
       '</div>';
+  }
+
+  // The numbers a cam needs from its card, under its picker: one (the intake centreline) for a
+  // published grind whose centreline nobody prints, four for "your own cam card".
+  function cardInputsHtml(slot, id) {
+    if (!id) return '';
+    var c = camById(id);
+    if (!c) return '';
+    var box = function (k, label, v, min, max) {
+      return '<label><span>' + label + '</span><input type="number" class="dlv-cam-num dlv-cam-card" data-slot="' +
+        slot + '" data-k="' + k + '" min="' + min + '" max="' + max + '" step="0.5" value="' + v + '"></label>';
+    };
+    if (c.custom) {
+      var v = c.custom;
+      return '<div class="dlv-cam-cardin">' +
+        box('durI', 'Int dur @.050', v.durI, 150, 320) + box('durE', 'Exh dur @.050', v.durE, 150, 320) +
+        box('icl', 'Int CL at park', v.icl, 60, 180) + box('ecl', 'Exh CL at park', v.ecl, 60, 180) +
+        '<em>Off the cam card: durations at .050" and both centrelines with the phasers parked.</em></div>';
+    }
+    if (c.card) {
+      return '<div class="dlv-cam-cardin">' +
+        box('icl', 'Int CL at park', c.cardIcl, 60, 180) +
+        '<label><span>Exh CL (from LSA ' + c.card.lsa + ')</span><b>' + (2 * c.card.lsa - c.cardIcl).toFixed(1) + '</b></label>' +
+        '<em>' + (c.cardIclAssumed
+          ? 'ASSUMED — Comp prints no centreline for this cam. Type the intake centreline from your cam card.'
+          : 'From your cam card.') + '</em></div>';
+    }
+    return '';
+  }
+
+  var CUSTOM_ID = 'custom';
+  // A cam ready to draw, by id, with the user's card numbers applied.
+  function camById(id) {
+    var K = cam();
+    if (!id) return null;
+    if (id === CUSTOM_ID) return K.customCam(state.engine, (state.custom || {})[state.engine]);
+    var c = K.CAMS[id];
+    return c ? K.resolveCam(c, (state.icl || {})[id]) : null;
   }
 
   function bodyHtml() {
@@ -850,7 +1138,7 @@
       return '<option value="' + esc(k) + '"' + (k === s.engine ? ' selected' : '') + '>' +
         esc(K.ENGINES[k].label) + '</option>';
     }).join('');
-    var camA = K.CAMS[s.a], camB = s.b ? K.CAMS[s.b] : null;
+    var camA = camById(s.a), camB = s.b ? camById(s.b) : null;
     var profA = camA ? K.liftProfile(camA, s.ipA, s.epA, s.ratio) : null;
     var profB = camB ? K.liftProfile(camB, s.ipB, s.epB, s.ratio) : null;
     var evA = profA ? profA.events : null, evB = profB ? profB.events : null;
@@ -868,13 +1156,21 @@
       warn.push('A is quoted at ' + camA.height + ' and B at ' + camB.height +
         ' — the two are not directly comparable');
     }
+    [['A', camA], ['B', camB]].forEach(function (p) {
+      if (p[1] && p[1].cardIclAssumed) {
+        warn.push(p[0] + ': ' + p[1].label + ' is drawn at an ASSUMED intake centreline of ' + p[1].cardIcl.toFixed(1) +
+          '° — enter the one on your cam card');
+      }
+    });
 
     return '<div class="dlv-cam-top">' +
         '<label class="dlv-cam-eng"><span>Engine</span><select class="dlv-cam-engsel">' + engOpts + '</select></label>' +
         '<label class="dlv-cam-ratio"><span>Follower ratio</span>' +
           '<input type="number" class="dlv-cam-num" id="dlvCamRatio" min="1.5" max="2.5" step="0.001" value="' + s.ratio + '">' +
         '</label>' +
-        '<div class="dlv-cam-engnote">' + esc((K.ENGINES[s.engine] || {}).source || '') + '</div>' +
+        '<div class="dlv-cam-engnote">' +
+          (s.engineWhy ? '<b class="dlv-cam-engwhy">' + esc(s.engineWhy) + '</b> ' : '') +
+          esc((K.ENGINES[s.engine] || {}).source || '') + '</div>' +
       '</div>' +
       liveBarHtml() +
       '<div class="dlv-cam-cols">' + camColumnHtml('a', s.engine, s.a, s.ipA, s.epA, followingWhat()) +
@@ -980,6 +1276,7 @@
     if (eng) eng.addEventListener('change', function () {
       var K = cam();
       state.engine = eng.value;
+      state.engineWhy = '';   // a hand pick overrides what the log said
       try { if (global.localStorage) global.localStorage.setItem(ENGINE_KEY, state.engine); } catch (e) {}
       // Switching engine changes which cams exist and how far the phasers go, so the selection and
       // the positions are re-seeded rather than carried across into something impossible.
@@ -998,6 +1295,28 @@
       sel.addEventListener('change', function () {
         var slot = sel.getAttribute('data-slot');
         if (slot === 'a') state.a = sel.value; else state.b = sel.value;
+        render();
+      });
+    });
+    // A card number edits the cam for both slots (it is a property of the grind, not of A or B), and
+    // is remembered on this browser, so a card typed in once is there next time.
+    ovl.querySelectorAll('input.dlv-cam-card').forEach(function (el) {
+      el.addEventListener('change', function () {
+        var v = parseFloat(el.value);
+        if (!isFinite(v)) return;
+        var id = el.getAttribute('data-slot') === 'a' ? state.a : state.b;
+        var k = el.getAttribute('data-k');
+        if (id === CUSTOM_ID) {
+          state.custom = state.custom || {};
+          var c = Object.assign({}, cam().customCam(state.engine, state.custom[state.engine]).custom);
+          c[k] = v;
+          state.custom[state.engine] = c;
+          saveJson(CUSTOM_KEY, state.custom);
+        } else if (k === 'icl') {
+          state.icl = state.icl || {};
+          state.icl[id] = v;
+          saveJson(ICL_KEY, state.icl);
+        }
         render();
       });
     });
@@ -1040,6 +1359,17 @@
   }
 
   var ENGINE_KEY = 'pbdDlvCamEngine.v1';
+  var ICL_KEY = 'pbdDlvCamCardIcl.v1';      // { camId: intake centreline typed off its card }
+  var CUSTOM_KEY = 'pbdDlvCamCustom.v1';    // { engineId: { durI, durE, icl, ecl } }
+  function loadJson(key) {
+    try {
+      var v = global.localStorage ? JSON.parse(global.localStorage.getItem(key) || 'null') : null;
+      return (v && typeof v === 'object') ? v : {};
+    } catch (e) { return {}; }
+  }
+  function saveJson(key, v) {
+    try { if (global.localStorage) global.localStorage.setItem(key, JSON.stringify(v)); } catch (e) {}
+  }
   function rememberedEngine() {
     try { return global.localStorage ? global.localStorage.getItem(ENGINE_KEY) : null; } catch (e) { return null; }
   }
@@ -1053,6 +1383,11 @@
     } : null;
     return {
       engine: engine,
+      // Said on screen when the engine came from the log rather than from the last pick, so a wrong
+      // guess is visible -- and only when the host's pick was actually used.
+      engineWhy: (opts && opts.engine === engine && opts.engineWhy) ? String(opts.engineWhy) : '',
+      icl: loadJson(ICL_KEY),
+      custom: loadJson(CUSTOM_KEY),
       a: K.ENGINES[engine].stockCam,
       b: '',
       ipA: 0, epA: 0, ipB: 0, epB: 0,
@@ -1116,5 +1451,5 @@
   }
 
   global.DatalogCamUI = { open: open, mount: mount, close: close, updateLive: updateLive, isLive: isLive,
-    VERSION: 'cam-ui@1.2.0' };
+    VERSION: 'cam-ui@1.3.0' };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
