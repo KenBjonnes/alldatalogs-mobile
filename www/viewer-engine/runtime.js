@@ -65,6 +65,10 @@
       // isPro: rebuilding this object wholesale would silently drop it and Compare would just stop
       // working with no error anywhere.
       loadLogFile: cfg.loadLogFile !== undefined ? cfg.loadLogFile : cur.loadLogFile,
+      // Per-host feature switches (datalog-viewer.js hostFeature). MERGED, not replaced, and carried
+      // across a reconfigure: the site configures twice, and the second call naming no features must
+      // not quietly switch off what the first one turned on.
+      features: Object.assign({}, cur.features, cfg.features),
     };
     return window.DATAVIEWER;
   };

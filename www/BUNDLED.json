@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-10-29T15:30:47.964Z",
+  "builtAt": "2026-10-29T15:39:36.993Z",
   "version": "0.1.0",
   "sources": {
     "releaseDir": "C:/Users/kenbj/Code/datalog viewer",
     "siteRepo": "C:/websites/Alldatalogs",
-    "siteCommit": "3562d81"
+    "siteCommit": "2a1a785"
   },
   "files": {
     "viewer-engine/datalog-viewer.css": {
@@ -93,13 +93,13 @@
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-cam.js"
     },
     "viewer-engine/datalog-viewer.js": {
-      "sha256": "5672efeaf1e537d462b227c97cfa4c8f4c32293888b1b57611b5f86b2edefc9a",
-      "bytes": 523847,
+      "sha256": "236ab21efd25930425180df7066009b3f4630f890cd39eee2ac9f59007e28404",
+      "bytes": 525124,
       "from": "C:/Users/kenbj/Code/datalog viewer/datalog-viewer.js"
     },
     "viewer-engine/runtime.js": {
-      "sha256": "cee36dcd1c092891e4f811d35e115ca229c241b8895327b69548228ab0c65382",
-      "bytes": 4263,
+      "sha256": "06fac6de7502ff3792645bb92d4dd882daa7b7fafc70f0520691cd137734fc17",
+      "bytes": 4508,
       "from": "C:/websites/Alldatalogs/packages/viewer-engine/src/runtime.js"
     },
     "vendor/chart.umd.js": {

@@ -2457,9 +2457,26 @@ function ensureCamModule(){
 function global_DatalogCamReady(){
   return !!(window.DatalogCamUI && typeof window.DatalogCamUI.open === 'function' && window.DatalogCam);
 }
-// The panel is a calculator, so it opens with or without a log. When a log IS open and its channels
-// name a generation we could guess, that only picks the initial selection -- it never overrides it.
+// HOST FEATURES. Some features are switched on per HOST rather than shipped to all five at once.
+// Cam timing is the first: Ken wants it on alldatalogs.com for Pro members while it is dialled in,
+// and NOT in the Windows app yet (2026-10-29: "for the windows app, don't add that yet till we get
+// this dialed in. I will have a lot of feedback on how it works"). The desktop shares the website's
+// runtime.js and this very file, so the switch cannot live in either -- it has to be something the
+// HOST says when it configures the viewer. Off unless a host turns it on, so a host that has never
+// heard of a feature cannot end up showing it by accident. To bring it to the Windows app, the
+// desktop glue passes features: { camTiming: true } to configureViewer -- nothing in here changes.
+function hostFeature(name){
+  var f = (window.DATAVIEWER || {}).features;
+  return !!(f && f[name] === true);
+}
+// The panel is a calculator, so it opens with or without a log.
 function openCamTiming(){
+  if(!hostFeature('camTiming')) return;   // not offered on this host at all; see hostFeature
+  if(!viewerIsPro()){
+    adlTrack('paywall_viewed', { feature: 'cam_timing', trigger: 'direct' });
+    if(window.showToast) showToast('Cam timing is a Pro feature \u2014 ' + PRO_LOCK_MSG + '.');
+    return;
+  }
   ensureCamModule().then(function(){
     window.DatalogCamUI.open({});
     adlTrack('cam_timing_opened', {});
@@ -3680,10 +3697,13 @@ function openHdrMenu(anchor, which){
     a += hdrItem('laps',  'Add lap times', !pro);
     a += hdrItem('dragy', 'Add Dragy',     !pro);
     if(hasPerfData()) a += hdrItem('perfclear', 'Clear performance data', false);
-    // Not Pro-gated and not log-dependent: it is a calculator, and a tuner choosing a grind has
-    // often not opened a log at all.
-    a += '<div class="dlv-menu-sep"></div>';
-    a += hdrItem('camtiming', 'Cam timing (Ti-VCT)', false);
+    // Pro, like everything else in this menu (Ken, 2026-10-29: "this is only for pro members").
+    // Not log-dependent, though: it is a calculator, and a tuner choosing a grind has often not
+    // opened a log at all, so it is offered whether or not one is loaded.
+    if(hostFeature('camTiming')){
+      a += '<div class="dlv-menu-sep"></div>';
+      a += hdrItem('camtiming', 'Cam timing (Ti-VCT)', !pro);
+    }
     m.innerHTML = '<h4>Analyze</h4>' + a + (pro ? '' : HDR_PRO_FOOTER);
   } else {
     // Layout and Custom Gauges are independent saves now (Ken, 2026-09-08) -- each gets its own
@@ -3713,7 +3733,7 @@ function openHdrMenu(anchor, which){
   m.querySelectorAll('[data-m]').forEach(function(btn){
     btn.addEventListener('click', function(){
       if(btn.classList.contains('dlv-pro-locked')){                  // locked -> no-op; footer explains
-        var pf = { compare:'compare', slip:'slip', laps:'laps', dragy:'dragy' };
+        var pf = { compare:'compare', slip:'slip', laps:'laps', dragy:'dragy', camtiming:'cam_timing' };
         var a = btn.getAttribute('data-m');
         adlTrack('paywall_viewed', { feature: pf[a] || a || 'pro', trigger: 'header_menu' });
         return;
