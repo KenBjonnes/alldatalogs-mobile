@@ -49,6 +49,8 @@ const ENGINE = [
   'datalog-library.js',
   'datalog-library.css',
   'datalog-vehicles.js',
+  // Lazily loaded by the viewer when Cam Timing is opened; copied, but not in the script order.
+  'datalog-cam.js',
   'datalog-viewer.js',
 ];
 

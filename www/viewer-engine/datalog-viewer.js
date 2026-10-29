@@ -2423,6 +2423,51 @@ function compareValueText(v, bName, ch, approx){
   return (approx ? COMPARE_APPROX_MARK : '') + formatCompareValue(v, bName, ch);
 }
 
+// ---- CAM TIMING (lazy) ---------------------------------------------------------------------------
+// Ti-VCT cam timing lives in datalog-cam.js and is pulled in the first time it is asked for rather
+// than being listed in every host's script tags. Five copies of this engine load it from five
+// different pages, and a format or module added to the script order of four of them is the recurring
+// way a feature ships broken on the fifth -- so the only plumbing this needs is release.ps1 copying
+// the file, and it finds itself at runtime next to datalog-viewer.js, which is true on every host by
+// construction. The cache-busting query some hosts append is preserved so the new file is versioned
+// with the rest of the engine.
+var VIEWER_CAM_LOADING = null;
+function camModuleUrl(){
+  var tags = document.querySelectorAll('script[src]');
+  for(var i = tags.length - 1; i >= 0; i--){
+    var src = tags[i].getAttribute('src') || '';
+    if(/datalog-viewer\.js(\?|$)/.test(src)) return src.replace(/datalog-viewer\.js/, 'datalog-cam.js');
+  }
+  return 'datalog-cam.js';   // same directory; the fallback a page with an inlined engine lands on
+}
+function ensureCamModule(){
+  if(global_DatalogCamReady()) return Promise.resolve();
+  if(VIEWER_CAM_LOADING) return VIEWER_CAM_LOADING;
+  VIEWER_CAM_LOADING = new Promise(function(resolve, reject){
+    var el = document.createElement('script');
+    el.src = camModuleUrl();
+    el.async = false;
+    el.onload = function(){ global_DatalogCamReady() ? resolve() : reject(new Error('datalog-cam.js loaded but defined nothing')); };
+    el.onerror = function(){ reject(new Error('Could not load datalog-cam.js')); };
+    document.head.appendChild(el);
+  });
+  VIEWER_CAM_LOADING.catch(function(){ VIEWER_CAM_LOADING = null; });   // let a failed load be retried
+  return VIEWER_CAM_LOADING;
+}
+function global_DatalogCamReady(){
+  return !!(window.DatalogCamUI && typeof window.DatalogCamUI.open === 'function' && window.DatalogCam);
+}
+// The panel is a calculator, so it opens with or without a log. When a log IS open and its channels
+// name a generation we could guess, that only picks the initial selection -- it never overrides it.
+function openCamTiming(){
+  ensureCamModule().then(function(){
+    window.DatalogCamUI.open({});
+    adlTrack('cam_timing_opened', {});
+  }).catch(function(err){
+    if(window.showToast) showToast(err && err.message ? err.message : 'Cam timing is unavailable.');
+  });
+}
+
 // A file name is often long and VIN-stamped ("Log-0009-1ZVBP8CF3D5246050.hpl"); the menu only needs
 // enough to tell the two logs apart.
 function shortLogName(n){
@@ -3635,6 +3680,10 @@ function openHdrMenu(anchor, which){
     a += hdrItem('laps',  'Add lap times', !pro);
     a += hdrItem('dragy', 'Add Dragy',     !pro);
     if(hasPerfData()) a += hdrItem('perfclear', 'Clear performance data', false);
+    // Not Pro-gated and not log-dependent: it is a calculator, and a tuner choosing a grind has
+    // often not opened a log at all.
+    a += '<div class="dlv-menu-sep"></div>';
+    a += hdrItem('camtiming', 'Cam timing (Ti-VCT)', false);
     m.innerHTML = '<h4>Analyze</h4>' + a + (pro ? '' : HDR_PRO_FOOTER);
   } else {
     // Layout and Custom Gauges are independent saves now (Ken, 2026-09-08) -- each gets its own
@@ -3675,6 +3724,7 @@ function openHdrMenu(anchor, which){
       if(act === 'compare')   return triggerCompareOpen();
       if(act === 'slip' || act === 'laps' || act === 'dragy'){ if(viewerIsPro()) openPerfDialog(act); return; }
       if(act === 'perfclear'){ VIEWER_PERF = null; refreshPerfUi(); return; }
+      if(act === 'camtiming')    return openCamTiming();
       if(act === 'saveview')     return saveConfig('view', false);
       if(act === 'saveas')       return saveConfig('view', true);
       if(act === 'savegauges')  return saveConfig('gauges', false);   // was hardcoded asNew=true -- always forked a new copy, even when updating one you'd just loaded

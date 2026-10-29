@@ -1,0 +1,834 @@
+/*
+ * datalog-cam.js — cam timing for Ford Ti-VCT engines. Pure maths and data, no DOM.
+ *
+ * WHAT THIS IS FOR
+ * On a Ti-VCT engine the camshafts move, so "the cam timing" is not one set of numbers — it is a
+ * function of where the phasers are at that instant. This turns a cam's ground-in events plus a pair
+ * of phaser positions into the real valve events, centrelines and overlap, which is what a tuner
+ * actually wants to know while looking at a log or choosing a grind.
+ *
+ * It is a port of Ken's TiVCT-Worksheet-V11.xlsm, which was proofread formula by formula first
+ * (2026-10-29) and found correct: every derived value re-computed independently matched, durations
+ * came out properly invariant under phasing, and feeding it intake −50 / exhaust +50 reproduced all
+ * seven published "phaser at maximum" figures for the stock Gen 1 cam exactly. The sheet's model is
+ * therefore reproduced here rather than reinvented, down to the column meanings, so his own numbers
+ * paste straight in.
+ *
+ * ---------------------------------------------------------------------------------------------
+ * SIGN CONVENTION — the single thing most likely to be got wrong
+ * ---------------------------------------------------------------------------------------------
+ * Phaser position is in CRANK degrees, measured from PARK, and **positive is RETARD**.
+ *
+ * That is Ford's own convention, not a choice made here. Ford Racing's "Camshaft 5.0L Coyote Engine
+ * Camshaft Timing Recommendations" publishes the production WOT tables for the 2011-13 Mustang GT and
+ * the 2012-13 Boss 302 with both chart axes labelled, verbatim, "deg retard": every intake value is
+ * negative and every exhaust value is zero or positive. It is corroborated twice over — the direction
+ * of travel measured in 46 of Ken's own customer logs, and the published park/maximum centrelines,
+ * which Ford's own −50° Boss command reproduces exactly (139 − 50 = 89° ATDC).
+ *
+ * TWO OTHER CONVENTIONS EXIST AND BOTH WILL CORRUPT A CALCULATION SILENTLY:
+ *   * Comp's CY-r cam card writes the same motion with the OPPOSITE sign ("+20° (advance) and −50°
+ *     (retard) from Park"). Anything read off that card must be negated before it comes in here.
+ *   * Holley's Ti-VCT controller anchors its tables at a travel EXTREME rather than at park, so its
+ *     zero is up to 50° away from this one. Holley numbers need re-zeroing, not just re-signing.
+ *
+ * ---------------------------------------------------------------------------------------------
+ * CHECKING HEIGHT
+ * ---------------------------------------------------------------------------------------------
+ * A cam's events only mean something at a stated valve-lift (or lobe-lift) checking height, and
+ * nothing in this file converts between heights — it cannot, without the lobe's actual profile. Each
+ * cam therefore carries `height`, and a seat/advertised duration alongside, purely so the valve-event
+ * diagram can show where the valve leaves and returns to its seat. Mixing a .050" event with a seat
+ * event silently moves everything by 20-26 crank degrees, which is why the field is mandatory.
+ */
+(function (global) {
+  'use strict';
+
+  // ---- the model ------------------------------------------------------------------------------
+  //
+  // A cam is four events at the phasers' PARK position, in the same column meanings Ken's worksheet
+  // uses, so a row from his Cam Master List transfers without reinterpretation:
+  //
+  //   ivo  degrees BTDC   (negative = ATDC)   "IVO BTDC (ATDC is -)"
+  //   ivc  degrees ABDC                       "IVC ABDC"
+  //   evo  degrees BBDC                       "EVO BBDC"
+  //   evc  degrees ATDC   (negative = BTDC)   "EVC ATDC (BTDC is -)"
+  //
+  // Everything else is derived. Nothing is stored twice.
+
+  function num(v) { return (typeof v === 'number' && isFinite(v)) ? v : 0; }
+
+  /**
+   * The valve events with the phasers at (intakePos, exhaustPos), both in crank degrees from park,
+   * positive = retard.
+   *
+   * Phasing ROTATES a cam; it does not regrind it. So a retard moves opening later and closing later
+   * by the same amount, and `duration` comes out of this unchanged at every position — which is the
+   * property dev/cam-test.js asserts, because getting a sign wrong here shows up as a duration that
+   * breathes with the phaser.
+   */
+  function events(cam, intakePos, exhaustPos) {
+    var ip = num(intakePos), ep = num(exhaustPos);
+    var ivo = num(cam && cam.ivo) - ip;
+    var ivc = num(cam && cam.ivc) + ip;
+    var evo = num(cam && cam.evo) - ep;
+    var evc = num(cam && cam.evc) + ep;
+    var di = ivo + 180 + ivc;
+    var de = evo + 180 + evc;
+    return {
+      ivo: ivo, ivc: ivc, evo: evo, evc: evc,
+      intakeDuration: di,
+      exhaustDuration: de,
+      // Intake centreline, degrees ATDC. Equivalent to (180 + ivc − ivo) / 2.
+      icl: di / 2 - ivo,
+      // Exhaust centreline, degrees BTDC. Both centrelines are quoted toward the overlap TDC, which
+      // is the convention every cam card uses.
+      ecl: de / 2 - evc,
+      // Overlap at this checking height: the crank degrees for which both valves are off their seats
+      // by at least the checking height. Negative means a gap in which neither is.
+      overlap: ivo + evc,
+      intakePos: ip,
+      exhaustPos: ep,
+    };
+  }
+
+  /**
+   * The INSTALLED lobe separation, (ICL + ECL) / 2.
+   *
+   * Deliberately not called LSA. On a single-cam engine lobe separation is ground into the billet and
+   * cannot change; on Ti-VCT the two cams move independently, so this number walks around as the
+   * phasers do — 131° at park on a stock Gen 1, 110.75° with the cams at a typical mid-range position.
+   * It is a real and useful figure, it is just not a property of the grind, and quoting it as "the
+   * cam's LSA" is how people end up comparing a Ti-VCT engine with a pushrod one and drawing nonsense.
+   * Comp's own CY-r worksheet computes it exactly this way and calls it "Lobe Sep".
+   */
+  function separation(ev) { return (num(ev.icl) + num(ev.ecl)) / 2; }
+
+  /** Everything, in one call. */
+  function solve(cam, intakePos, exhaustPos) {
+    var ev = events(cam, intakePos, exhaustPos);
+    ev.separation = separation(ev);
+    return ev;
+  }
+
+  // ---- reading a cam out of a calibration -------------------------------------------------------
+  //
+  // From 2015 on, the Ford calibration carries the intake and exhaust events as ABSOLUTE crank angle
+  // rather than as a phaser offset, and the frame it counts in is not stated anywhere in the tuning
+  // software. Measured against two known park centrelines, the rule is simply: reduce the value into
+  // one engine cycle and measure it from the nearest TDC or BDC. The displayed frame differs between
+  // generations — a 2015-17 calibration folds into 0-360 while a 2018+ one runs the full 0-720, so
+  // the same cam reads 239 on one and 599 on the other — and this is insensitive to that, because
+  // 239 and 599 reduce to the same physical event.
+  //
+  // Proof it is right: run Ken's 2015-17 figures (intake open 340, intake close 239) through this and
+  // the intake centreline comes out at 109.5° ATDC, against the 109.0° that Comp's CY-r cam card
+  // publishes as the Gen 2 stock park ICL. An ECU calibration and a cam grinder's worksheet, agreeing
+  // to half a degree by two entirely separate routes.
+  //
+  // A PRE-2015 calibration has nothing to read: that strategy commands the cams as degrees of phaser
+  // retard against RPM instead (Ford's own production tables), so these fields sit at zero. Zeros
+  // here are a strategy difference, not a fault, and are reported as such rather than decoded as 0°.
+
+  /** Degrees BTDC (negative = ATDC) for a valve opening near the overlap TDC. */
+  function calOpenBtdc(v) {
+    var x = ((num(v) % 360) + 360) % 360;
+    return x > 180 ? 360 - x : -x;
+  }
+  /** Degrees ABDC for a valve closing after BDC. */
+  function calCloseAbdc(v) {
+    return ((((num(v) % 360) + 360) % 360)) - 180;
+  }
+  /** Degrees ATDC (negative = BTDC) for a valve closing near the overlap TDC. */
+  function calCloseAtdc(v) {
+    var x = ((num(v) % 360) + 360) % 360;
+    return x < 180 ? x : x - 360;
+  }
+
+  /**
+   * Decode the calibration's cam fields.
+   *
+   * `cal` takes { intakeOpen, intakeClose, exhaustClose, exhaustOpen } as the tuning software shows
+   * them. exhaustOpen is optional and in practice absent — Ford's calibration does not carry it — so
+   * when it is missing the exhaust duration cannot be derived from the calibration alone and
+   * `exhaustDurationFrom` says what it would take. Supply `parkEcl` (a cam card's park exhaust
+   * centreline) and the exhaust closes out anyway.
+   *
+   * Returns null when every field is zero or absent, which is what a pre-2015 calibration looks like.
+   */
+  function fromCalibration(cal, parkEcl) {
+    if (!cal) return null;
+    var io = num(cal.intakeOpen), ic = num(cal.intakeClose);
+    var ec = num(cal.exhaustClose), eo = num(cal.exhaustOpen);
+    if (!io && !ic && !ec && !eo) return null;   // pre-2015 strategy: nothing stored here
+
+    var out = { ivo: null, ivc: null, evo: null, evc: null, notes: [] };
+    if (io) out.ivo = calOpenBtdc(io);
+    if (ic) out.ivc = calCloseAbdc(ic);
+    if (ec) out.evc = calCloseAtdc(ec);
+
+    if (out.ivo != null && out.ivc != null) {
+      out.intakeDuration = out.ivo + 180 + out.ivc;
+      out.icl = out.intakeDuration / 2 - out.ivo;
+    }
+    if (eo) {
+      // Exhaust opening is measured back from the overlap TDC through the whole exhaust stroke, so it
+      // reduces as a closing-type angle and then has the 180 taken off it.
+      out.evo = calCloseAbdc(eo) * -1;
+      if (out.evc != null) {
+        out.exhaustDuration = out.evo + 180 + out.evc;
+        out.ecl = out.exhaustDuration / 2 - out.evc;
+      }
+    } else if (out.evc != null && typeof parkEcl === 'number' && isFinite(parkEcl)) {
+      // No exhaust opening in the calibration, but a known park exhaust centreline pins it: the
+      // centreline sits half a duration before the closing event, so the duration follows, and from
+      // the duration the opening does too.
+      out.ecl = parkEcl;
+      out.exhaustDuration = 2 * (parkEcl + out.evc);
+      out.evo = out.exhaustDuration - 180 - out.evc;
+      out.notes.push('exhaust derived from a supplied park exhaust centreline of ' + parkEcl +
+        '° BTDC, not from the calibration');
+    } else if (out.evc != null) {
+      out.exhaustDurationFrom = 'needs either the calibration’s exhaust opening or a known park ' +
+        'exhaust centreline';
+      out.notes.push('exhaust closing known, exhaust duration unknown');
+    }
+    return out;
+  }
+
+  // ---- engines --------------------------------------------------------------------------------
+  //
+  // What differs per engine is not only the stock grind but WHERE THE PHASERS PARK AND WHICH WAY THEY
+  // CAN GO, and that is the part a single global model gets wrong.
+  //
+  //   Gen 1 (2011-14): the intake parks against a hard stop at its fully-retarded end and can only
+  //     ADVANCE from there, so its position is never positive. ~51° of negative overlap at park,
+  //     which is exactly what you want for cranking, and the reason it parks there.
+  //   Gen 2 (2015-17): Ford put the intake phaser on a MID-TRAVEL LOCK PIN ("mid-lock intake" in
+  //     Ford's own specification table), so park is no longer a stop and the intake can go either
+  //     way. The park centreline moved 30° advanced of Gen 1's, to 109° ATDC.
+  //   Gen 3 (2018-23): the mid-lock intake phaser carries over unchanged; the exhaust phaser is new
+  //     (single bolt, oil-control-valve actuated, sealed cam journal). Its calibration reads out
+  //     identically to Gen 2's, which is consistent with the carry-over.
+  //   Gen 4 (2024+): the intake is centre-parked as well, so it too moves both ways. Its park
+  //     centreline reads 140° ATDC out of the calibration, 30° retarded of Gen 2/3's 109.5°,
+  //     which is a long way for a mid-travel lock to sit and is worth re-checking against a cam
+  //     card if one ever appears -- the duration (260°) is frame-independent and agrees with
+  //     Gen 2/3, but a centreline is only as good as the frame it is measured in.
+  //
+  // THE EXHAUST IS NOT CENTRE-PARKED ON ANY OF THEM: it parks fully advanced and only retards, so
+  // its position is never negative. Only the intake changed.
+  //
+  // The travel limits are what make a position physically possible, so the UI clamps to them and the
+  // log reader can flag a channel reading outside them — which is how a mis-scaled PID gets caught
+  // rather than quietly producing impossible valve events.
+  var ENGINES = {
+    'coyote-gen1': {
+      label: 'Coyote Gen 1 — 2011-14 Mustang GT',
+      stockCam: 'coyote-gen1-stock',
+      intake:  { min: -50, max: 0,  park: 'retarded' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      source: 'park centrelines builder-endorsed; the 50° authority confirmed by Ford’s own ' +
+              'Boss 302 production table reaching 89° ATDC',
+    },
+    'coyote-gen2': {
+      label: 'Coyote Gen 2 — 2015-17 Mustang GT',
+      stockCam: 'coyote-gen2-stock',
+      intake:  { min: -20, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      source: 'Comp CY-r cam card (park ICL 109.0) and Ken’s own calibration (109.5), agreeing',
+    },
+    'coyote-gen3': {
+      label: 'Coyote Gen 3 — 2018-23 Mustang GT',
+      stockCam: 'coyote-gen3-stock',
+      intake:  { min: -20, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      source: 'intake read from Ken’s calibration; exhaust park assumed unchanged from Gen 2',
+    },
+    'coyote-gen4': {
+      label: 'Coyote Gen 4 — 2024+ Mustang GT',
+      stockCam: 'coyote-gen4-stock',
+      // Centre-parked intake like Gen 2 and Gen 3 (Ken, 2026-10-29). The travel figures are
+      // Gen 2's, carried across on the strength of "Gen 2 and newer" rather than measured on a
+      // Gen 4 -- no cam card for this engine exists yet, so treat the LIMITS as provisional even
+      // though the direction is not.
+      intake:  { min: -20, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      source: 'intake read from Ken’s calibration; centre-parked intake per Ken; travel limits ' +
+              'assumed from Gen 2 and the exhaust duration not yet established',
+    },
+  };
+
+  // ---- the cam library --------------------------------------------------------------------------
+  //
+  // `height` is the checking height the four events are quoted at and is not optional; `seatIntake` /
+  // `seatExhaust` are the advertised/seat durations, used only to draw where the valve leaves its
+  // seat on the diagram. `lobeIntake` / `lobeExhaust` are LOBE lift — the diagram multiplies by the
+  // follower ratio to get valve lift.
+  //
+  // `provenance` is carried per cam on purpose. Ford publishes valve lift for these engines and
+  // nothing else: no duration, no events, no centrelines, for any generation. So some of these rows
+  // are off a cam card, some are derived from a calibration, and some rest on a builder-endorsed
+  // figure that no factory document confirms. A tuner deciding whether to trust a number needs to see
+  // which, and a row that says where it came from is worth more than one that looks authoritative.
+  var CAMS = {
+    // --- factory ---------------------------------------------------------------------------------
+    'coyote-gen1-stock': {
+      label: 'Stock Coyote Gen 1 (2011-14)', engine: 'coyote-gen1', stock: true,
+      ivo: -33.5, ivc: 64.5, evo: 48.5, evc: -17.5, height: '.050',
+      seatIntake: 263, seatExhaust: 263, lobeIntake: 0.235, lobeExhaust: 0.216,
+      provenance: 'builder-endorsed cam-card data; not in any Ford document. Reproduces the published ' +
+                  'park/maximum centrelines 139/89 and 123/73 exactly.',
+    },
+    'coyote-gen2-stock': {
+      label: 'Stock Coyote Gen 2 (2015-17)', engine: 'coyote-gen2', stock: true,
+      ivo: -3.5, ivc: 34.5, evo: 48.5, evc: -17.5, height: '.050',
+      seatIntake: 259, seatExhaust: 264, lobeIntake: 0.253, lobeExhaust: 0.253,
+      provenance: 'Comp CY-r cam card: 211/211 @ .050", park ICL 109.0 / ECL 123.0. The seat figures ' +
+                  'are the calibration’s own durations. Exhaust events are unchanged from Gen 1; ' +
+                  'the intake is Gen 1’s lobe sitting 30° more advanced.',
+    },
+    'coyote-gen3-stock': {
+      label: 'Stock Coyote Gen 3 (2018-23)', engine: 'coyote-gen3', stock: true,
+      // At the CALIBRATION's checking height, not .050" — Gen 3's .050" duration is unpublished.
+      ivo: 20, ivc: 59, evo: 75, evc: 9, height: 'calibration',
+      seatIntake: 259, seatExhaust: 264, lobeIntake: null, lobeExhaust: null,
+      provenance: 'intake read from Ken’s calibration (open 340 / close 599 → 259°, ICL ' +
+                  '109.5 ATDC); exhaust closing 369 → 9° ATDC, its duration inferred by ' +
+                  'assuming the Gen 2 park ECL of 123° BTDC still applies. Ford valve lift 14 mm; ' +
+                  'lobe lift unpublished.',
+    },
+    'coyote-gen4-stock': {
+      label: 'Stock Coyote Gen 4 (2024+)', engine: 'coyote-gen4', stock: true,
+      ivo: -10, ivc: 90, evo: 80, evc: 14, height: 'calibration',
+      seatIntake: 260, seatExhaust: 274, lobeIntake: null, lobeExhaust: null,
+      provenance: 'intake read from Ken’s calibration (open 370 / close 630 → 260°, ICL ' +
+                  '140.0 ATDC). The intake is centre-parked like Gen 2/3, so it moves both ways. Exhaust closing 374 ' +
+                  '→ 14° ATDC; its duration ASSUMES a 123° BTDC park centreline carried ' +
+                  'over, which Gen 4 may well have changed. Treat the exhaust as provisional.',
+    },
+
+    // --- Comp, Gen 1 (191xxx NA / Blower series) --------------------------------------------------
+    // From Ken's own master list, which the proofread checked against Comp's published @.050"
+    // durations: every one reconciles, with a constant 40°/44° advertised-minus-.050 spread across
+    // the whole family — the signature of one lobe family, and good evidence the events are right.
+    'comp-191060': { label: 'Comp Stage I NA — 191060', engine: 'coyote-gen1',
+      ivo: -19, ivc: 59, evo: 54, evc: -11, height: '.050', seatIntake: 260, seatExhaust: 267,
+      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+    'comp-191100': { label: 'Comp Stage II NA — 191100', engine: 'coyote-gen1',
+      ivo: -15, ivc: 63, evo: 58, evc: -7, height: '.050', seatIntake: 268, seatExhaust: 275,
+      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+    'comp-191160': { label: 'Comp Stage III NA — 191160', engine: 'coyote-gen1',
+      ivo: -11, ivc: 67, evo: 62, evc: -3, height: '.050', seatIntake: 276, seatExhaust: 283,
+      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+    'comp-191260': { label: 'Comp Stage I Blower — 191260', engine: 'coyote-gen1',
+      ivo: -23, ivc: 63, evo: 56, evc: -9, height: '.050', seatIntake: 260, seatExhaust: 271,
+      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+    'comp-191360': { label: 'Comp Stage II Blower — 191360', engine: 'coyote-gen1',
+      ivo: -19, ivc: 67, evo: 60, evc: -5, height: '.050', seatIntake: 268, seatExhaust: 279,
+      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+    'comp-191460': { label: 'Comp Stage III Blower — 191460', engine: 'coyote-gen1',
+      ivo: -15, ivc: 71, evo: 64, evc: -1, height: '.050', seatIntake: 276, seatExhaust: 287,
+      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+    'mmr-terry': { label: 'MMR — Terry', engine: 'coyote-gen1',
+      ivo: -17, ivc: 69, evo: 61, evc: -5, height: '.050', seatIntake: 271, seatExhaust: 275,
+      lobeIntake: 0.28, lobeExhaust: 0.2825, provenance: 'Ken’s master list' },
+
+    // --- Comp, Gen 2 (243xxx CY-r series) ---------------------------------------------------------
+    // The card publishes duration @ .050" and the park centrelines rather than the four events, so
+    // the events here are back-computed from those two: ivo = ICL − dur/2, and so on. That is exact
+    // arithmetic on the card's own figures, not an estimate, and the test suite checks each row
+    // round-trips back to the card's centrelines.
+    'comp-243420': { label: 'Comp CY-r 243420', engine: 'coyote-gen2',
+      ivo: -4.5, ivc: 51.5, evo: 70.5, evc: -21.5, height: '.050', seatIntake: 263, seatExhaust: 263,
+      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 227/229 @ .050", park ICL 118.0 / ECL 136.0' },
+    'comp-243430': { label: 'Comp CY-r 243430', engine: 'coyote-gen2',
+      ivo: -4.5, ivc: 55.5, evo: 74.5, evc: -21.5, height: '.050', seatIntake: 267, seatExhaust: 267,
+      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 231/233 @ .050", park ICL 120.0 / ECL 138.0' },
+    'comp-243440': { label: 'Comp CY-r 243440', engine: 'coyote-gen2',
+      ivo: -4.5, ivc: 59.5, evo: 78.5, evc: -21.5, height: '.050', seatIntake: 271, seatExhaust: 271,
+      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 235/237 @ .050", park ICL 122.0 / ECL 140.0' },
+    'comp-243460': { label: 'Comp CY-r 243460', engine: 'coyote-gen2',
+      ivo: -4.5, ivc: 55.5, evo: 78.5, evc: -21.5, height: '.050', seatIntake: 267, seatExhaust: 267,
+      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 231/237 @ .050", park ICL 120.0 / ECL 140.0' },
+    'comp-243480': { label: 'Comp CY-r 243480', engine: 'coyote-gen2',
+      ivo: -4.5, ivc: 63.5, evo: 86.5, evc: -21.5, height: '.050', seatIntake: 275, seatExhaust: 275,
+      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 239/245 @ .050", park ICL 124.0 / ECL 144.0' },
+  };
+
+  // The roller finger follower's ratio. Nobody publishes it — not Ford, not the cam grinders, and
+  // Comp notes that a finger follower's ratio "is never static" through the lift curve anyway. It is
+  // derivable two ways and they disagree in the third decimal: Ford's 12.0 mm Gen 1 valve lift over a
+  // .235" lobe gives 2.010, while Comp's own .253" lobe / .512" valve pairing gives 2.024. It is a
+  // default here rather than a constant, and the UI exposes it, because the only honest version of
+  // this number is one the user can replace with what they measured.
+  var FOLLOWER_RATIO = 2.01;
+
+  /** Valve lift at full lift, or null when the cam's lobe lift is unknown. */
+  function valveLift(lobeLift, ratio) {
+    if (typeof lobeLift !== 'number' || !isFinite(lobeLift)) return null;
+    return lobeLift * (typeof ratio === 'number' && isFinite(ratio) ? ratio : FOLLOWER_RATIO);
+  }
+
+  // ---- the valve-event diagram --------------------------------------------------------------------
+  //
+  // Five points per valve, in one crank-angle frame with 0 at the overlap TDC and before it negative,
+  // which is the frame Ken's worksheet chart already draws in:
+  //
+  //   seat open · checking-height open · full lift at the centreline · checking-height close · seat close
+  //
+  // The seat points come from the seat/advertised duration, split evenly either side of the
+  // checking-height event. That assumes a SYMMETRIC lobe, which is a real approximation and wrong by
+  // a few degrees on an asymmetric grind — it is flagged on the returned object rather than hidden,
+  // because the cams it is least true of are exactly the ones people reach for.
+  function liftProfile(cam, intakePos, exhaustPos, ratio) {
+    var ev = solve(cam, intakePos, exhaustPos);
+    var rampI = (num(cam.seatIntake) - ev.intakeDuration) / 2;
+    var rampE = (num(cam.seatExhaust) - ev.exhaustDuration) / 2;
+    var liftI = valveLift(cam.lobeIntake, ratio);
+    var liftE = valveLift(cam.lobeExhaust, ratio);
+    // Intake: opens ev.ivo BTDC (so at −ivo in this frame) and closes ev.ivc ABDC (at 180 + ivc).
+    var iOpen = -ev.ivo, iClose = 180 + ev.ivc;
+    // Exhaust: opens ev.evo BBDC, i.e. a full stroke plus that before the overlap TDC, and closes
+    // ev.evc ATDC.
+    var eOpen = -(ev.evo + 180), eClose = ev.evc;
+    return {
+      events: ev,
+      symmetricLobeAssumed: true,
+      intake: {
+        seatOpen: iOpen - rampI, open: iOpen, peak: ev.icl, close: iClose, seatClose: iClose + rampI,
+        peakLift: liftI,
+      },
+      exhaust: {
+        seatOpen: eOpen - rampE, open: eOpen, peak: -ev.ecl, close: eClose, seatClose: eClose + rampE,
+        peakLift: liftE,
+      },
+    };
+  }
+
+  // ---- helpers for the UI and the log reader -------------------------------------------------------
+
+  /** Cams that belong to an engine, stock first, then by name. */
+  function camsFor(engineId) {
+    return Object.keys(CAMS)
+      .filter(function (k) { return !engineId || CAMS[k].engine === engineId; })
+      .sort(function (a, b) {
+        var A = CAMS[a], B = CAMS[b];
+        if (!!A.stock !== !!B.stock) return A.stock ? -1 : 1;
+        return A.label < B.label ? -1 : A.label > B.label ? 1 : 0;
+      })
+      .map(function (k) { return { id: k, cam: CAMS[k] }; });
+  }
+
+  /**
+   * Is a phaser position physically reachable on this engine? A log channel outside the limits is
+   * the signature of a mis-scaled PID, not of a cam in an exotic place, so this is worth saying out
+   * loud rather than computing valve events nobody's engine can produce.
+   */
+  function checkPosition(engineId, intakePos, exhaustPos) {
+    var e = ENGINES[engineId];
+    if (!e) return { ok: true, warnings: [] };
+    var w = [];
+    var band = function (v, lim, what) {
+      if (typeof v !== 'number' || !isFinite(v)) return;
+      if (v < lim.min - 0.5 || v > lim.max + 0.5) {
+        w.push(what + ' position ' + v.toFixed(1) + '° is outside this engine’s travel (' +
+          lim.min + '° to +' + lim.max + '°)');
+      }
+    };
+    band(intakePos, e.intake, 'Intake');
+    band(exhaustPos, e.exhaust, 'Exhaust');
+    return { ok: !w.length, warnings: w };
+  }
+
+  function clampPosition(engineId, which, v) {
+    var e = ENGINES[engineId];
+    if (!e || !e[which] || typeof v !== 'number' || !isFinite(v)) return v;
+    return Math.max(e[which].min, Math.min(e[which].max, v));
+  }
+
+  // Ford Racing's published production WOT cam timing, straight off its own "Camshaft Timing
+  // Recommendations" sheet, in Ford's own units (deg retard, so intake negative). Held here so the
+  // diagram can show what the factory actually commands next to what a car is doing. Note that Ford
+  // schedules the two cams on DIFFERENT rpm breakpoints — they are stored as two separate curves
+  // rather than one table of pairs, because flattening them would invent values Ford never published.
+  var FORD_WOT = {
+    'coyote-gen1': {
+      label: '2011-13 Mustang GT, production WOT',
+      intake: [[1000, -30], [1250, -30], [1500, -30], [1750, -40], [2000, -40], [2750, -40],
+               [3000, -40], [4000, -40], [5500, -20], [6000, -16], [6500, -14]],
+      exhaust: [[1000, 0], [1250, 0], [1500, 5], [1750, 5], [2000, 10], [2750, 10],
+                [3000, 15], [4000, 15], [5500, 15], [6000, 15], [6500, 15]],
+    },
+    'boss302': {
+      label: '2012-13 Boss 302, production WOT',
+      intake: [[1000, -40], [1500, -40], [2500, -50], [4000, -50], [4500, -46], [4750, -42],
+               [5250, -38], [5500, -32], [5750, -24.5], [7000, -17], [7500, -15]],
+      exhaust: [[1000, 0], [1500, 0], [2000, 0], [2500, 15], [4000, 15], [4500, 15],
+                [5000, 15], [5250, 15], [6000, 10], [6500, 10], [7200, 10]],
+    },
+  };
+
+  /** Linear interpolation into one of the Ford curves; clamps outside its ends rather than extending. */
+  function fordAt(curve, rpm) {
+    if (!curve || !curve.length) return null;
+    if (rpm <= curve[0][0]) return curve[0][1];
+    if (rpm >= curve[curve.length - 1][0]) return curve[curve.length - 1][1];
+    for (var i = 0; i < curve.length - 1; i++) {
+      var a = curve[i], b = curve[i + 1];
+      if (rpm >= a[0] && rpm <= b[0]) {
+        if (b[0] === a[0]) return a[1];
+        return a[1] + (b[1] - a[1]) * ((rpm - a[0]) / (b[0] - a[0]));
+      }
+    }
+    return curve[curve.length - 1][1];
+  }
+
+  global.DatalogCam = {
+    events: events,
+    solve: solve,
+    separation: separation,
+    liftProfile: liftProfile,
+    valveLift: valveLift,
+    fromCalibration: fromCalibration,
+    calOpenBtdc: calOpenBtdc,
+    calCloseAbdc: calCloseAbdc,
+    calCloseAtdc: calCloseAtdc,
+    camsFor: camsFor,
+    checkPosition: checkPosition,
+    clampPosition: clampPosition,
+    fordAt: fordAt,
+    ENGINES: ENGINES,
+    CAMS: CAMS,
+    FORD_WOT: FORD_WOT,
+    FOLLOWER_RATIO: FOLLOWER_RATIO,
+    VERSION: 'cam@1.0.0',
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
+/* ==============================================================================================
+ * THE PANEL
+ * ----------------------------------------------------------------------------------------------
+ * Everything above is pure maths and data and is unit-tested by dev/cam-test.js. Everything below
+ * only draws, and is loaded into the page lazily by datalog-viewer.js the first time the Cam Timing
+ * item is used -- which is why this is one file rather than two: it keeps the whole feature out of
+ * every host's script list, where a missed tag on one of five copies is the recurring failure.
+ * ============================================================================================== */
+/*
+ * the Cam Timing panel: a valve-event diagram and a side-by-side comparison of
+ * two camshafts on a Ti-VCT engine. All the arithmetic lives in datalog-cam.js; this file only draws.
+ *
+ * It replaces the chart in Ken's TiVCT worksheet, which plotted five points per valve — seat open,
+ * checking-height open, full lift, checking-height close, seat close — against crank angle with the
+ * overlap TDC at zero. Same frame here, so a reading taken off the sheet lands in the same place on
+ * this diagram.
+ *
+ * WHY TWO CAMS AT ONCE. Choosing a grind is a comparison, never an absolute: what a tuner wants to
+ * see is where the second cam's curve sits against the one in the engine, with the phasers somewhere
+ * realistic rather than at park. So B is drawn over A in the same frame, dashed, which is the same
+ * visual language the viewer already uses for a comparison log, and the numbers table shows the
+ * difference rather than making anyone subtract two columns in their head.
+ *
+ * The panel opens with no log loaded — it is a calculator, not a log view.
+ */
+(function (global) {
+  'use strict';
+
+  var C = null;   // resolved lazily so load order between the two files cannot matter
+  function cam() { return C || (C = global.DatalogCam); }
+
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function fmt(v, dp) {
+    if (typeof v !== 'number' || !isFinite(v)) return '—';
+    return v.toFixed(dp === undefined ? 1 : dp);
+  }
+  /** A signed difference, with the sign always shown — the whole point of the column is the direction. */
+  function delta(a, b, dp) {
+    if (typeof a !== 'number' || typeof b !== 'number' || !isFinite(a) || !isFinite(b)) return '';
+    var d = b - a;
+    if (Math.abs(d) < 5e-4) return '—';
+    return (d > 0 ? '+' : '') + d.toFixed(dp === undefined ? 1 : dp);
+  }
+
+  var state = null;
+
+  function close() {
+    if (state && state.ovl && state.ovl.parentNode) state.ovl.parentNode.removeChild(state.ovl);
+    document.removeEventListener('keydown', onKey);
+    state = null;
+  }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+
+  // ---- the diagram ------------------------------------------------------------------------------
+  //
+  // One hump per valve, drawn as a cubic through the five points. The curve is cosmetic — the five
+  // points are the data and they are all that datalog-cam.js claims to know — so the control points
+  // are placed to give a plausible ramp rather than to assert a profile. Marking the checking-height
+  // points makes it obvious which part of the curve is measured and which is drawn.
+  function humpPath(side, x, y) {
+    var p = [];
+    var midUp = (side.open + side.peak) / 2, midDn = (side.peak + side.close) / 2;
+    p.push('M' + x(side.seatOpen) + ' ' + y(0));
+    p.push('C' + x(side.seatOpen + (side.open - side.seatOpen) * 0.6) + ' ' + y(0) + ' ' +
+                 x(side.open) + ' ' + y(0.02) + ' ' + x(side.open) + ' ' + y(0.05));
+    p.push('C' + x(midUp) + ' ' + y(0.55) + ' ' + x(midUp) + ' ' + y(0.95) + ' ' + x(side.peak) + ' ' + y(1));
+    p.push('C' + x(midDn) + ' ' + y(0.95) + ' ' + x(midDn) + ' ' + y(0.55) + ' ' + x(side.close) + ' ' + y(0.05));
+    p.push('C' + x(side.close) + ' ' + y(0.02) + ' ' +
+                 x(side.seatClose - (side.seatClose - side.close) * 0.6) + ' ' + y(0) + ' ' +
+                 x(side.seatClose) + ' ' + y(0));
+    return p.join(' ');
+  }
+
+  function diagramSvg(profiles) {
+    var W = 920, H = 290, L = 46, R = 14, T = 16, B = 34;
+    var xs = [], peak = 0;
+    profiles.forEach(function (pr) {
+      if (!pr) return;
+      ['intake', 'exhaust'].forEach(function (k) {
+        xs.push(pr[k].seatOpen, pr[k].seatClose);
+        if (typeof pr[k].peakLift === 'number' && pr[k].peakLift > peak) peak = pr[k].peakLift;
+      });
+    });
+    if (!xs.length) return '';
+    var lo = Math.floor((Math.min.apply(null, xs) - 10) / 20) * 20;
+    var hi = Math.ceil((Math.max.apply(null, xs) + 10) / 20) * 20;
+    // With no published lobe lift there is no scale to draw, so the humps are normalised and the axis
+    // says as much rather than implying inches nobody measured.
+    var haveLift = peak > 0;
+    var top = haveLift ? Math.ceil(peak * 20) / 20 : 1;
+    var x = function (d) { return L + ((d - lo) / (hi - lo)) * (W - L - R); };
+    var y = function (frac) { return T + (1 - frac) * (H - T - B); };
+    var yLift = function (v) { return y(top ? v / top : 0); };
+
+    var g = [];
+    // vertical gridlines every 60 crank degrees, with TDC called out
+    for (var d = lo; d <= hi; d += 60) {
+      var isTdc = (d === 0);
+      g.push('<line class="dlv-cam-grid' + (isTdc ? ' tdc' : '') + '" x1="' + x(d) + '" y1="' + T +
+        '" x2="' + x(d) + '" y2="' + y(0) + '"/>');
+      g.push('<text class="dlv-cam-ax" x="' + x(d) + '" y="' + (H - 12) + '" text-anchor="middle">' +
+        (isTdc ? 'TDC' : d) + '</text>');
+    }
+    // horizontal lift gridlines
+    var steps = haveLift ? 4 : 2;
+    for (var i = 0; i <= steps; i++) {
+      var f = i / steps;
+      g.push('<line class="dlv-cam-grid" x1="' + L + '" y1="' + y(f) + '" x2="' + (W - R) + '" y2="' + y(f) + '"/>');
+      g.push('<text class="dlv-cam-ax" x="' + (L - 6) + '" y="' + (y(f) + 3) + '" text-anchor="end">' +
+        (haveLift ? (top * f).toFixed(3) : (f === 1 ? 'max' : f === 0 ? '0' : '')) + '</text>');
+    }
+    g.push('<text class="dlv-cam-axlab" x="' + (W / 2) + '" y="' + (H - 1) + '" text-anchor="middle">' +
+      'crank degrees from TDC overlap</text>');
+
+    profiles.forEach(function (pr, idx) {
+      if (!pr) return;
+      var cls = idx === 0 ? 'a' : 'b';
+      ['exhaust', 'intake'].forEach(function (k) {
+        var s = pr[k];
+        var yy = (typeof s.peakLift === 'number') ? function (f) { return yLift(s.peakLift * f); } : y;
+        g.push('<path class="dlv-cam-curve ' + cls + ' ' + k + '" d="' + humpPath(s, x, yy) + '"/>');
+        // the two points that are actually measured
+        [s.open, s.close].forEach(function (pt) {
+          g.push('<circle class="dlv-cam-dot ' + cls + ' ' + k + '" cx="' + x(pt) + '" cy="' + yy(0.05) + '" r="2.6"/>');
+        });
+        g.push('<line class="dlv-cam-cl ' + cls + ' ' + k + '" x1="' + x(s.peak) + '" y1="' + yy(1) +
+          '" x2="' + x(s.peak) + '" y2="' + y(0) + '"/>');
+      });
+    });
+    return '<svg class="dlv-cam-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
+      'role="img" aria-label="Valve lift against crank angle">' + g.join('') + '</svg>';
+  }
+
+  // ---- the numbers --------------------------------------------------------------------------------
+  var ROWS = [
+    { k: 'ivo', label: 'IVO', unit: '° BTDC' },
+    { k: 'ivc', label: 'IVC', unit: '° ABDC' },
+    { k: 'evo', label: 'EVO', unit: '° BBDC' },
+    { k: 'evc', label: 'EVC', unit: '° ATDC' },
+    { k: 'intakeDuration', label: 'Intake duration', unit: '°' },
+    { k: 'exhaustDuration', label: 'Exhaust duration', unit: '°' },
+    { k: 'icl', label: 'Intake centreline', unit: '° ATDC' },
+    { k: 'ecl', label: 'Exhaust centreline', unit: '° BTDC' },
+    { k: 'overlap', label: 'Overlap', unit: '°' },
+    { k: 'separation', label: 'Installed separation', unit: '°' },
+  ];
+
+  function tableHtml(a, b) {
+    var head = '<tr><th>Event</th><th>A</th>' + (b ? '<th>B</th><th>Δ</th>' : '') + '</tr>';
+    var body = ROWS.map(function (r) {
+      return '<tr><td>' + esc(r.label) + ' <span class="dlv-cam-u">' + r.unit + '</span></td>' +
+        '<td class="num">' + fmt(a ? a[r.k] : null) + '</td>' +
+        (b ? '<td class="num b">' + fmt(b[r.k]) + '</td><td class="num d">' + delta(a[r.k], b[r.k]) + '</td>' : '') +
+        '</tr>';
+    }).join('');
+    return '<table class="dlv-cam-table"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
+  }
+
+  // ---- one cam's controls ---------------------------------------------------------------------------
+  function camColumnHtml(slot, engineId, sel, ip, ep) {
+    var K = cam();
+    var opts = K.camsFor(engineId).map(function (x) {
+      return '<option value="' + esc(x.id) + '"' + (x.id === sel ? ' selected' : '') + '>' +
+        esc(x.cam.label) + '</option>';
+    }).join('');
+    var e = K.ENGINES[engineId] || { intake: { min: -50, max: 50 }, exhaust: { min: -50, max: 50 } };
+    function pos(which, v, lim) {
+      return '<label class="dlv-cam-pos"><span>' + which + '</span>' +
+        '<input type="range" data-slot="' + slot + '" data-pos="' + which.toLowerCase() + '" ' +
+          'min="' + lim.min + '" max="' + lim.max + '" step="0.5" value="' + v + '">' +
+        '<input type="number" class="dlv-cam-num" data-slot="' + slot + '" data-pos="' + which.toLowerCase() + '" ' +
+          'min="' + lim.min + '" max="' + lim.max + '" step="0.5" value="' + v + '">' +
+        '<em>' + lim.min + '° to +' + lim.max + '°</em></label>';
+    }
+    return '<div class="dlv-cam-col' + (slot === 'b' ? ' is-b' : '') + '" data-slot="' + slot + '">' +
+      '<div class="dlv-cam-colhead"><span class="dlv-cam-swatch ' + slot + '"></span>' +
+        (slot === 'a' ? 'Camshaft A' : 'Camshaft B') +
+        (slot === 'b' ? '<button type="button" class="dlv-cam-clearb" title="Stop comparing">&times;</button>' : '') +
+      '</div>' +
+      '<select class="dlv-cam-sel" data-slot="' + slot + '">' +
+        (slot === 'b' ? '<option value="">— none —</option>' : '') + opts + '</select>' +
+      pos('Intake', ip, e.intake) + pos('Exhaust', ep, e.exhaust) +
+      '</div>';
+  }
+
+  function bodyHtml() {
+    var K = cam();
+    var s = state;
+    var engOpts = Object.keys(K.ENGINES).map(function (k) {
+      return '<option value="' + esc(k) + '"' + (k === s.engine ? ' selected' : '') + '>' +
+        esc(K.ENGINES[k].label) + '</option>';
+    }).join('');
+    var camA = K.CAMS[s.a], camB = s.b ? K.CAMS[s.b] : null;
+    var profA = camA ? K.liftProfile(camA, s.ipA, s.epA, s.ratio) : null;
+    var profB = camB ? K.liftProfile(camB, s.ipB, s.epB, s.ratio) : null;
+    var evA = profA ? profA.events : null, evB = profB ? profB.events : null;
+    if (evA) evA.separation = K.separation(evA);
+    if (evB) evB.separation = K.separation(evB);
+
+    var warn = [].concat(
+      K.checkPosition(s.engine, s.ipA, s.epA).warnings.map(function (w) { return 'A: ' + w; }),
+      camB ? K.checkPosition(s.engine, s.ipB, s.epB).warnings.map(function (w) { return 'B: ' + w; }) : []
+    );
+    // A cam quoted at one checking height compared with one quoted at another is not a comparison,
+    // and the difference is 20-26 crank degrees of silent error, so it is called out rather than
+    // blocked -- the user may well know exactly what they are doing.
+    if (camA && camB && camA.height !== camB.height) {
+      warn.push('A is quoted at ' + camA.height + ' and B at ' + camB.height +
+        ' — the two are not directly comparable');
+    }
+
+    return '<div class="dlv-cam-top">' +
+        '<label class="dlv-cam-eng"><span>Engine</span><select class="dlv-cam-engsel">' + engOpts + '</select></label>' +
+        '<label class="dlv-cam-ratio"><span>Follower ratio</span>' +
+          '<input type="number" class="dlv-cam-num" id="dlvCamRatio" min="1.5" max="2.5" step="0.001" value="' + s.ratio + '">' +
+        '</label>' +
+        '<div class="dlv-cam-engnote">' + esc((K.ENGINES[s.engine] || {}).source || '') + '</div>' +
+      '</div>' +
+      '<div class="dlv-cam-cols">' + camColumnHtml('a', s.engine, s.a, s.ipA, s.epA) +
+        camColumnHtml('b', s.engine, s.b, s.ipB, s.epB) + '</div>' +
+      (warn.length ? '<div class="dlv-cam-warn">' + warn.map(esc).join('<br>') + '</div>' : '') +
+      '<div class="dlv-cam-chart">' + diagramSvg([profA, profB]) + '</div>' +
+      '<div class="dlv-cam-legend">' +
+        '<span><i class="dlv-cam-key intake"></i>intake</span>' +
+        '<span><i class="dlv-cam-key exhaust"></i>exhaust</span>' +
+        '<span><i class="dlv-cam-key dash"></i>camshaft B</span>' +
+        '<span class="dlv-cam-note">dots mark the measured opening and closing; the curve between them is drawn, not measured</span>' +
+      '</div>' +
+      tableHtml(evA, evB) +
+      '<div class="dlv-cam-prov">' +
+        (camA ? '<p><b>A — ' + esc(camA.label) + '</b> (events at ' + esc(camA.height) + '). ' + esc(camA.provenance) + '</p>' : '') +
+        (camB ? '<p><b>B — ' + esc(camB.label) + '</b> (events at ' + esc(camB.height) + '). ' + esc(camB.provenance) + '</p>' : '') +
+        '<p class="dlv-cam-sign">Positions are crank degrees from park, <b>positive retards</b> — Ford’s own ' +
+          'convention. A cam card that writes advance as positive, or a controller whose table is zeroed at a ' +
+          'travel limit rather than at park, has to be converted before its numbers are typed in here.</p>' +
+      '</div>';
+  }
+
+  function render() {
+    if (!state) return;
+    var body = state.ovl.querySelector('.dlv-cam-body');
+    if (!body) return;
+    body.innerHTML = bodyHtml();
+    wireBody();
+  }
+
+  function wireBody() {
+    var ovl = state.ovl;
+    var eng = ovl.querySelector('.dlv-cam-engsel');
+    if (eng) eng.addEventListener('change', function () {
+      var K = cam();
+      state.engine = eng.value;
+      // Switching engine changes which cams exist and how far the phasers go, so the selection and
+      // the positions are re-seeded rather than carried across into something impossible.
+      var list = K.camsFor(state.engine);
+      state.a = (K.ENGINES[state.engine] || {}).stockCam || (list[0] && list[0].id);
+      state.b = '';
+      state.ipA = state.epA = state.ipB = state.epB = 0;
+      render();
+    });
+    var ratio = ovl.querySelector('#dlvCamRatio');
+    if (ratio) ratio.addEventListener('change', function () {
+      var v = parseFloat(ratio.value);
+      if (isFinite(v) && v > 0) { state.ratio = v; render(); }
+    });
+    ovl.querySelectorAll('.dlv-cam-sel').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        var slot = sel.getAttribute('data-slot');
+        if (slot === 'a') state.a = sel.value; else state.b = sel.value;
+        render();
+      });
+    });
+    var clearB = ovl.querySelector('.dlv-cam-clearb');
+    if (clearB) clearB.addEventListener('click', function () { state.b = ''; render(); });
+    // The slider and the number box edit the same value; moving the slider repaints live, so the
+    // diagram follows the drag rather than waiting for release.
+    ovl.querySelectorAll('[data-pos]').forEach(function (el) {
+      var ev = el.type === 'range' ? 'input' : 'change';
+      el.addEventListener(ev, function () {
+        var K = cam();
+        var slot = el.getAttribute('data-slot'), which = el.getAttribute('data-pos');
+        var v = parseFloat(el.value);
+        if (!isFinite(v)) return;
+        v = K.clampPosition(state.engine, which, v);
+        var key = (which === 'intake' ? 'ip' : 'ep') + slot.toUpperCase();
+        state[key] = v;
+        render();
+      });
+    });
+  }
+
+  /** Open the panel. `opts.engine` preselects a generation. */
+  function open(opts) {
+    var K = cam();
+    if (!K) { if (global.showToast) global.showToast('Cam timing is not available on this page.'); return; }
+    close();
+    var engine = (opts && opts.engine && K.ENGINES[opts.engine]) ? opts.engine : 'coyote-gen1';
+    state = {
+      engine: engine,
+      a: K.ENGINES[engine].stockCam,
+      b: '',
+      ipA: 0, epA: 0, ipB: 0, epB: 0,
+      ratio: K.FOLLOWER_RATIO,
+      ovl: null,
+    };
+    var ovl = document.createElement('div');
+    ovl.className = 'dlv-cam-ovl';
+    ovl.innerHTML = '<div class="dlv-cam" role="dialog" aria-label="Cam timing">' +
+      '<div class="dlv-cam-head"><div class="dlv-cam-title">' +
+        '<span class="dlv-cam-kicker">Ti-VCT</span><b>Cam Timing</b></div>' +
+        '<button type="button" class="dlv-cam-x" title="Close">&times;</button></div>' +
+      '<div class="dlv-cam-body"></div></div>';
+    document.body.appendChild(ovl);
+    state.ovl = ovl;
+    ovl.addEventListener('click', function (e) { if (e.target === ovl) close(); });
+    ovl.querySelector('.dlv-cam-x').addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    render();
+  }
+
+  global.DatalogCamUI = { open: open, close: close, VERSION: 'cam-ui@1.0.0' };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
