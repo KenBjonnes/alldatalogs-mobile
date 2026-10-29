@@ -2469,7 +2469,36 @@ function hostFeature(name){
   var f = (window.DATAVIEWER || {}).features;
   return !!(f && f[name] === true);
 }
-// The panel is a calculator, so it opens with or without a log.
+// Which of this log's channels say where the cams are. HP Tuners' own position PIDs are named
+// first and win outright: on the 2024 F-150 logs measured during this work, the role's alias list
+// would otherwise land on "VCT Intake Cam Phase Angle", which climbs from 84 to 169 through the log
+// like an accumulating figure and is not a position at all. The role is only a fallback, and if it
+// is wrong the panel's travel check says so rather than drawing impossible valve events.
+function camLiveChannels(){
+  if(!VIEWER_DATA || !VIEWER_DATA.channels) return null;
+  var chans = VIEWER_DATA.channels, roles = VIEWER_RESOLVED_ROLES || {};
+  function pick(names, role){
+    for(var i = 0; i < names.length; i++) if(chans.indexOf(names[i]) !== -1) return names[i];
+    return (roles[role] && chans.indexOf(roles[role]) !== -1) ? roles[role] : null;
+  }
+  var intake = pick(['Intake Cam Angle'], 'intake_cam');
+  var exhaust = pick(['Exhaust Cam Angle'], 'exhaust_cam');
+  return (intake || exhaust) ? { intake: intake, exhaust: exhaust } : null;
+}
+var VIEWER_CAM_LIVE = null;   // { intake, exhaust } while the cam panel is following this log
+function pushCamLive(idx, dataX){
+  if(!VIEWER_CAM_LIVE || !window.DatalogCamUI || !VIEWER_DATA) return;
+  var L = VIEWER_CAM_LIVE;
+  var rpmCh = (VIEWER_RESOLVED_ROLES || {}).engine_rpm;
+  window.DatalogCamUI.updateLive({
+    intake: L.intake ? valueAtCursor(L.intake, idx, dataX) : null,
+    exhaust: L.exhaust ? valueAtCursor(L.exhaust, idx, dataX) : null,
+    rpm: rpmCh ? valueAtCursor(rpmCh, idx, dataX) : null,
+    time: (dataX != null) ? dataX : VIEWER_DATA.time[idx],
+  });
+}
+// The panel is a calculator, so it opens with or without a log. With one open, and channels that say
+// where the cams are, it docks beside the graphs and follows the cursor through the log.
 function openCamTiming(){
   if(!hostFeature('camTiming')) return;   // not offered on this host at all; see hostFeature
   if(!viewerIsPro()){
@@ -2478,7 +2507,23 @@ function openCamTiming(){
     return;
   }
   ensureCamModule().then(function(){
-    window.DatalogCamUI.open({});
+    var live = camLiveChannels();
+    VIEWER_CAM_LIVE = null;
+    // Dock below the header and the mode tabs, so the viewer's own controls stay reachable.
+    var tabs = document.querySelector('#viewerOverlay .dlv-mode-tabs') || document.querySelector('#viewerOverlay .dlv-header');
+    var top = tabs ? Math.round(tabs.getBoundingClientRect().bottom) : 0;
+    window.DatalogCamUI.open(live ? {
+      docked: true,
+      top: top,
+      live: live,
+      onClose: function(){ VIEWER_CAM_LIVE = null; },
+    } : {});
+    if(live){
+      VIEWER_CAM_LIVE = live;
+      // Show where the cams are right now rather than waiting for the first mouse move.
+      var x = (CROSSHAIR_TIME != null) ? CROSSHAIR_TIME : (VIEWER_DATA.time.length ? VIEWER_DATA.time[0] : null);
+      if(x != null) pushCamLive(cursorSampleIndex(x), x);
+    }
     adlTrack('cam_timing_opened', {});
   }).catch(function(err){
     if(window.showToast) showToast(err && err.message ? err.message : 'Cam timing is unavailable.');
@@ -7609,6 +7654,8 @@ function updateAtCursor(dataX){
     var lch = el.getAttribute('data-legend-ch');
     el.textContent = formatReadoutValue(valueAtCursor(lch, idx, dataX), lch);
   });
+  // Cam timing following the log, when its panel is open. One null check otherwise.
+  if(VIEWER_CAM_LIVE) pushCamLive(idx, dataX);
   // The comparison's value, on the same cursor. Guarded so an ordinary single-log session pays
   // nothing for this on a pointer that reports several hundred positions a second; the elements only
   // exist while a comparison is loaded anyway, and a removed comparison re-renders the legends.

@@ -330,9 +330,6 @@
     'comp-191460': { label: 'Comp Stage III Blower — 191460', engine: 'coyote-gen1',
       ivo: -15, ivc: 71, evo: 64, evc: -1, height: '.050', seatIntake: 276, seatExhaust: 287,
       lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
-    'mmr-terry': { label: 'MMR — Terry', engine: 'coyote-gen1',
-      ivo: -17, ivc: 69, evo: 61, evc: -5, height: '.050', seatIntake: 271, seatExhaust: 275,
-      lobeIntake: 0.28, lobeExhaust: 0.2825, provenance: 'Ken’s master list' },
 
     // --- Comp, Gen 2 (243xxx CY-r series) ---------------------------------------------------------
     // The card publishes duration @ .050" and the park centrelines rather than the four events, so
@@ -554,14 +551,155 @@
     return (d > 0 ? '+' : '') + d.toFixed(dp === undefined ? 1 : dp);
   }
 
+  // The panel's own stylesheet, injected once. It used to live in datalog-viewer.css, which is fine
+  // over the viewer but means nothing on a page that only loads this file -- and the reason the page
+  // exists is that the tool should not need a log, and so should not need the viewer, to be used.
+  var PANEL_CSS = [
+    '/* ---- CAM TIMING panel (Ti-VCT), Ken 2026-10-29 -------------------------------------------------',
+    '   Injected by datalog-cam.js itself, so the module works on a page that loads nothing else of the',
+    '   engine (alldatalogs.com/cam-timing) as well as over the viewer. Every colour is a var() with a',
+    '   fallback, so it renders properly whether or not the page defines the viewer\'s tokens.',
+    '   A calculator rather than a log view, so it is a modal over whatever is on screen and works with no',
+    '   log loaded at all. Two camshafts at once: A solid, B dashed, which is the same language the',
+    '   comparison log already uses on the graphs. */',
+    '.dlv-cam-ovl{position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.6);display:flex;',
+    '  align-items:flex-start;justify-content:center;padding:28px 16px;overflow:auto;}',
+    '.dlv-cam{width:min(1000px,100%);background:var(--card, #121216);color:var(--text, #e8e8ea);',
+    '  border:1px solid var(--card-border, #26262c);border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.6);}',
+    '.dlv-cam-head{display:flex;align-items:center;gap:10px;padding:12px 14px;',
+    '  border-bottom:1px solid var(--card-border, #26262c);}',
+    '.dlv-cam-title{display:flex;flex-direction:column;line-height:1.15;}',
+    '.dlv-cam-kicker{font-size:9px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;',
+    '  color:var(--red, #d1132e);}',
+    '.dlv-cam-title b{font-size:16px;}',
+    '.dlv-cam-x{margin-left:auto;background:none;border:none;color:var(--text-faint, #5c5c66);',
+    '  font-size:22px;line-height:1;cursor:pointer;padding:0 4px;}',
+    '.dlv-cam-x:hover{color:var(--red, #d1132e);}',
+    '.dlv-cam-body{padding:14px;}',
+    '.dlv-cam-top{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:12px;}',
+    '.dlv-cam-top label{display:flex;flex-direction:column;gap:3px;font-size:10px;font-weight:700;',
+    '  letter-spacing:.4px;text-transform:uppercase;color:var(--text-dim, #9a9aa2);}',
+    '.dlv-cam-top select,.dlv-cam-num{background:var(--bg-soft, #0d0d11);color:var(--text, #e8e8ea);',
+    '  border:1px solid var(--card-border, #26262c);border-radius:5px;padding:5px 7px;font:inherit;font-size:12px;}',
+    '.dlv-cam-eng select{min-width:250px;}',
+    '.dlv-cam-ratio .dlv-cam-num{width:84px;}',
+    '.dlv-cam-engnote{flex:1 1 220px;font-size:11px;color:var(--text-faint, #5c5c66);line-height:1.35;',
+    '  text-transform:none;letter-spacing:0;}',
+    '/* Two cam columns side by side; they stack on a phone. */',
+    '.dlv-cam-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;}',
+    '.dlv-cam-col{background:var(--bg-soft, #0d0d11);border:1px solid var(--card-border, #26262c);',
+    '  border-radius:8px;padding:10px;}',
+    '.dlv-cam-colhead{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:800;',
+    '  letter-spacing:.8px;text-transform:uppercase;color:var(--text-dim, #9a9aa2);margin-bottom:7px;}',
+    '.dlv-cam-swatch{width:16px;height:3px;border-radius:2px;background:var(--red, #d1132e);}',
+    '.dlv-cam-swatch.b{background:var(--text-dim, #9a9aa2);',
+    '  background-image:repeating-linear-gradient(90deg,currentColor 0 5px,transparent 5px 8px);}',
+    '.dlv-cam-clearb{margin-left:auto;background:none;border:none;color:var(--text-faint, #5c5c66);',
+    '  font-size:15px;line-height:1;cursor:pointer;}',
+    '.dlv-cam-clearb:hover{color:var(--red, #d1132e);}',
+    '.dlv-cam-sel{width:100%;background:var(--card, #121216);color:var(--text, #e8e8ea);',
+    '  border:1px solid var(--card-border, #26262c);border-radius:5px;padding:5px 7px;font:inherit;font-size:12px;}',
+    '.dlv-cam-pos{display:grid;grid-template-columns:58px 1fr 68px;align-items:center;gap:7px;margin-top:8px;',
+    '  font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--text-dim, #9a9aa2);}',
+    '.dlv-cam-pos input[type=range]{width:100%;accent-color:var(--red, #d1132e);}',
+    '.dlv-cam-pos em{grid-column:2 / span 2;font-style:normal;font-size:9.5px;font-weight:600;',
+    '  letter-spacing:0;text-transform:none;color:var(--text-faint, #5c5c66);}',
+    '/* A position the phasers cannot physically reach, or two cams measured at different heights: said',
+    '   out loud rather than quietly computing events no engine can produce. */',
+    '.dlv-cam-warn{margin-top:10px;padding:8px 10px;border-radius:6px;font-size:11.5px;line-height:1.45;',
+    '  background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.4);color:var(--amber, #f5a623);}',
+    '.dlv-cam-chart{margin-top:12px;background:var(--bg-soft, #0d0d11);',
+    '  border:1px solid var(--card-border, #26262c);border-radius:8px;padding:6px;}',
+    '.dlv-cam-svg{display:block;width:100%;height:auto;}',
+    '.dlv-cam-grid{stroke:var(--card-border, #26262c);stroke-width:1;}',
+    '.dlv-cam-grid.tdc{stroke:var(--text-faint, #5c5c66);stroke-width:1.4;}',
+    '.dlv-cam-ax{fill:var(--text-faint, #5c5c66);font-size:9.5px;font-variant-numeric:tabular-nums;}',
+    '.dlv-cam-axlab{fill:var(--text-faint, #5c5c66);font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;}',
+    '.dlv-cam-curve{fill:none;stroke-width:2;}',
+    '.dlv-cam-curve.intake{stroke:var(--red, #d1132e);}',
+    '.dlv-cam-curve.exhaust{stroke:#3b82f6;}',
+    '.dlv-cam-curve.b{stroke-dasharray:5 3;stroke-width:1.5;opacity:.8;}',
+    '.dlv-cam-dot{fill:none;stroke-width:1.6;}',
+    '.dlv-cam-dot.intake{stroke:var(--red, #d1132e);}',
+    '.dlv-cam-dot.exhaust{stroke:#3b82f6;}',
+    '.dlv-cam-dot.b{opacity:.75;}',
+    '.dlv-cam-cl{stroke-width:1;stroke-dasharray:2 3;opacity:.5;}',
+    '.dlv-cam-cl.intake{stroke:var(--red, #d1132e);}',
+    '.dlv-cam-cl.exhaust{stroke:#3b82f6;}',
+    '.dlv-cam-legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:7px;',
+    '  font-size:10.5px;color:var(--text-dim, #9a9aa2);}',
+    '.dlv-cam-legend span{display:flex;align-items:center;gap:5px;}',
+    '.dlv-cam-key{width:16px;height:3px;border-radius:2px;display:inline-block;}',
+    '.dlv-cam-key.intake{background:var(--red, #d1132e);}',
+    '.dlv-cam-key.exhaust{background:#3b82f6;}',
+    '.dlv-cam-key.dash{background:repeating-linear-gradient(90deg,var(--text-dim,#9a9aa2) 0 5px,transparent 5px 8px);}',
+    '.dlv-cam-note{color:var(--text-faint, #5c5c66);}',
+    '.dlv-cam-table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px;}',
+    '.dlv-cam-table th{text-align:right;font-size:9.5px;font-weight:800;letter-spacing:.8px;',
+    '  text-transform:uppercase;color:var(--text-dim, #9a9aa2);padding:4px 8px;',
+    '  border-bottom:1px solid var(--card-border, #26262c);}',
+    '.dlv-cam-table th:first-child{text-align:left;}',
+    '.dlv-cam-table td{padding:4px 8px;border-bottom:1px solid rgba(38,38,44,.5);}',
+    '.dlv-cam-table td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;}',
+    '.dlv-cam-table td.num.b{color:var(--text-dim, #9a9aa2);}',
+    '.dlv-cam-table td.num.d{color:var(--amber, #f5a623);}',
+    '.dlv-cam-u{color:var(--text-faint, #5c5c66);font-weight:600;font-size:10px;}',
+    '/* Ford publishes valve lift for these engines and nothing else, so where a number came from is part',
+    '   of the answer. */',
+    '.dlv-cam-prov{margin-top:12px;font-size:11px;line-height:1.5;color:var(--text-faint, #5c5c66);}',
+    '.dlv-cam-prov p{margin:0 0 6px;}',
+    '.dlv-cam-prov b{color:var(--text-dim, #9a9aa2);}',
+    '.dlv-cam-sign{padding-top:6px;border-top:1px solid var(--card-border, #26262c);}',
+    '@media (max-width:640px){',
+    '  .dlv-cam-ovl{padding:10px 8px;}',
+    '  .dlv-cam-body{padding:10px;}',
+    '  .dlv-cam-eng select{min-width:0;width:100%;}',
+    '}',
+    '/* Inline on its own page: the same box, without the pop-up\'s backdrop and positioning. */',
+    '.dlv-cam.dlv-cam-inline{width:100%;box-shadow:none;}'
+,
+    '/* DOCKED (a log is open): no backdrop and pinned to the right, so the graphs stay usable -- the',
+    '   whole point of following the log is scrubbing it, and a full-screen pop-up would cover the very',
+    '   graphs being scrubbed. Clicks outside pass straight through to the viewer. */',
+    '.dlv-cam-ovl.dlv-cam-docked{z-index:950;background:none;pointer-events:none;justify-content:flex-end;',
+    '  align-items:stretch;padding:0;overflow:visible;}',
+    '.dlv-cam-docked .dlv-cam{pointer-events:auto;width:min(560px,46vw);height:100%;overflow:auto;',
+    '  border-radius:0;border-width:0 0 0 1px;box-shadow:-14px 0 40px rgba(0,0,0,.5);}',
+    '@media (max-width:760px){ .dlv-cam-docked .dlv-cam{width:100vw;} }',
+    '.dlv-cam-live{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;',
+    '  padding:8px 10px;border-radius:7px;background:rgba(209,19,46,.08);',
+    '  border:1px solid rgba(209,19,46,.35);font-size:11.5px;line-height:1.4;}',
+    '.dlv-cam-live label{display:flex;align-items:center;gap:6px;font-weight:800;cursor:pointer;',
+    '  color:var(--text, #e8e8ea);}',
+    '.dlv-cam-live input{accent-color:var(--red, #d1132e);}',
+    '.dlv-cam-live .dlv-cam-livevals{color:var(--text-dim, #9a9aa2);font-variant-numeric:tabular-nums;}',
+    '.dlv-cam-live .dlv-cam-livevals b{color:var(--text, #e8e8ea);}',
+    '.dlv-cam-live.off{background:none;border-color:var(--card-border, #26262c);}',
+    '.dlv-cam-pos input:disabled{opacity:.55;cursor:not-allowed;}',
+    '.dlv-cam-fromlog{grid-column:2 / span 2;font-size:9.5px;font-weight:700;letter-spacing:.3px;',
+    '  text-transform:uppercase;color:var(--red, #d1132e);}'
+  ].join('\n');
+  function ensureStyle() {
+    if (document.getElementById('dlv-cam-style')) return;
+    var st = document.createElement('style');
+    st.id = 'dlv-cam-style';
+    st.textContent = PANEL_CSS;
+    document.head.appendChild(st);
+  }
+
+  // `root` is whatever element holds .dlv-cam-body: the pop-up's backdrop, or a page's container.
+  // `modal` says which, so closing knows whether to remove an overlay or just empty a container.
   var state = null;
 
   function close() {
-    if (state && state.ovl && state.ovl.parentNode) state.ovl.parentNode.removeChild(state.ovl);
+    var cb = state && state.onClose;
+    if (state && state.modal && state.root && state.root.parentNode) state.root.parentNode.removeChild(state.root);
+    if (state && !state.modal && state.root) state.root.innerHTML = '';
     document.removeEventListener('keydown', onKey);
     state = null;
+    if (cb) { try { cb(); } catch (e) {} }   // the viewer stops pushing cursor values
   }
-  function onKey(e) { if (e.key === 'Escape') close(); }
+  function onKey(e) { if (e.key === 'Escape' && state && state.modal) close(); }
 
   // ---- the diagram ------------------------------------------------------------------------------
   //
@@ -669,20 +807,28 @@
   }
 
   // ---- one cam's controls ---------------------------------------------------------------------------
-  function camColumnHtml(slot, engineId, sel, ip, ep) {
+  function camColumnHtml(slot, engineId, sel, ip, ep, fromLog) {
     var K = cam();
     var opts = K.camsFor(engineId).map(function (x) {
       return '<option value="' + esc(x.id) + '"' + (x.id === sel ? ' selected' : '') + '>' +
         esc(x.cam.label) + '</option>';
     }).join('');
     var e = K.ENGINES[engineId] || { intake: { min: -50, max: 50 }, exhaust: { min: -50, max: 50 } };
+    // A position driven by the log is shown but not editable: typing into it would be overwritten
+    // on the next cursor move, which reads as the box fighting you. The number box shows the RAW
+    // logged value even beyond the slider's travel, because a value outside it is the evidence of a
+    // mis-scaled channel and clamping it would hide exactly that.
     function pos(which, v, lim) {
+      var live = !!(fromLog && fromLog[which.toLowerCase()]);
+      var dis = live ? ' disabled' : '';
+      var shown = (typeof v === 'number' && isFinite(v)) ? (Math.round(v * 10) / 10) : 0;
       return '<label class="dlv-cam-pos"><span>' + which + '</span>' +
         '<input type="range" data-slot="' + slot + '" data-pos="' + which.toLowerCase() + '" ' +
-          'min="' + lim.min + '" max="' + lim.max + '" step="0.5" value="' + v + '">' +
+          'min="' + lim.min + '" max="' + lim.max + '" step="0.5" value="' + shown + '"' + dis + '>' +
         '<input type="number" class="dlv-cam-num" data-slot="' + slot + '" data-pos="' + which.toLowerCase() + '" ' +
-          'min="' + lim.min + '" max="' + lim.max + '" step="0.5" value="' + v + '">' +
-        '<em>' + lim.min + '° to +' + lim.max + '°</em></label>';
+          'min="' + lim.min + '" max="' + lim.max + '" step="0.5" value="' + shown + '"' + dis + '>' +
+        (live ? '<span class="dlv-cam-fromlog">from the log</span>'
+              : '<em>' + lim.min + '° to +' + lim.max + '°</em>') + '</label>';
     }
     return '<div class="dlv-cam-col' + (slot === 'b' ? ' is-b' : '') + '" data-slot="' + slot + '">' +
       '<div class="dlv-cam-colhead"><span class="dlv-cam-swatch ' + slot + '"></span>' +
@@ -728,7 +874,8 @@
         '</label>' +
         '<div class="dlv-cam-engnote">' + esc((K.ENGINES[s.engine] || {}).source || '') + '</div>' +
       '</div>' +
-      '<div class="dlv-cam-cols">' + camColumnHtml('a', s.engine, s.a, s.ipA, s.epA) +
+      liveBarHtml() +
+      '<div class="dlv-cam-cols">' + camColumnHtml('a', s.engine, s.a, s.ipA, s.epA, followingWhat()) +
         camColumnHtml('b', s.engine, s.b, s.ipB, s.epB) + '</div>' +
       (warn.length ? '<div class="dlv-cam-warn">' + warn.map(esc).join('<br>') + '</div>' : '') +
       '<div class="dlv-cam-chart">' + diagramSvg([profA, profB]) + '</div>' +
@@ -748,20 +895,85 @@
       '</div>';
   }
 
+  // ---- following a log --------------------------------------------------------------------------
+  //
+  // Ken, 2026-10-29: "it will be nice to also have it for logs. so as you move through the log it will
+  // update it". The viewer finds the cam-position channels and pushes their values at the cursor in
+  // through updateLive(); while following, camshaft A's two positions ARE those values. Only A follows:
+  // B is the what-if, and the useful question is how a different grind would sit at the phaser
+  // positions this car is actually running.
+  function followingWhat() {
+    var L = state && state.live;
+    if (!L || !L.follow) return null;
+    return { intake: !!L.intakeCh, exhaust: !!L.exhaustCh };
+  }
+  function liveBarHtml() {
+    var L = state && state.live;
+    if (!L) return '';
+    var parts = [];
+    var deg = function (v) { return (typeof v === 'number' && isFinite(v)) ? ((v > 0 ? '+' : '') + v.toFixed(1) + '\u00b0') : '\u2014'; };
+    if (L.intakeCh) parts.push(esc(L.intakeCh) + ' <b>' + deg(L.vi) + '</b>');
+    else parts.push('no intake cam channel \u2014 intake held at park');
+    if (L.exhaustCh) parts.push(esc(L.exhaustCh) + ' <b>' + deg(L.ve) + '</b>');
+    else parts.push('no exhaust cam channel \u2014 exhaust held at park');
+    if (typeof L.rpm === 'number' && isFinite(L.rpm)) parts.push('<b>' + Math.round(L.rpm).toLocaleString() + '</b> rpm');
+    if (typeof L.time === 'number' && isFinite(L.time)) parts.push('<b>' + L.time.toFixed(2) + '</b> s');
+    return '<div class="dlv-cam-live' + (L.follow ? '' : ' off') + '">' +
+      '<label><input type="checkbox" id="dlvCamFollow"' + (L.follow ? ' checked' : '') + '> Follow the log</label>' +
+      '<span class="dlv-cam-livevals">' + parts.join(' &middot; ') + '</span></div>';
+  }
+
+  // A mouse reports hundreds of positions a second and the viewer already coalesces its own cursor
+  // work into one frame; the panel rebuilds a lot of markup, so it coalesces too, and skips the
+  // rebuild entirely when nothing it shows has changed at the precision it shows it.
+  var liveRaf = null;
+  function updateLive(v) {
+    var L = state && state.live;
+    if (!L || !v) return;
+    var r1 = function (x) { return (typeof x === 'number' && isFinite(x)) ? Math.round(x * 10) / 10 : null; };
+    var vi = r1(v.intake), ve = r1(v.exhaust), rpm = (typeof v.rpm === 'number' && isFinite(v.rpm)) ? Math.round(v.rpm) : null;
+    var t = (typeof v.time === 'number' && isFinite(v.time)) ? Math.round(v.time * 100) / 100 : null;
+    if (vi === L.vi && ve === L.ve && rpm === L.rpm && t === L.time) return;
+    L.vi = vi; L.ve = ve; L.rpm = rpm; L.time = t;
+    if (L.follow) {
+      state.ipA = (L.intakeCh && vi !== null) ? vi : 0;
+      state.epA = (L.exhaustCh && ve !== null) ? ve : 0;
+    }
+    if (liveRaf !== null) return;
+    liveRaf = (global.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(function () {
+      liveRaf = null;
+      render();
+    });
+  }
+  function isLive() { return !!(state && state.live); }
+
   function render() {
     if (!state) return;
-    var body = state.ovl.querySelector('.dlv-cam-body');
+    var body = state.root.querySelector('.dlv-cam-body');
     if (!body) return;
     body.innerHTML = bodyHtml();
     wireBody();
   }
 
   function wireBody() {
-    var ovl = state.ovl;
+    var ovl = state.root;
+    var follow = ovl.querySelector('#dlvCamFollow');
+    if (follow) follow.addEventListener('change', function () {
+      var L = state.live;
+      L.follow = follow.checked;
+      // Turning following back on snaps A to the cursor; turning it off leaves A where the log had it,
+      // so you can then nudge from a real operating point rather than from park.
+      if (L.follow) {
+        state.ipA = (L.intakeCh && L.vi !== null) ? L.vi : 0;
+        state.epA = (L.exhaustCh && L.ve !== null) ? L.ve : 0;
+      }
+      render();
+    });
     var eng = ovl.querySelector('.dlv-cam-engsel');
     if (eng) eng.addEventListener('change', function () {
       var K = cam();
       state.engine = eng.value;
+      try { if (global.localStorage) global.localStorage.setItem(ENGINE_KEY, state.engine); } catch (e) {}
       // Switching engine changes which cams exist and how far the phasers go, so the selection and
       // the positions are re-seeded rather than carried across into something impossible.
       var list = K.camsFor(state.engine);
@@ -801,34 +1013,80 @@
     });
   }
 
-  /** Open the panel. `opts.engine` preselects a generation. */
-  function open(opts) {
+  var ENGINE_KEY = 'pbdDlvCamEngine.v1';
+  function rememberedEngine() {
+    try { return global.localStorage ? global.localStorage.getItem(ENGINE_KEY) : null; } catch (e) { return null; }
+  }
+  function freshState(opts, root, modal) {
     var K = cam();
-    if (!K) { if (global.showToast) global.showToast('Cam timing is not available on this page.'); return; }
-    close();
-    var engine = (opts && opts.engine && K.ENGINES[opts.engine]) ? opts.engine : 'coyote-gen1';
-    state = {
+    var want = (opts && opts.engine) || rememberedEngine();
+    var engine = (want && K.ENGINES[want]) ? want : 'coyote-gen1';
+    var live = (opts && opts.live && (opts.live.intake || opts.live.exhaust)) ? {
+      intakeCh: opts.live.intake || null, exhaustCh: opts.live.exhaust || null,
+      follow: true, vi: null, ve: null, rpm: null, time: null,
+    } : null;
+    return {
       engine: engine,
       a: K.ENGINES[engine].stockCam,
       b: '',
       ipA: 0, epA: 0, ipB: 0, epB: 0,
       ratio: K.FOLLOWER_RATIO,
-      ovl: null,
+      root: root,
+      modal: modal,
+      live: live,
+      onClose: (opts && typeof opts.onClose === 'function') ? opts.onClose : null,
     };
-    var ovl = document.createElement('div');
-    ovl.className = 'dlv-cam-ovl';
-    ovl.innerHTML = '<div class="dlv-cam" role="dialog" aria-label="Cam timing">' +
+  }
+  function shellHtml(modal) {
+    return '<div class="dlv-cam' + (modal ? '' : ' dlv-cam-inline') + '"' +
+      (modal ? ' role="dialog" aria-label="Cam timing"' : '') + '>' +
       '<div class="dlv-cam-head"><div class="dlv-cam-title">' +
         '<span class="dlv-cam-kicker">Ti-VCT</span><b>Cam Timing</b></div>' +
-        '<button type="button" class="dlv-cam-x" title="Close">&times;</button></div>' +
-      '<div class="dlv-cam-body"></div></div>';
+        (modal ? '<button type="button" class="dlv-cam-x" title="Close">&times;</button>' : '') +
+      '</div><div class="dlv-cam-body"></div></div>';
+  }
+
+  /**
+   * Open the panel as a pop-up over the page (the viewer's Analyze menu). `opts.docked` pins it to the
+   * right with no backdrop, for following a log; `opts.live` names the cam channels it follows.
+   */
+  function open(opts) {
+    var K = cam();
+    if (!K) { if (global.showToast) global.showToast('Cam timing is not available on this page.'); return; }
+    close();
+    ensureStyle();
+    var docked = !!(opts && opts.docked);
+    var ovl = document.createElement('div');
+    ovl.className = 'dlv-cam-ovl' + (docked ? ' dlv-cam-docked' : '');
+    if (docked && typeof opts.top === 'number' && opts.top > 0) ovl.style.top = opts.top + 'px';
+    ovl.innerHTML = shellHtml(true);
     document.body.appendChild(ovl);
-    state.ovl = ovl;
-    ovl.addEventListener('click', function (e) { if (e.target === ovl) close(); });
+    state = freshState(opts, ovl, true);
+    // Docked, the backdrop takes no clicks at all, so clicking the graph scrubs the log rather than
+    // closing the panel you are scrubbing it for.
+    if (!docked) ovl.addEventListener('click', function (e) { if (e.target === ovl) close(); });
     ovl.querySelector('.dlv-cam-x').addEventListener('click', close);
     document.addEventListener('keydown', onKey);
     render();
   }
 
-  global.DatalogCamUI = { open: open, close: close, VERSION: 'cam-ui@1.0.0' };
+  /**
+   * Render the panel INTO a page element, as the page itself rather than a pop-up over it. This is the
+   * no-log path: alldatalogs.com/cam-timing calls it directly, and never loads the viewer at all
+   * (Ken, 2026-10-29: "I don't want this to require a log to look at"). One panel at a time, so mounting
+   * replaces whatever was showing, pop-up or inline.
+   */
+  function mount(container, opts) {
+    var K = cam();
+    if (!K || !container) return false;
+    close();
+    ensureStyle();
+    container.innerHTML = shellHtml(false);
+    state = freshState(opts, container, false);
+    render();
+    return true;
+  }
+
+  global.DatalogCamUI = { open: open, mount: mount, close: close, updateLive: updateLive, isLive: isLive,
+    VERSION: 'cam-ui@1.2.0' };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
