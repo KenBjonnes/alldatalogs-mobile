@@ -243,6 +243,7 @@
       stockCam: 'coyote-gen1-stock',
       intake:  { min: -50, max: 0,  park: 'retarded' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 2.01, ratioSource: 'Ford’s 12.0 mm valve lift over a .235" lobe',
       source: 'park centrelines builder-endorsed; the 50° authority confirmed by Ford’s own ' +
               'Boss 302 production table reaching 89° ATDC',
     },
@@ -251,6 +252,7 @@
       stockCam: 'coyote-gen2-stock',
       intake:  { min: -20, max: 50, park: 'mid-lock' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 2.01, ratioSource: 'Gen 1’s, carried over (Comp’s .253" lobe / .512" valve pairing gives 2.02)',
       source: 'Comp CY-r cam card (park ICL 109.0) and Ken’s own calibration (109.5), agreeing',
     },
     'coyote-gen3': {
@@ -258,6 +260,9 @@
       stockCam: 'coyote-gen3-stock-050',
       intake:  { min: -20, max: 50, park: 'mid-lock' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
+      // GSC's Gen 3 cam cards print the follower ratio as 1.89 (Ken, 2026-10-30: it had been 2.01 for
+      // every generation). The Gen 3 head's follower is not Gen 1/2's.
+      followerRatio: 1.89, ratioSource: 'GSC’s Gen 3 cam card',
       source: 'intake read from Ken’s calibration; exhaust park assumed unchanged from Gen 2',
     },
     'coyote-gen4': {
@@ -269,6 +274,10 @@
       // though the direction is not.
       intake:  { min: -20, max: 50, park: 'mid-lock' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
+      // No Gen 4 card prints a ratio. GSC's Gen 4 R2/R3 carry the same durations AND the same valve
+      // lift as its Gen 3 R2/R3, which only works on the same follower ratio, so Gen 3's is carried.
+      followerRatio: 1.89, ratioSource: 'Gen 3’s (GSC), carried over: GSC’s Gen 4 grinds print the same valve lift ' +
+        'as the same Gen 3 grinds',
       source: 'intake read from Ken’s calibration; centre-parked intake per Ken; travel limits ' +
               'assumed from Gen 2 and the exhaust duration not yet established',
     },
@@ -528,7 +537,14 @@
   // .235" lobe gives 2.010, while Comp's own .253" lobe / .512" valve pairing gives 2.024. It is a
   // default here rather than a constant, and the UI exposes it, because the only honest version of
   // this number is one the user can replace with what they measured.
+  //
+  // The 2.01 is the Gen 1/2 figure. Gen 3 and Gen 4 use a different one (1.89 off GSC's Gen 3 card), so
+  // the default comes from the engine -- followerRatioFor() -- and FOLLOWER_RATIO is only the fallback.
   var FOLLOWER_RATIO = 2.01;
+  function followerRatioFor(engineId) {
+    var e = ENGINES[engineId];
+    return (e && typeof e.followerRatio === 'number') ? e.followerRatio : FOLLOWER_RATIO;
+  }
   var SEAT_RAMP_ASSUMED = 20;
 
   /** Valve lift at full lift, or null when the cam's lobe lift is unknown. */
@@ -729,6 +745,7 @@
     CAMS: CAMS,
     FORD_WOT: FORD_WOT,
     FOLLOWER_RATIO: FOLLOWER_RATIO,
+    followerRatioFor: followerRatioFor,
     VERSION: 'cam@1.1.0',
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
@@ -850,7 +867,7 @@
     '  border:1px solid var(--card-border, #26262c);border-radius:8px;padding:6px;}',
     '.dlv-cam-svg{display:block;width:100%;height:auto;}',
     '.dlv-cam-grid{stroke:var(--card-border, #26262c);stroke-width:1;}',
-    '.dlv-cam-grid.tdc{stroke:var(--text-faint, #5c5c66);stroke-width:1.4;}',
+    '.dlv-cam-tdc{stroke:#c4c4cc;stroke-width:1.3;stroke-dasharray:6 4;opacity:.85;}',
     '.dlv-cam-ax{fill:var(--text-faint, #5c5c66);font-size:9.5px;font-variant-numeric:tabular-nums;}',
     '.dlv-cam-axlab{fill:var(--text-faint, #5c5c66);font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;}',
     '.dlv-cam-curve{fill:none;stroke-width:2;}',
@@ -983,10 +1000,12 @@
     var yLift = function (v) { return y(top ? v / top : 0); };
 
     var g = [];
-    // vertical gridlines every 60 crank degrees, with TDC called out
-    for (var d = lo; d <= hi; d += 60) {
+    // Vertical gridlines every 60 crank degrees, counted from TDC so that TDC is always one of them.
+    // They used to be counted from the left edge, which is only a multiple of 20, so TDC was usually
+    // skipped altogether (-280, -220 ... -40, 20) and the axis never said where it was.
+    for (var d = Math.ceil(lo / 60) * 60; d <= hi; d += 60) {
       var isTdc = (d === 0);
-      g.push('<line class="dlv-cam-grid' + (isTdc ? ' tdc' : '') + '" x1="' + x(d) + '" y1="' + T +
+      if (!isTdc) g.push('<line class="dlv-cam-grid" x1="' + x(d) + '" y1="' + T +
         '" x2="' + x(d) + '" y2="' + y(0) + '"/>');
       g.push('<text class="dlv-cam-ax" x="' + x(d) + '" y="' + (H - 12) + '" text-anchor="middle">' +
         (isTdc ? 'TDC' : d) + '</text>');
@@ -1017,6 +1036,11 @@
           '" x2="' + x(s.peak) + '" y2="' + y(0) + '"/>');
       });
     });
+    // TDC overlap: a light grey dashed line, full height and over the curves, so where overlap sits
+    // against TDC reads at a glance (Ken, 2026-10-30).
+    if (lo <= 0 && hi >= 0) {
+      g.push('<line class="dlv-cam-tdc" x1="' + x(0) + '" y1="' + T + '" x2="' + x(0) + '" y2="' + y(0) + '"/>');
+    }
     return '<svg class="dlv-cam-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
       'role="img" aria-label="Valve lift against crank angle">' + g.join('') + '</svg>';
   }
@@ -1168,9 +1192,11 @@
         '<label class="dlv-cam-ratio"><span>Follower ratio</span>' +
           '<input type="number" class="dlv-cam-num" id="dlvCamRatio" min="1.5" max="2.5" step="0.001" value="' + s.ratio + '">' +
         '</label>' +
-        '<div class="dlv-cam-engnote">' +
-          (s.engineWhy ? '<b class="dlv-cam-engwhy">' + esc(s.engineWhy) + '</b> ' : '') +
-          esc((K.ENGINES[s.engine] || {}).source || '') + '</div>' +
+        // Only what the user needs on screen: which engine the log picked. Where each engine's and each
+        // cam's figures came from (`source`, `ratioSource`, `provenance`) stays in the data and the code
+        // comments, not on the panel (Ken, 2026-10-30: "get rid of notes like this ... intake read from
+        // Ken's calibration; centre-parked intake per Ken; travel limits assumed from Gen 2 ...").
+        (s.engineWhy ? '<div class="dlv-cam-engnote"><b class="dlv-cam-engwhy">' + esc(s.engineWhy) + '</b></div>' : '') +
       '</div>' +
       liveBarHtml() +
       '<div class="dlv-cam-cols">' + camColumnHtml('a', s.engine, s.a, s.ipA, s.epA, followingWhat()) +
@@ -1185,8 +1211,6 @@
       '</div>' +
       tableHtml(evA, evB) +
       '<div class="dlv-cam-prov">' +
-        (camA ? '<p><b>A — ' + esc(camA.label) + '</b> (events at ' + esc(camA.height) + '). ' + esc(camA.provenance) + '</p>' : '') +
-        (camB ? '<p><b>B — ' + esc(camB.label) + '</b> (events at ' + esc(camB.height) + '). ' + esc(camB.provenance) + '</p>' : '') +
         '<p class="dlv-cam-sign">Positions are crank degrees from park, <b>positive retards</b> — Ford’s own ' +
           'convention. A cam card that writes advance as positive, or a controller whose table is zeroed at a ' +
           'travel limit rather than at park, has to be converted before its numbers are typed in here.</p>' +
@@ -1284,6 +1308,7 @@
       state.a = (K.ENGINES[state.engine] || {}).stockCam || (list[0] && list[0].id);
       state.b = '';
       state.ipA = state.epA = state.ipB = state.epB = 0;
+      state.ratio = K.followerRatioFor(state.engine);   // a different head, a different follower
       render();
     });
     var ratio = ovl.querySelector('#dlvCamRatio');
@@ -1391,7 +1416,7 @@
       a: K.ENGINES[engine].stockCam,
       b: '',
       ipA: 0, epA: 0, ipB: 0, epB: 0,
-      ratio: K.FOLLOWER_RATIO,
+      ratio: K.followerRatioFor(engine),
       root: root,
       modal: modal,
       live: live,

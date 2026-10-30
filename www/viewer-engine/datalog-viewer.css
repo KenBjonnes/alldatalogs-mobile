@@ -110,11 +110,12 @@
 }
 .dlv-header:hover::after,
 .dlv-header:focus-within::after{opacity:0;}
-/* PINNED: a host with the room (BigData for Windows: no browser chrome, 920px+ windows) declares
-   window.ADL_HOST.pinHeader and the overlay gets .dlv-header-pinned -- the bar is simply a bar: no strip,
-   no hover band, no tab, no delays (Ken, 2026-09-09: "get rid of the auto hide on that top menu. it's
-   annoying. there is plenty of room to leave it expanded"). The website keeps the strip: a browser tab has
-   less height to give. Placed AFTER the hover rules on purpose -- equal specificity, last one wins. */
+/* PINNED, the default on every host since 2026-10-30: the overlay gets .dlv-header-pinned and the bar is
+   simply a bar: no strip, no hover band, no tab, no delays. Windows first (Ken, 2026-09-09: "get rid of
+   the auto hide on that top menu. it's annoying"), then the website too (2026-10-30: "I hate the auto
+   hide and prefer it like the desktop app"). The hover-strip rules above only apply to a host that sets
+   window.ADL_HOST.pinHeader = false. Placed AFTER the hover rules on purpose -- equal specificity, last
+   one wins. */
 .dlv-header-pinned .dlv-header{max-height:none;padding:10px 18px;border-top:none;transition:none;}
 .dlv-header-pinned .dlv-header > *{opacity:1;pointer-events:auto;transition:none;}
 .dlv-header-pinned .dlv-header::before,

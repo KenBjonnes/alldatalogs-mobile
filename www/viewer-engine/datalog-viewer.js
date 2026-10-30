@@ -8844,10 +8844,12 @@ function hostHandlesFullscreen(){
   var h = viewerHost();
   return !!(h && h.handlesFullscreen);
 }
-// A host with room to spare (BigData for Windows: no browser chrome, 920px+ windows) keeps the header
-// bar open instead of the hover strip -- Ken, 2026-09-09: "get rid of the auto hide on that top menu.
-// it's annoying. there is plenty of room to leave it expanded". window.ADL_HOST.pinHeader = true.
+// The header bar stays open instead of collapsing to the hover strip. Windows got this first (Ken,
+// 2026-09-09: "get rid of the auto hide on that top menu. it's annoying"), and since 2026-10-30 every
+// host does: "lets make the top menu static. I hate the auto hide and prefer it like the desktop app".
+// A host can still ask for the strip with window.ADL_HOST.pinHeader = false. Phones are unaffected:
+// the phone layout has no header bar at all (.dlv-mobile .dlv-header{display:none}).
 function hostPinsHeader(){
   var h = viewerHost();
-  return !!(h && h.pinHeader);
+  return !(h && h.pinHeader === false);
 }
