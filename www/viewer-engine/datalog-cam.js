@@ -255,6 +255,7 @@
   // 2026-10-30: add GT500 and Boss 302 "provisional"; "GTD and raptor R are same as GT500").
   var MODELS = [
     { id: 'mustang-gt', label: 'Mustang GT (Coyote 5.0)' },
+    { id: 'f150', label: 'F-150 (Coyote 5.0)' },
     { id: 'mustang-boss302', label: 'Mustang Boss 302 — provisional' },
     { id: 'mustang-gt350', label: 'Mustang GT350 (5.2 Voodoo)' },
     { id: 'shelby-gt500', label: 'Shelby GT500 (5.2 Predator) — provisional' },
@@ -307,6 +308,48 @@
         'as the same Gen 3 grinds',
       source: 'intake read from Ken’s calibration; centre-parked intake per Ken; intake travel +/-50 for ' +
               'now (Ken); the exhaust duration not yet established',
+    },
+
+    // F-150 5.0, from Ken's own truck calibrations (2026-10-30), read the same way as the Mustang's:
+    //   2011-14  nothing stored (the Gen 1 strategy) -- Gen 1 geometry; AED's intake 20° shorter
+    //   2015-17  intake open 340 / close 239 / exhaust close 370 (the Mustang Gen 2 is 340 / 239 / 369)
+    //   2018-20  340 / 599 / 370 (Ken corrected a 320 / 620 to these; the Mustang Gen 3 is 340 / 599 / 369)
+    //   2021+    368 / 633 / 373 -- the intake parks near 140 like the 2024+ Mustang
+    // Each truck's intake matches its Mustang's in the tune and its exhaust closes 1° later, so the .050
+    // rows are the Mustang's cam with the exhaust 1° retarded, except 2021+, which has L&M's own stock
+    // .050 figures (210 / 212, .450") for the truck.
+    'f150-gen1': {
+      label: 'F-150 Gen 1 — 2011-14', model: 'f150', gen: 'Gen 1 — 2011-14',
+      stockCam: 'f150-gen1-stock-050',
+      intake:  { min: -50, max: 0,  park: 'retarded' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 2.01, ratioSource: 'Gen 1 Mustang’s, carried over',
+      source: 'the Gen 1 strategy stores no events (Ken); Gen 1 Mustang park and travel; AED: truck intake 20° ' +
+              'shorter off the seat on the same centreline',
+    },
+    'f150-gen2': {
+      label: 'F-150 Gen 2 — 2015-17', model: 'f150', gen: 'Gen 2 — 2015-17',
+      stockCam: 'f150-gen2-stock-050',
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 2.01, ratioSource: 'Gen 2 Mustang’s, carried over',
+      source: 'Ken’s calibration: intake open 340 / close 239, exhaust close 370',
+    },
+    'f150-gen3': {
+      label: 'F-150 Gen 3 — 2018-20', model: 'f150', gen: 'Gen 3 — 2018-20',
+      stockCam: 'f150-gen3-stock-050',
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 1.89, ratioSource: 'GSC’s Gen 3 cam card',
+      source: 'Ken’s calibration: intake open 340 / close 599, exhaust close 370',
+    },
+    'f150-gen4': {
+      label: 'F-150 — 2021+ (VDE)', model: 'f150', gen: '2021+ (VDE)',
+      stockCam: 'f150-gen4-stock-050',
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 1.89, ratioSource: 'Gen 3’s (GSC), carried over',
+      source: 'Ken’s calibration: intake open 368 / close 633, exhaust close 373; L&M stock 210 / 212 @ .050"',
     },
 
     // Boss 302: Gen 1 VCT hardware, so Gen 1's park and travel. Ford kept the GT intake and raised
@@ -559,6 +602,63 @@
       valveIntake: 0.564, valveExhaust: 0.551,
       provenance: 'L&M GT500 VCT worksheet, stock rows (identical to its GT350 rows, so provisional); intake valve ' +
                   'lift .564" from a calibration report, exhaust 14 mm assumed.' },
+    // --- stock F-150 (see the note above the F-150 engines) -----------------------------------------
+    // 2011-14: AED measured the truck intake 20° shorter off the seat than the GT's, on the same
+    // centreline (Ken, 2026-10-30: use that). Taken as 20° shorter at .050" too -- 191 at ICL 139 -- which
+    // is the estimate in the name; the exhaust is the Gen 1 Mustang's.
+    'f150-gen1-stock-050': { label: 'Stock F-150 2011-14 — .050 ESTIMATE', engine: 'f150-gen1', stock: true,
+      ivo: 95.5 - 139, ivc: 95.5 + 139 - 180, evo: 50.5, evc: -19.5, height: '.050',
+      seatIntake: 243, seatExhaust: 263, valveIntake: 0.472, lobeExhaust: 0.216,
+      provenance: 'ESTIMATE: Gen 1 Mustang cam with the intake 20° shorter (AED: off the seat, same centreline), ' +
+                  'applied at .050"; intake lift .472". Exhaust the Gen 1 Mustang’s.' },
+    // 2015-17: the Gen 2 Mustang card; the tune closes the exhaust 1° later (370 against 369).
+    'f150-gen2-stock-050': { label: 'Stock F-150 2015-17 — .050 ESTIMATE', engine: 'f150-gen2', stock: true,
+      ivo: -3.5, ivc: 34.5, evo: 49.5, evc: -18.5, height: '.050',
+      seatIntake: 259, seatExhaust: 264, lobeIntake: 0.253, lobeExhaust: 0.253,
+      provenance: 'ESTIMATE: the Gen 2 Mustang card (Ken’s tune gives the truck the same intake events), with the ' +
+                  'exhaust 1° later as the tune’s 370 against the Mustang’s 369.' },
+    'f150-gen2-stock': { label: 'Stock F-150 2015-17 — calibration events', engine: 'f150-gen2', stock: true,
+      ivo: 20, ivc: 59, evo: 2 * (124 + 10) - 180 - 10, evc: 10, height: 'calibration',
+      lobeIntake: 0.253, lobeExhaust: 0.253,
+      provenance: 'Ken’s calibration: 340 / 239 / 370; exhaust duration from the 124 park of the .050 row.' },
+    // 2018-20: L&M's Gen 3 stock card; the tune closes the exhaust 1° later (370 against 369).
+    'f150-gen3-stock-050': { label: 'Stock F-150 2018-20 — .050 ESTIMATE', engine: 'f150-gen3', stock: true,
+      ivo: 106.60 - 109, ivc: 104.00 + 109 - 180, evo: 107.30 + 122 - 180, evc: 105.18 - 122,
+      parkIcl: 109, parkEcl: 122, height: '.050',
+      seatEvents: { ivo: 128.48 - 109, ivc: 139.00 + 109 - 180, evo: 129.88 + 122 - 180, evc: 141.32 - 122 },
+      valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'ESTIMATE: L&M’s Gen 3 Mustang stock card (Ken’s tune gives the truck the same intake events), ' +
+                  'with the exhaust 1° later as the tune’s 370 against the Mustang’s 369; .551" lift.' },
+    'f150-gen3-stock': { label: 'Stock F-150 2018-20 — calibration events', engine: 'f150-gen3', stock: true,
+      ivo: 20, ivc: 59, evo: 2 * (122 + 10) - 180 - 10, evc: 10, height: 'calibration',
+      valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'Ken’s calibration: 340 / 599 / 370; exhaust duration from the 122 park of the .050 row.' },
+    // 2021+: L&M's stock comparison gives the truck 210 / 212 @ .050" and .450"; the tune gives the
+    // intake centreline (140.5) and the exhaust closing (373 = 13° ATDC). The exhaust is placed so its
+    // closing sits as far beyond its .050" point as the intake's tune events sit beyond theirs
+    // ((265 − 210) / 2 = 27.5° a side): .050" closing 14.5° BTDC, centreline 120.5.
+    'f150-gen4-stock-050': { label: 'Stock F-150 2021+ — .050 ESTIMATE', engine: 'f150-gen4', stock: true,
+      ivo: 105 - 140.5, ivc: 105 + 140.5 - 180, evo: 106 + 120.5 - 180, evc: 106 - 120.5, height: '.050',
+      valveIntake: 0.450, valveExhaust: 0.450,
+      provenance: 'L&M’s stock comparison 210 / 212 @ .050", .450"; intake centreline 140.5 from Ken’s calibration; ' +
+                  'exhaust centreline 120.5 ESTIMATED from the tune’s exhaust closing.' },
+    'f150-gen4-stock': { label: 'Stock F-150 2021+ — calibration events', engine: 'f150-gen4', stock: true,
+      ivo: -8, ivc: 93, evo: 2 * (120.5 + 13) - 180 - 13, evc: 13, height: 'calibration',
+      valveIntake: 0.450, valveExhaust: 0.450,
+      provenance: 'Ken’s calibration: 368 / 633 / 373; exhaust duration from the 120.5 park of the .050 row.' },
+    // GSC's F-150 Gen 3 grinds (7076) carry the same specs as its Mustang Gen 3 grinds (7073).
+    'gsc-7076s1': { label: 'GSC S1 — 7076S1', engine: 'f150-gen3',
+      ivo: -5, ivc: 57, evo: 81, evc: -17, height: '.050', seatIntake: 290, seatExhaust: 300,
+      valveIntake: 0.551, valveExhaust: 0.551, provenance: GSC_CARD('232/244') },
+    'gsc-7076s2': { label: 'GSC S2 — 7076S2', engine: 'f150-gen3',
+      ivo: -2, ivc: 61, evo: 83, evc: -11, height: '.050', seatIntake: 292, seatExhaust: 316,
+      valveIntake: 0.560, valveExhaust: 0.560, provenance: GSC_CARD('239/252') },
+    'gsc-7076r2': { label: 'GSC R2 — 7076R2', engine: 'f150-gen3',
+      ivo: -2, ivc: 61, evo: 77, evc: -16, height: '.050', seatIntake: 292, seatExhaust: 304,
+      valveIntake: 0.560, valveExhaust: 0.560, provenance: GSC_CARD('239/241') },
+    'gsc-7076r3': { label: 'GSC R3 — 7076R3', engine: 'f150-gen3',
+      ivo: 1, ivc: 65, evo: 83, evc: -11, height: '.050', seatIntake: 300, seatExhaust: 316,
+      valveIntake: 0.560, valveExhaust: 0.560, provenance: GSC_CARD('246/252') },
     // Gen 1's events (GT intake kept, exhaust duration unchanged) with the 13 mm exhaust.
     'boss302-stock': { label: 'Stock Boss 302 (2012-13) — provisional', engine: 'coyote-boss302', stock: true,
       ivo: -33.5, ivc: 64.5, evo: 50.5, evc: -19.5, height: '.050',

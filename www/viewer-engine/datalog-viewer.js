@@ -2506,6 +2506,8 @@ function camEngineForLog(){
     else if(/raptor ?r\b/i.test(name)) g = y >= 2023 ? 'predator-raptor-r' : null;
     else if(/\bgtd\b/i.test(name)) g = y >= 2025 ? 'predator-gtd' : null;
     else if(/boss ?302/i.test(name)) g = (y >= 2012 && y <= 2013) ? 'coyote-boss302' : null;
+    else if(/f-?150/i.test(name) && !/eco|raptor|hybrid|lightning/i.test(name))
+      g = y >= 2021 ? 'f150-gen4' : y >= 2018 ? 'f150-gen3' : y >= 2015 ? 'f150-gen2' : y >= 2011 ? 'f150-gen1' : null;
     else if(/mustang/i.test(name) && !/eco/i.test(name))
       g = y >= 2024 ? 'coyote-gen4' : y >= 2018 ? 'coyote-gen3' : y >= 2015 ? 'coyote-gen2' : y >= 2011 ? 'coyote-gen1' : null;
     if(g && K.ENGINES[g]) return { engine: g, why: y + ' ' + name.trim() + ', from this vehicle’s record.' };
