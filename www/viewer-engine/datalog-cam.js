@@ -234,6 +234,10 @@
   // THE EXHAUST IS NOT CENTRE-PARKED ON ANY OF THEM: it parks fully advanced and only retards, so
   // its position is never negative. Only the intake changed.
   //
+  // CENTRE-PARKED INTAKE TRAVEL is -50 to +50 on Gen 2, 3 and 4 for now (Ken, 2026-10-30: "gen2 isn't
+  // limited to -20 either. set it up to take -50 +50 for now. we will make it more accurate later").
+  // It was -20 / +50, carried from a Gen 2 figure, and stopped the slider short of where tunes go.
+  //
   // The travel limits are what make a position physically possible, so the UI clamps to them and the
   // log reader can flag a channel reading outside them — which is how a mis-scaled PID gets caught
   // rather than quietly producing impossible valve events.
@@ -250,7 +254,7 @@
     'coyote-gen2': {
       label: 'Coyote Gen 2 — 2015-17 Mustang GT',
       stockCam: 'coyote-gen2-stock',
-      intake:  { min: -20, max: 50, park: 'mid-lock' },
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
       followerRatio: 2.01, ratioSource: 'Gen 1’s, carried over (Comp’s .253" lobe / .512" valve pairing gives 2.02)',
       source: 'Comp CY-r cam card (park ICL 109.0) and Ken’s own calibration (109.5), agreeing',
@@ -258,7 +262,7 @@
     'coyote-gen3': {
       label: 'Coyote Gen 3 — 2018-23 Mustang GT',
       stockCam: 'coyote-gen3-stock-050',
-      intake:  { min: -20, max: 50, park: 'mid-lock' },
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
       // GSC's Gen 3 cam cards print the follower ratio as 1.89 (Ken, 2026-10-30: it had been 2.01 for
       // every generation). The Gen 3 head's follower is not Gen 1/2's.
@@ -268,18 +272,16 @@
     'coyote-gen4': {
       label: 'Coyote Gen 4 — 2024+ Mustang GT',
       stockCam: 'coyote-gen4-stock-050',
-      // Centre-parked intake like Gen 2 and Gen 3 (Ken, 2026-10-29). The travel figures are
-      // Gen 2's, carried across on the strength of "Gen 2 and newer" rather than measured on a
-      // Gen 4 -- no cam card for this engine exists yet, so treat the LIMITS as provisional even
-      // though the direction is not.
-      intake:  { min: -20, max: 50, park: 'mid-lock' },
+      // Centre-parked intake like Gen 2 and Gen 3 (Ken, 2026-10-29); +/-50 travel for now, as on
+      // Gen 2 and 3 (see the note above ENGINES).
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
       // No Gen 4 card prints a ratio. GSC's Gen 4 R2/R3 carry the same durations AND the same valve
       // lift as its Gen 3 R2/R3, which only works on the same follower ratio, so Gen 3's is carried.
       followerRatio: 1.89, ratioSource: 'Gen 3’s (GSC), carried over: GSC’s Gen 4 grinds print the same valve lift ' +
         'as the same Gen 3 grinds',
-      source: 'intake read from Ken’s calibration; centre-parked intake per Ken; travel limits ' +
-              'assumed from Gen 2 and the exhaust duration not yet established',
+      source: 'intake read from Ken’s calibration; centre-parked intake per Ken; intake travel +/-50 for ' +
+              'now (Ken); the exhaust duration not yet established',
     },
   };
 
@@ -844,6 +846,13 @@
     '.dlv-cam-clearb{margin-left:auto;background:none;border:none;color:var(--text-faint, #5c5c66);',
     '  font-size:15px;line-height:1;cursor:pointer;}',
     '.dlv-cam-clearb:hover{color:var(--red, #d1132e);}',
+    '.dlv-cam-btoggle{background:none;border:none;padding:0;color:inherit;font:inherit;cursor:pointer;}',
+    '.dlv-cam-col.is-collapsed{padding:0;}',
+    '.dlv-cam-col.is-collapsed .dlv-cam-colhead{width:100%;margin:0;padding:9px 10px;text-align:left;}',
+    '.dlv-cam-col.is-collapsed .dlv-cam-colhead:hover{color:var(--text, #e8e8ea);}',
+    '.dlv-cam-caret{display:inline-block;width:10px;font-size:11px;}',
+    '.dlv-cam-bpicked{margin-left:auto;font-weight:600;text-transform:none;letter-spacing:0;font-size:11px;',
+    '  color:var(--text-faint, #5c5c66);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%;}',
     '.dlv-cam-sel{width:100%;background:var(--card, #121216);color:var(--text, #e8e8ea);',
     '  border:1px solid var(--card-border, #26262c);border-radius:5px;padding:5px 7px;font:inherit;font-size:12px;}',
     '.dlv-cam-engwhy{color:var(--text, #e8e8ea);font-weight:700;}',
@@ -921,7 +930,7 @@
     '.dlv-cam-docked .dlv-cam{pointer-events:auto;width:min(560px,46vw);height:100%;overflow:auto;',
     '  border-radius:0;border-width:0 0 0 1px;box-shadow:none;}',
     '@media (max-width:760px){ .dlv-cam-docked .dlv-cam{width:100vw;} }',
-    '.dlv-cam-live{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;',
+    '.dlv-cam-live{display:flex;align-items:center;gap:14px;flex-wrap:nowrap;white-space:nowrap;margin-bottom:12px;',
     '  padding:8px 10px;border-radius:7px;background:rgba(209,19,46,.08);',
     '  border:1px solid rgba(209,19,46,.35);font-size:11.5px;line-height:1.4;}',
     '.dlv-cam-live label{display:flex;align-items:center;gap:6px;font-weight:800;cursor:pointer;',
@@ -1102,11 +1111,24 @@
           'min="' + lim.min + '" max="' + lim.max + '" step="0.5" value="' + shown + '"' + dis + '>' +
         '<input type="number" class="dlv-cam-num" data-slot="' + slot + '" data-pos="' + which.toLowerCase() + '" ' +
           'min="' + lim.min + '" max="' + lim.max + '" step="0.5" value="' + shown + '"' + dis + '>' +
-        (live ? '<span class="dlv-cam-fromlog">from the log</span>'
-              : '<em>' + lim.min + '° to +' + lim.max + '°</em>') + '</label>';
+        '</label>';
+    }
+    // Camshaft B folds away to its title bar, to save height beside a log (Ken, 2026-10-30: "the
+    // camshaft b menu should be collapsable to save vert space. won't use that much. load that
+    // collapsed"). Folded, a cam picked for B is still drawn, and its name stays on the bar.
+    if (slot === 'b' && state && state.bCollapsed) {
+      var picked = sel ? (sel === CUSTOM_ID ? 'Your own cam card' : ((K.CAMS[sel] || {}).label || '')) : '';
+      return '<div class="dlv-cam-col is-b is-collapsed" data-slot="b">' +
+        '<button type="button" class="dlv-cam-colhead dlv-cam-btoggle" aria-expanded="false" title="Show camshaft B">' +
+          '<span class="dlv-cam-caret">&#9656;</span><span class="dlv-cam-swatch b"></span>Camshaft B' +
+          (picked ? '<span class="dlv-cam-bpicked">' + esc(picked) + '</span>' : '<span class="dlv-cam-bpicked">compare a second cam</span>') +
+        '</button></div>';
     }
     return '<div class="dlv-cam-col' + (slot === 'b' ? ' is-b' : '') + '" data-slot="' + slot + '">' +
-      '<div class="dlv-cam-colhead"><span class="dlv-cam-swatch ' + slot + '"></span>' +
+      '<div class="dlv-cam-colhead">' +
+        (slot === 'b' ? '<button type="button" class="dlv-cam-btoggle" aria-expanded="true" title="Fold camshaft B away">' +
+          '<span class="dlv-cam-caret">&#9662;</span></button>' : '') +
+        '<span class="dlv-cam-swatch ' + slot + '"></span>' +
         (slot === 'a' ? 'Camshaft A' : 'Camshaft B') +
         (slot === 'b' ? '<button type="button" class="dlv-cam-clearb" title="Stop comparing">&times;</button>' : '') +
       '</div>' +
@@ -1131,16 +1153,13 @@
       var v = c.custom;
       return '<div class="dlv-cam-cardin">' +
         box('durI', 'Int dur @.050', v.durI, 150, 320) + box('durE', 'Exh dur @.050', v.durE, 150, 320) +
-        box('icl', 'Int CL at park', v.icl, 60, 180) + box('ecl', 'Exh CL at park', v.ecl, 60, 180) +
-        '<em>Off the cam card: durations at .050" and both centrelines with the phasers parked.</em></div>';
+        box('icl', 'Int CL at park', v.icl, 60, 180) + box('ecl', 'Exh CL at park', v.ecl, 60, 180) + '</div>';
     }
     if (c.card) {
       return '<div class="dlv-cam-cardin">' +
         box('icl', 'Int CL at park', c.cardIcl, 60, 180) +
         '<label><span>Exh CL (from LSA ' + c.card.lsa + ')</span><b>' + (2 * c.card.lsa - c.cardIcl).toFixed(1) + '</b></label>' +
-        '<em>' + (c.cardIclAssumed
-          ? 'ASSUMED — Comp prints no centreline for this cam. Type the intake centreline from your cam card.'
-          : 'From your cam card.') + '</em></div>';
+        '</div>';
     }
     return '';
   }
@@ -1192,11 +1211,11 @@
         '<label class="dlv-cam-ratio"><span>Follower ratio</span>' +
           '<input type="number" class="dlv-cam-num" id="dlvCamRatio" min="1.5" max="2.5" step="0.001" value="' + s.ratio + '">' +
         '</label>' +
-        // Only what the user needs on screen: which engine the log picked. Where each engine's and each
-        // cam's figures came from (`source`, `ratioSource`, `provenance`) stays in the data and the code
-        // comments, not on the panel (Ken, 2026-10-30: "get rid of notes like this ... intake read from
-        // Ken's calibration; centre-parked intake per Ken; travel limits assumed from Gen 2 ...").
-        (s.engineWhy ? '<div class="dlv-cam-engnote"><b class="dlv-cam-engwhy">' + esc(s.engineWhy) + '</b></div>' : '') +
+      // NO NOTES ON THE PANEL: the numbers, the graph and the warnings, nothing else (Ken, 2026-10-30:
+      // "get rid of notes like this ... intake read from Ken's calibration ..." and then "get rid of all
+      // notes to save space as well. user does not need to see that"). Where each engine's and cam's
+      // figures came from (`source`, `ratioSource`, `provenance`) stays in the data and these comments;
+      // the explanations live in the manual. The warnings stay: they say something is wrong right now.
       '</div>' +
       liveBarHtml() +
       '<div class="dlv-cam-cols">' + camColumnHtml('a', s.engine, s.a, s.ipA, s.epA, followingWhat()) +
@@ -1207,14 +1226,8 @@
         '<span><i class="dlv-cam-key intake"></i>intake</span>' +
         '<span><i class="dlv-cam-key exhaust"></i>exhaust</span>' +
         '<span><i class="dlv-cam-key dash"></i>camshaft B</span>' +
-        '<span class="dlv-cam-note">dots mark the measured opening and closing; the curve between them is drawn, not measured</span>' +
       '</div>' +
-      tableHtml(evA, evB) +
-      '<div class="dlv-cam-prov">' +
-        '<p class="dlv-cam-sign">Positions are crank degrees from park, <b>positive retards</b> — Ford’s own ' +
-          'convention. A cam card that writes advance as positive, or a controller whose table is zeroed at a ' +
-          'travel limit rather than at park, has to be converted before its numbers are typed in here.</p>' +
-      '</div>';
+      tableHtml(evA, evB);
   }
 
   // ---- following a log --------------------------------------------------------------------------
@@ -1232,14 +1245,13 @@
   function liveBarHtml() {
     var L = state && state.live;
     if (!L) return '';
+    // Just the two positions, short enough to stay on the checkbox's line (Ken, 2026-10-30: it "sometimes
+    // returns to next line depending on output. make it simpler, no need for timestamp there ... or the
+    // RPM"). The channel names, rpm and time are all on the viewer's own legends already.
     var parts = [];
-    var deg = function (v) { return (typeof v === 'number' && isFinite(v)) ? ((v > 0 ? '+' : '') + v.toFixed(1) + '\u00b0') : '\u2014'; };
-    if (L.intakeCh) parts.push(esc(L.intakeCh) + ' <b>' + deg(L.vi) + '</b>');
-    else parts.push('no intake cam channel \u2014 intake held at park');
-    if (L.exhaustCh) parts.push(esc(L.exhaustCh) + ' <b>' + deg(L.ve) + '</b>');
-    else parts.push('no exhaust cam channel \u2014 exhaust held at park');
-    if (typeof L.rpm === 'number' && isFinite(L.rpm)) parts.push('<b>' + Math.round(L.rpm).toLocaleString() + '</b> rpm');
-    if (typeof L.time === 'number' && isFinite(L.time)) parts.push('<b>' + L.time.toFixed(2) + '</b> s');
+    var deg = function (v) { return (typeof v === 'number' && isFinite(v)) ? ((v > 0 ? '+' : '') + v.toFixed(1) + '°') : '—'; };
+    parts.push('Intake <b>' + (L.intakeCh ? deg(L.vi) : 'park') + '</b>');
+    parts.push('Exhaust <b>' + (L.exhaustCh ? deg(L.ve) : 'park') + '</b>');
     return '<div class="dlv-cam-live' + (L.follow ? '' : ' off') + '">' +
       '<label><input type="checkbox" id="dlvCamFollow"' + (L.follow ? ' checked' : '') + '> Follow the log</label>' +
       '<span class="dlv-cam-livevals">' + parts.join(' &middot; ') + '</span></div>';
@@ -1253,10 +1265,9 @@
     var L = state && state.live;
     if (!L || !v) return;
     var r1 = function (x) { return (typeof x === 'number' && isFinite(x)) ? Math.round(x * 10) / 10 : null; };
-    var vi = r1(v.intake), ve = r1(v.exhaust), rpm = (typeof v.rpm === 'number' && isFinite(v.rpm)) ? Math.round(v.rpm) : null;
-    var t = (typeof v.time === 'number' && isFinite(v.time)) ? Math.round(v.time * 100) / 100 : null;
-    if (vi === L.vi && ve === L.ve && rpm === L.rpm && t === L.time) return;
-    L.vi = vi; L.ve = ve; L.rpm = rpm; L.time = t;
+    var vi = r1(v.intake), ve = r1(v.exhaust);
+    if (vi === L.vi && ve === L.ve) return;
+    L.vi = vi; L.ve = ve;
     if (L.follow) {
       state.ipA = (L.intakeCh && vi !== null) ? vi : 0;
       state.epA = (L.exhaustCh && ve !== null) ? ve : 0;
@@ -1345,6 +1356,9 @@
         render();
       });
     });
+    ovl.querySelectorAll('.dlv-cam-btoggle').forEach(function (b) {
+      b.addEventListener('click', function () { state.bCollapsed = !state.bCollapsed; render(); });
+    });
     var clearB = ovl.querySelector('.dlv-cam-clearb');
     if (clearB) clearB.addEventListener('click', function () { state.b = ''; render(); });
     // The slider and the number box edit the same value.
@@ -1404,7 +1418,7 @@
     var engine = (want && K.ENGINES[want]) ? want : 'coyote-gen1';
     var live = (opts && opts.live && (opts.live.intake || opts.live.exhaust)) ? {
       intakeCh: opts.live.intake || null, exhaustCh: opts.live.exhaust || null,
-      follow: true, vi: null, ve: null, rpm: null, time: null,
+      follow: true, vi: null, ve: null,
     } : null;
     return {
       engine: engine,
@@ -1417,6 +1431,8 @@
       b: '',
       ipA: 0, epA: 0, ipB: 0, epB: 0,
       ratio: K.followerRatioFor(engine),
+      // Beside a log, camshaft B starts folded away; on its own page there is room for both.
+      bCollapsed: !!(opts && opts.docked),
       root: root,
       modal: modal,
       live: live,

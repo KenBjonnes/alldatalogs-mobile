@@ -2507,12 +2507,9 @@ var VIEWER_CAM_LIVE = null;   // { intake, exhaust } while the cam panel is foll
 function pushCamLive(idx, dataX){
   if(!VIEWER_CAM_LIVE || !window.DatalogCamUI || !VIEWER_DATA) return;
   var L = VIEWER_CAM_LIVE;
-  var rpmCh = (VIEWER_RESOLVED_ROLES || {}).engine_rpm;
   window.DatalogCamUI.updateLive({
     intake: L.intake ? valueAtCursor(L.intake, idx, dataX) : null,
     exhaust: L.exhaust ? valueAtCursor(L.exhaust, idx, dataX) : null,
-    rpm: rpmCh ? valueAtCursor(rpmCh, idx, dataX) : null,
-    time: (dataX != null) ? dataX : VIEWER_DATA.time[idx],
   });
 }
 // The docked panel takes its OWN column: the viewer narrows to the space left of it, so no part of the
