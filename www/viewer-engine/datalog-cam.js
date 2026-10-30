@@ -915,6 +915,84 @@
     return null;
   }
 
+  // Which of a log's channels say where the cams are (Ken, 2026-10-30: "look for alternative names for
+  // cam channels, like phase angle"). Censused on 837 HP Tuners .hpl logs plus the SCT and MoTeC logs on
+  // hand: HP Tuners writes Intake/Exhaust Cam Angle (PIDs 2172/2178) and VCT Intake/Exhaust Cam Phase
+  // Angle (19054/19053) -- on every log carrying both they agree to 0.1° -- and the "2" twins for bank 2;
+  // SCT Livewire writes "variable valve timing intake bank 1 actual"; SCT's older PCM-mnemonic logs
+  // VCT1_INTP / VCT1_EXHP; MoTeC "VTC Intake Bank 1 Position". All share the sign the panel uses.
+  // Known names go first, in that order, bank 1 before bank 2; then any other name that says intake or
+  // exhaust, cam (or VCT / VVT / phaser) and angle / position / phase / actual, and is not a desired,
+  // target, duty-cycle, error or sync channel. A name is not enough, though: on 61 of the 405 logs with
+  // the VCT phase angles the vehicle does not answer that PID and it reads 169, 400 or worse for the
+  // whole log, and two logs read 130° in Exhaust Cam Angle. So a channel is followed only if nearly all
+  // of it lies inside any phaser's reach (±70°); otherwise the next name is tried.
+  var LIVE_NAMES = {
+    intake: ['Intake Cam Angle', 'VCT Intake Cam Phase Angle', 'variable valve timing intake bank 1 actual',
+             'VCT1_INTP', 'VTC Intake Bank 1 Position', 'Intake Cam 2 Angle',
+             'variable valve timing intake bank 2 actual', 'VCT2_INTP', 'VTC Intake Bank 2 Position'],
+    exhaust: ['Exhaust Cam Angle', 'VCT Exhaust Cam Phase Angle', 'variable valve timing exhaust bank 1 actual',
+              'VCT1_EXHP', 'VTC Exhaust Bank 1 Position', 'Exhaust Cam 2 Angle',
+              'variable valve timing exhaust bank 2 actual', 'VCT2_EXHP', 'VTC Exhaust Bank 2 Position'],
+  };
+  var LIVE_SIDE = { intake: /\b(intake|inlet|int|intp|in(?= ?cam))\b/, exhaust: /\b(exhaust|exh|exhp|ex(?= ?cam))\b/ };
+  var LIVE_CAM = /cam|vct|vvt|vtc|phaser|valve timing/;
+  var LIVE_WHAT = /\b(angle|ang|position|pos|phase|actual|act|intp|exhp)\b/;
+  var LIVE_NOT = new RegExp('\\b(des|desired|targ\\w*|tgt|aim|cmd|command\\w*|req\\w*|sched\\w*|dc|duty|pwm|err\\w*|' +
+    'diag\\w*|mode|sync\\w*|sens\\w*|ghost|lock\\w*|rate|limit\\w*|offset|learn\\w*|volt\\w*|freq\\w*|max|min|' +
+    'mapped|dist\\w*|status|fault|enabl\\w*|delta|deviation)\\b');
+  var LIVE_BANK2 = /\b(bank ?2|b2|2)\b|\bvct2\b/;
+  var LIVE_REACH = 70;
+  // A generic CSV keeps its unit in the name ("Intake Cam Angle (deg)"), so a trailing unit is dropped.
+  function liveKey(n) {
+    return String(n || '').toLowerCase().replace(/[_|]+/g, ' ').replace(/(\s*[(\[][^()\[\]]*[)\]])+\s*$/, '')
+      .replace(/\s+/g, ' ').trim();
+  }
+  function livePlausible(values) {
+    if (!values) return true;
+    var n = 0, inside = 0;
+    for (var i = 0; i < values.length; i++) {
+      var v = values[i];
+      if (typeof v !== 'number' || !isFinite(v)) continue;
+      n++;
+      if (Math.abs(v) <= LIVE_REACH) inside++;
+    }
+    return n > 0 && inside >= 0.95 * n;
+  }
+  /**
+   * { intake, exhaust } -- the channel names to follow (either may be null) -- from a log's channel
+   * names, or null when neither is found. valuesOf(name), if given, returns that channel's samples for
+   * the range check.
+   */
+  function liveChannels(names, valuesOf) {
+    names = names || [];
+    var byKey = {};
+    names.forEach(function (n) { var k = liveKey(n); if (byKey[k] === undefined) byKey[k] = n; });
+    function pick(which) {
+      var other = which === 'intake' ? 'exhaust' : 'intake';
+      var tried = {}, list = [];
+      LIVE_NAMES[which].forEach(function (n) { var hit = byKey[liveKey(n)]; if (hit !== undefined) list.push(hit); });
+      var found = names.filter(function (n) {
+        var k = liveKey(n);
+        if (!LIVE_SIDE[which].test(k) || LIVE_SIDE[other].test(k) || !LIVE_CAM.test(k) || LIVE_NOT.test(k)) return false;
+        // "Intake Cam" / "IN_CAM" / "Exhaust VCT" on their own name the position too.
+        var bare = k.replace(LIVE_BANK2, ' ').replace(/\b(bank ?1|b1|1)\b/g, ' ').replace(/\s+/g, ' ').trim();
+        return LIVE_WHAT.test(k) || /^(intake|inlet|in|exhaust|exh|ex) ?(cam|camshaft|vct|vvt|vtc|phaser)$/.test(bare) ||
+               /^(cam|camshaft|vct|vvt|vtc) (intake|inlet|exhaust|exh)$/.test(bare);
+      });
+      found.sort(function (a, b) { return (LIVE_BANK2.test(liveKey(a)) ? 1 : 0) - (LIVE_BANK2.test(liveKey(b)) ? 1 : 0); });
+      list = list.concat(found);
+      for (var i = 0; i < list.length; i++) {
+        if (tried[list[i]]) continue;
+        tried[list[i]] = true;
+        if (livePlausible(valuesOf ? valuesOf(list[i]) : null)) return list[i];
+      }
+      return null;
+    }
+    var intake = pick('intake'), exhaust = pick('exhaust');
+    return (intake || exhaust) ? { intake: intake, exhaust: exhaust } : null;
+  }
+
   /**
    * Is a phaser position physically reachable on this engine? A log channel outside the limits is
    * the signature of a mis-scaled PID, not of a cam in an exotic place, so this is worth saying out
@@ -994,6 +1072,7 @@
     resolveCam: resolveCam,
     customCam: customCam,
     vinEngine: vinEngine,
+    liveChannels: liveChannels,
     CARD_ASSUMED_ADVANCE: CARD_ASSUMED_ADVANCE,
     checkPosition: checkPosition,
     clampPosition: clampPosition,

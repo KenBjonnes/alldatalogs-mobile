@@ -108,8 +108,10 @@ var NORMALIZED_CHANNEL_ROLES = {
     // 'Short Term Fuel Trim 1 (SAE)' -- the numbered SAE spelling, no 'Bank' (Ken, 2026-09-15).
     'Short Term Fuel Trim 1', 'STFT 1'] },
   stft_bank_2:             { label: 'STFT Bank 2',        aliases: ['STFT_B2', 'Short Term Fuel Trim Bank 2', 'STFT Bank 2', 'O2 Control Bank 2 Short Term Fuel Trim', 'Short Term Fuel Trim 2', 'STFT 2'] },
-  exhaust_cam:             { label: 'Exhaust Cam',        aliases: ['EX_CAM', 'Exhaust Cam', 'Exhaust Camshaft Position', 'VCT Exhaust Cam Phase Angle', 'Exhaust Cam Angle', 'VTC Exhaust Bank 1 Position', 'variable valve timing exhaust bank 1 actual'] },
-  intake_cam:              { label: 'Intake Cam',         aliases: ['IN_CAM', 'Intake Cam', 'Intake Camshaft Position', 'VCT Intake Cam Phase Angle', 'Intake Cam Angle', 'VTC Intake Bank 1 Position', 'variable valve timing intake bank 1 actual'] },
+  // HP Tuners' Cam Angle PIDs first: the VCT phase-angle PIDs read garbage (169, 400 ...) on vehicles
+  // that do not answer them, which is 61 of the 405 .hpl logs carrying them (2026-10-30 census).
+  exhaust_cam:             { label: 'Exhaust Cam',        aliases: ['Exhaust Cam Angle', 'EX_CAM', 'Exhaust Cam', 'Exhaust Camshaft Position', 'VCT Exhaust Cam Phase Angle', 'VTC Exhaust Bank 1 Position', 'variable valve timing exhaust bank 1 actual', 'VCT1_EXHP'] },
+  intake_cam:              { label: 'Intake Cam',         aliases: ['Intake Cam Angle', 'IN_CAM', 'Intake Cam', 'Intake Camshaft Position', 'VCT Intake Cam Phase Angle', 'VTC Intake Bank 1 Position', 'variable valve timing intake bank 1 actual', 'VCT1_INTP'] },
   desired_load:            { label: 'Desired Load',       aliases: ['LOAD_DES', 'Desired Load'] },
   // "Absolute Load (SAE)" is the generic SAE load PID and sits LAST on purpose (Ken, 2026-07-22):
   // where a vehicle logs a real Air/Actual Load it should win, and the SAE PID is the fallback for

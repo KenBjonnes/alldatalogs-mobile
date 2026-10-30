@@ -2471,21 +2471,15 @@ function hostFeature(name){
   var f = (window.DATAVIEWER || {}).features;
   return !!(f && f[name] === true);
 }
-// Which of this log's channels say where the cams are. HP Tuners' own position PIDs are named
-// first and win outright: on the 2024 F-150 logs measured during this work, the role's alias list
-// would otherwise land on "VCT Intake Cam Phase Angle", which climbs from 84 to 169 through the log
-// like an accumulating figure and is not a position at all. The role is only a fallback, and if it
-// is wrong the panel's travel check says so rather than drawing impossible valve events.
+// Which of this log's channels say where the cams are: DatalogCam.liveChannels knows the names every
+// format uses (Intake Cam Angle, VCT Intake Cam Phase Angle, SCT's "variable valve timing ... actual",
+// VCT1_INTP ...) and skips a channel whose values no phaser could reach -- on the 2024 F-150 logs "VCT
+// Intake Cam Phase Angle" reads 84 to 169 all log, the vehicle not answering that PID.
 function camLiveChannels(){
-  if(!VIEWER_DATA || !VIEWER_DATA.channels) return null;
-  var chans = VIEWER_DATA.channels, roles = VIEWER_RESOLVED_ROLES || {};
-  function pick(names, role){
-    for(var i = 0; i < names.length; i++) if(chans.indexOf(names[i]) !== -1) return names[i];
-    return (roles[role] && chans.indexOf(roles[role]) !== -1) ? roles[role] : null;
-  }
-  var intake = pick(['Intake Cam Angle'], 'intake_cam');
-  var exhaust = pick(['Exhaust Cam Angle'], 'exhaust_cam');
-  return (intake || exhaust) ? { intake: intake, exhaust: exhaust } : null;
+  if(!VIEWER_DATA || !VIEWER_DATA.channels || !window.DatalogCam || !window.DatalogCam.liveChannels) return null;
+  return window.DatalogCam.liveChannels(VIEWER_DATA.channels, function(ch){
+    return isTextChannel(ch) ? [] : (VIEWER_DATA.series[ch] || []);
+  });
 }
 // Which Coyote this log came from, so the panel opens on the right generation instead of the last one
 // picked (Ken, 2026-10-29, on a 2024 log: "its only showing the gen 3 cams ... should be gen4"). The
