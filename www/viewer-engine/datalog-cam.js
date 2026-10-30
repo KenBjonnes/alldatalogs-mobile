@@ -75,15 +75,21 @@
     var evc = num(cam && cam.evc) + ep;
     var di = ivo + 180 + ivc;
     var de = evo + 180 + evc;
+    // On an ASYMMETRIC lobe the centreline (the lobe's peak) is not the midpoint of its .050 events,
+    // so a cam that knows its parked lobe centrelines carries them as `parkIcl` / `parkEcl` and they
+    // move with the phasers like everything else. Without them the midpoint is used, which is exact
+    // for a symmetric lobe. (L&M's LM-C11-IO read 135.5 by midpoint against L&M's own 129.)
+    var hasI = cam && typeof cam.parkIcl === 'number' && isFinite(cam.parkIcl);
+    var hasE = cam && typeof cam.parkEcl === 'number' && isFinite(cam.parkEcl);
     return {
       ivo: ivo, ivc: ivc, evo: evo, evc: evc,
       intakeDuration: di,
       exhaustDuration: de,
-      // Intake centreline, degrees ATDC. Equivalent to (180 + ivc − ivo) / 2.
-      icl: di / 2 - ivo,
+      // Intake centreline, degrees ATDC. For a symmetric lobe, (180 + ivc − ivo) / 2.
+      icl: hasI ? cam.parkIcl + ip : di / 2 - ivo,
       // Exhaust centreline, degrees BTDC. Both centrelines are quoted toward the overlap TDC, which
       // is the convention every cam card uses.
-      ecl: de / 2 - evc,
+      ecl: hasE ? cam.parkEcl - ep : de / 2 - evc,
       // Overlap at this checking height: the crank degrees for which both valves are off their seats
       // by at least the checking height. Negative means a gap in which neither is.
       overlap: ivo + evc,
@@ -241,9 +247,28 @@
   // The travel limits are what make a position physically possible, so the UI clamps to them and the
   // log reader can flag a channel reading outside them — which is how a mis-scaled PID gets caught
   // rather than quietly producing impossible valve events.
+  // The engine picker is MODEL first, then generation / year range under it (Ken, 2026-10-30: "list the
+  // model first, then a sub menu for generation/year range. easier to have as we add more models").
+  // Each engine names its `model` and its `gen` label; adding a model is a MODELS row plus its engines.
+  //
+  // "provisional" in a model's name means its figures are not independently established (Ken,
+  // 2026-10-30: add GT500 and Boss 302 "provisional"; "GTD and raptor R are same as GT500").
+  var MODELS = [
+    { id: 'mustang-gt', label: 'Mustang GT (Coyote 5.0)' },
+    { id: 'mustang-boss302', label: 'Mustang Boss 302 — provisional' },
+    { id: 'mustang-gt350', label: 'Mustang GT350 (5.2 Voodoo)' },
+    { id: 'shelby-gt500', label: 'Shelby GT500 (5.2 Predator) — provisional' },
+    { id: 'f150-raptor-r', label: 'F-150 Raptor R (5.2) — provisional' },
+    { id: 'mustang-gtd', label: 'Mustang GTD (5.2) — provisional' },
+  ];
+  function modelOf(engineId) { return (ENGINES[engineId] || {}).model || null; }
+  function enginesFor(modelId) {
+    return Object.keys(ENGINES).filter(function (k) { return ENGINES[k].model === modelId; });
+  }
+
   var ENGINES = {
     'coyote-gen1': {
-      label: 'Coyote Gen 1 — 2011-14 Mustang GT',
+      label: 'Coyote Gen 1 — 2011-14 Mustang GT', model: 'mustang-gt', gen: 'Gen 1 — 2011-14',
       stockCam: 'coyote-gen1-stock',
       intake:  { min: -50, max: 0,  park: 'retarded' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
@@ -252,7 +277,7 @@
               'Boss 302 production table reaching 89° ATDC',
     },
     'coyote-gen2': {
-      label: 'Coyote Gen 2 — 2015-17 Mustang GT',
+      label: 'Coyote Gen 2 — 2015-17 Mustang GT', model: 'mustang-gt', gen: 'Gen 2 — 2015-17',
       stockCam: 'coyote-gen2-stock',
       intake:  { min: -50, max: 50, park: 'mid-lock' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
@@ -260,8 +285,8 @@
       source: 'Comp CY-r cam card (park ICL 109.0) and Ken’s own calibration (109.5), agreeing',
     },
     'coyote-gen3': {
-      label: 'Coyote Gen 3 — 2018-23 Mustang GT',
-      stockCam: 'coyote-gen3-stock-050',
+      label: 'Coyote Gen 3 — 2018-23 Mustang GT', model: 'mustang-gt', gen: 'Gen 3 — 2018-23',
+      stockCam: 'coyote-gen3-stock-lm',
       intake:  { min: -50, max: 50, park: 'mid-lock' },
       exhaust: { min: 0,   max: 50, park: 'advanced' },
       // GSC's Gen 3 cam cards print the follower ratio as 1.89 (Ken, 2026-10-30: it had been 2.01 for
@@ -270,7 +295,7 @@
       source: 'intake read from Ken’s calibration; exhaust park assumed unchanged from Gen 2',
     },
     'coyote-gen4': {
-      label: 'Coyote Gen 4 — 2024+ Mustang GT',
+      label: 'Coyote Gen 4 — 2024+ Mustang GT', model: 'mustang-gt', gen: 'Gen 4 — 2024+',
       stockCam: 'coyote-gen4-stock-050',
       // Centre-parked intake like Gen 2 and Gen 3 (Ken, 2026-10-29); +/-50 travel for now, as on
       // Gen 2 and 3 (see the note above ENGINES).
@@ -282,6 +307,56 @@
         'as the same Gen 3 grinds',
       source: 'intake read from Ken’s calibration; centre-parked intake per Ken; intake travel +/-50 for ' +
               'now (Ken); the exhaust duration not yet established',
+    },
+
+    // Boss 302: Gen 1 VCT hardware, so Gen 1's park and travel. Ford kept the GT intake and raised
+    // the exhaust lift with its duration unchanged; no separately verified Boss park was found, hence
+    // provisional. It takes the Gen 1 aftermarket cams (`sharesCams`).
+    'coyote-boss302': {
+      label: 'Boss 302 — 2012-13 (Gen 1 Coyote)', model: 'mustang-boss302', gen: '2012-13 (Gen 1 Coyote)',
+      stockCam: 'boss302-stock', sharesCams: 'coyote-gen1',
+      intake:  { min: -50, max: 0,  park: 'retarded' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 2.01, ratioSource: 'Gen 1’s, carried over',
+      source: 'Gen 1 park and travel; GT intake retained, exhaust lift 13 mm with unchanged duration (Ford ' +
+              'engineers, "Inside the Boss"); no verified Boss park',
+    },
+    // The 5.2s. Travel is not published for any of them; +/-50 on a centre-parked intake like the
+    // Coyotes, exhaust 0 to +50 (Ken, 2026-10-30).
+    'voodoo-gt350': {
+      label: 'GT350 / GT350R — 2015-20 (5.2 Voodoo)', model: 'mustang-gt350', gen: '2015-20',
+      stockCam: 'gt350-stock',
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 1.90, ratioSource: 'Ken’s cam-spec sheet (Kelford prints 1.89 for these heads)',
+      source: 'L&M GT350 flat-plane VCT worksheet: stock park 108 / 125; travel +/-50 per Ken',
+    },
+    // GT500, Raptor R and GTD: the same cams (Ken, 2026-10-30; KR3Z-6250 shared by the GT500 and
+    // the Raptor R). L&M's GT500 stock rows duplicate its GT350 rows exactly, which may be honest
+    // reuse or a template error -- hence provisional, all three.
+    'predator-gt500': {
+      label: 'Shelby GT500 — 2020-22 (5.2 Predator)', model: 'shelby-gt500', gen: '2020-22',
+      stockCam: 'gt500-stock',
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 1.90, ratioSource: 'Ken’s cam-spec sheet',
+      source: 'L&M GT500 VCT worksheet (stock rows identical to its GT350 sheet); provisional',
+    },
+    'predator-raptor-r': {
+      label: 'F-150 Raptor R — 2023+ (5.2)', model: 'f150-raptor-r', gen: '2023+',
+      stockCam: 'gt500-stock', sharesCams: 'predator-gt500',
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 1.90, ratioSource: 'the GT500’s, carried over',
+      source: 'the GT500’s cams (Ken; KR3Z-6250 shared); provisional',
+    },
+    'predator-gtd': {
+      label: 'Mustang GTD — 2025+ (5.2)', model: 'mustang-gtd', gen: '2025+',
+      stockCam: 'gt500-stock', sharesCams: 'predator-gt500',
+      intake:  { min: -50, max: 50, park: 'mid-lock' },
+      exhaust: { min: 0,   max: 50, park: 'advanced' },
+      followerRatio: 1.90, ratioSource: 'the GT500’s, carried over',
+      source: 'the GT500’s cams (Ken); provisional',
     },
   };
 
@@ -307,18 +382,20 @@
     // --- factory ---------------------------------------------------------------------------------
     'coyote-gen1-stock': {
       label: 'Stock Coyote Gen 1 (2011-14)', engine: 'coyote-gen1', stock: true,
-      ivo: -33.5, ivc: 64.5, evo: 48.5, evc: -17.5, height: '.050',
+      // Exhaust park 125, L&M's stock-exhaust reference (Ken, 2026-10-30: where L&M conflicts, L&M
+      // wins). AED and Comp put it at 123, which drew EVO 48.5 / EVC 17.5 BTDC.
+      ivo: -33.5, ivc: 64.5, evo: 50.5, evc: -19.5, height: '.050',
       seatIntake: 263, seatExhaust: 263, lobeIntake: 0.235, lobeExhaust: 0.216,
-      provenance: 'builder-endorsed cam-card data; not in any Ford document. Reproduces the published ' +
-                  'park/maximum centrelines 139/89 and 123/73 exactly.',
+      provenance: 'AED cam-card data, 211/211 @ .050" at park ICL 139; exhaust park 125 per L&M’s 2011-14 ' +
+                  'stock-exhaust reference (AED and Comp: 123).',
     },
     'coyote-gen2-stock': {
       label: 'Stock Coyote Gen 2 (2015-17)', engine: 'coyote-gen2', stock: true,
-      ivo: -3.5, ivc: 34.5, evo: 48.5, evc: -17.5, height: '.050',
+      ivo: -3.5, ivc: 34.5, evo: 50.5, evc: -19.5, height: '.050',
       seatIntake: 259, seatExhaust: 264, lobeIntake: 0.253, lobeExhaust: 0.253,
-      provenance: 'Comp CY-r cam card: 211/211 @ .050", park ICL 109.0 / ECL 123.0. The seat figures ' +
-                  'are the calibration’s own durations. Exhaust events are unchanged from Gen 1; ' +
-                  'the intake is Gen 1’s lobe sitting 30° more advanced.',
+      provenance: 'Comp CY-r cam card: 211/211 @ .050", park ICL 109.0; exhaust park 125 per L&M’s 2015-17 ' +
+                  'stock-exhaust reference (Comp: 123). The seat figures are the calibration’s own durations. ' +
+                  'Exhaust events are unchanged from Gen 1; the intake is Gen 1’s lobe sitting 30° more advanced.',
     },
     'coyote-gen3-stock': {
       label: 'Stock Coyote Gen 3 (2018-23) — calibration events', engine: 'coyote-gen3', stock: true,
@@ -340,7 +417,22 @@
                   'over, which Gen 4 may well have changed. Treat the exhaust as provisional.',
     },
 
-    // --- stock Gen 3 / Gen 4 at .050", ESTIMATED -----------------------------------------------------
+    // --- stock Gen 3 at .050": L&M's stock worksheet ----------------------------------------------
+    // L&M's downloadable Gen 3 VCT worksheet carries the STOCK cam (rows 8 / 13): park 109 / 123 and
+    // the opening- and closing-side spans at .050" and .004" -- an asymmetric lobe, so the events are
+    // carried exactly rather than split down the middle. It replaced the .050 ESTIMATE that sat here
+    // (2026-10-30), which had come within 2° of every event.
+    'coyote-gen3-stock-lm': { label: 'Stock Coyote Gen 3 (2018-23)', engine: 'coyote-gen3', stock: true,
+      // .050: intake 106.60 open-side + 104.00 close-side; exhaust 107.30 + 105.18.
+      ivo: 106.60 - 109, ivc: 104.00 + 109 - 180, evo: 107.30 + 123 - 180, evc: 105.18 - 123,
+      parkIcl: 109, parkEcl: 123, height: '.050',
+      // .004: intake 128.48 + 139.00; exhaust 129.88 + 141.32.
+      seatEvents: { ivo: 128.48 - 109, ivc: 139.00 + 109 - 180, evo: 129.88 + 123 - 180, evc: 141.32 - 123 },
+      valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'L&M Gen 3 VCT worksheet, stock rows: park 109 / 123, 210.60 / 212.48 @ .050", 267.48 / 271.20 ' +
+                  '@ .004"; valve lift Ford’s 14 mm.' },
+
+    // --- stock Gen 4 at .050", ESTIMATED ------------------------------------------------------------
     // Ken, 2026-10-29: the Gen 3 durations are "way too high ... we need them at .050". They are: the
     // rows above are at the calibration's own (low, unstated) checking height. Nobody publishes a .050"
     // figure for either engine -- searched 2026-10-29: Ford, Comp, L&M, GSC, the forums; the one
@@ -356,13 +448,6 @@
     //   * Gen 4: the same gaps on its 260 / 274 → 212 / 221, at the calibration's 140 ICL and an
     //     assumed 123 ECL. Shakier -- different lift (Ford: 13 mm) and the exhaust is itself inferred.
     // One degreed stock cam replaces both rows.
-    'coyote-gen3-stock-050': Object.assign({ label: 'Stock Coyote Gen 3 (2018-23) — .050 ESTIMATE', engine: 'coyote-gen3', stock: true },
-      fromCard(211, 211, 109.5, 123), { height: '.050', seatIntake: 259, seatExhaust: 264,
-      valveIntake: 0.551, valveExhaust: 0.551,
-      provenance: 'ESTIMATE, not published anywhere: Gen 2’s measured 211/211 @ .050" carried across, because Gen 3’s ' +
-                  'calibration events are identical to Gen 2’s. Park ICL 109.5 from the calibration, ECL 123 from L&M’s ' +
-                  'tune sheet, valve lift Ford’s 14 mm. Likely a few degrees short (more lift than Gen 2). Degree a ' +
-                  'stock cam to replace it.' }),
     'coyote-gen4-stock-050': Object.assign({ label: 'Stock Coyote Gen 4 (2024+) — .050 ESTIMATE', engine: 'coyote-gen4', stock: true },
       fromCard(212, 221, 140, 123), { height: '.050', seatIntake: 260, seatExhaust: 274,
       valveIntake: 0.512, valveExhaust: 0.512,
@@ -376,22 +461,28 @@
     // the whole family — the signature of one lobe family, and good evidence the events are right.
     'comp-191060': { label: 'Comp Stage I NA — 191060', engine: 'coyote-gen1',
       ivo: -19, ivc: 59, evo: 54, evc: -11, height: '.050', seatIntake: 260, seatExhaust: 267,
-      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+      lobeIntake: 0.244, lobeExhaust: 0.226, valveIntake: 0.492, valveExhaust: 0.453,
+      provenance: 'Comp catalogue, via Ken’s master list' },
     'comp-191100': { label: 'Comp Stage II NA — 191100', engine: 'coyote-gen1',
       ivo: -15, ivc: 63, evo: 58, evc: -7, height: '.050', seatIntake: 268, seatExhaust: 275,
-      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+      lobeIntake: 0.244, lobeExhaust: 0.226, valveIntake: 0.492, valveExhaust: 0.453,
+      provenance: 'Comp catalogue, via Ken’s master list' },
     'comp-191160': { label: 'Comp Stage III NA — 191160', engine: 'coyote-gen1',
       ivo: -11, ivc: 67, evo: 62, evc: -3, height: '.050', seatIntake: 276, seatExhaust: 283,
-      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+      lobeIntake: 0.244, lobeExhaust: 0.226, valveIntake: 0.492, valveExhaust: 0.453,
+      provenance: 'Comp catalogue, via Ken’s master list' },
     'comp-191260': { label: 'Comp Stage I Blower — 191260', engine: 'coyote-gen1',
       ivo: -23, ivc: 63, evo: 56, evc: -9, height: '.050', seatIntake: 260, seatExhaust: 271,
-      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+      lobeIntake: 0.244, lobeExhaust: 0.226, valveIntake: 0.492, valveExhaust: 0.453,
+      provenance: 'Comp catalogue, via Ken’s master list' },
     'comp-191360': { label: 'Comp Stage II Blower — 191360', engine: 'coyote-gen1',
       ivo: -19, ivc: 67, evo: 60, evc: -5, height: '.050', seatIntake: 268, seatExhaust: 279,
-      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+      lobeIntake: 0.244, lobeExhaust: 0.226, valveIntake: 0.492, valveExhaust: 0.453,
+      provenance: 'Comp catalogue, via Ken’s master list' },
     'comp-191460': { label: 'Comp Stage III Blower — 191460', engine: 'coyote-gen1',
       ivo: -15, ivc: 71, evo: 64, evc: -1, height: '.050', seatIntake: 276, seatExhaust: 287,
-      lobeIntake: 0.244, lobeExhaust: 0.226, provenance: 'Comp catalogue, via Ken’s master list' },
+      lobeIntake: 0.244, lobeExhaust: 0.226, valveIntake: 0.492, valveExhaust: 0.453,
+      provenance: 'Comp catalogue, via Ken’s master list' },
 
     // --- Comp, Gen 2 (243xxx CY-r series) ---------------------------------------------------------
     // The card publishes duration @ .050" and the park centrelines rather than the four events, so
@@ -400,19 +491,24 @@
     // round-trips back to the card's centrelines.
     'comp-243420': { label: 'Comp CY-r 243420', engine: 'coyote-gen2',
       ivo: -4.5, ivc: 51.5, evo: 70.5, evc: -21.5, height: '.050', seatIntake: 263, seatExhaust: 263,
-      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 227/229 @ .050", park ICL 118.0 / ECL 136.0' },
+      lobeIntake: 0.255, lobeExhaust: 0.254, valveIntake: 0.516, valveExhaust: 0.514,
+      provenance: 'Comp CY-r card: 227/229 @ .050", park ICL 118.0 / ECL 136.0' },
     'comp-243430': { label: 'Comp CY-r 243430', engine: 'coyote-gen2',
       ivo: -4.5, ivc: 55.5, evo: 74.5, evc: -21.5, height: '.050', seatIntake: 267, seatExhaust: 267,
-      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 231/233 @ .050", park ICL 120.0 / ECL 138.0' },
+      lobeIntake: 0.255, lobeExhaust: 0.254, valveIntake: 0.516, valveExhaust: 0.514,
+      provenance: 'Comp CY-r card: 231/233 @ .050", park ICL 120.0 / ECL 138.0' },
     'comp-243440': { label: 'Comp CY-r 243440', engine: 'coyote-gen2',
       ivo: -4.5, ivc: 59.5, evo: 78.5, evc: -21.5, height: '.050', seatIntake: 271, seatExhaust: 271,
-      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 235/237 @ .050", park ICL 122.0 / ECL 140.0' },
+      lobeIntake: 0.255, lobeExhaust: 0.254, valveIntake: 0.516, valveExhaust: 0.514,
+      provenance: 'Comp CY-r card: 235/237 @ .050", park ICL 122.0 / ECL 140.0' },
     'comp-243460': { label: 'Comp CY-r 243460', engine: 'coyote-gen2',
       ivo: -4.5, ivc: 55.5, evo: 78.5, evc: -21.5, height: '.050', seatIntake: 267, seatExhaust: 267,
-      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 231/237 @ .050", park ICL 120.0 / ECL 140.0' },
+      lobeIntake: 0.255, lobeExhaust: 0.254, valveIntake: 0.516, valveExhaust: 0.514,
+      provenance: 'Comp CY-r card: 231/237 @ .050", park ICL 120.0 / ECL 140.0' },
     'comp-243480': { label: 'Comp CY-r 243480', engine: 'coyote-gen2',
       ivo: -4.5, ivc: 63.5, evo: 86.5, evc: -21.5, height: '.050', seatIntake: 275, seatExhaust: 275,
-      lobeIntake: 0.255, lobeExhaust: 0.254, provenance: 'Comp CY-r card: 239/245 @ .050", park ICL 124.0 / ECL 144.0' },
+      lobeIntake: 0.255, lobeExhaust: 0.254, valveIntake: 0.516, valveExhaust: 0.514,
+      provenance: 'Comp CY-r card: 239/245 @ .050", park ICL 124.0 / ECL 144.0' },
 
     // --- L&M Engines ------------------------------------------------------------------------------
     // L&M prints duration @ .050" and, for these, the centrelines "with Phasers Parked" in so many
@@ -426,10 +522,53 @@
       fromCard(239, 244, 117, 133), { height: '.050', valveIntake: 0.551, valveExhaust: 0.551,
       provenance: 'lmengines.com: 239/244 @ .050", "Parked Centerlines Intake - 117, Exhaust - 133". ' +
                   'Events computed from those, assuming symmetric lobes. Advertised duration unpublished.' }),
+    // Intake-only Gen 3: L&M prints 231 @ .050" and a 120 park for the intake; the exhaust stays stock,
+    // so it carries the stock exhaust events from L&M's own worksheet.
+    'lm-c18-io-1': { label: 'L&M LM-C18-IO-1 (Intake Only, stock exhaust)', engine: 'coyote-gen3',
+      ivo: 115.5 - 120, ivc: 115.5 + 120 - 180, evo: 107.30 + 123 - 180, evc: 105.18 - 123,
+      parkEcl: 123, height: '.050', valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'lmengines.com: intake 231 @ .050", .551", park 120 (half-events unpublished, so symmetric); ' +
+                  'exhaust the stock cam from L&M’s Gen 3 worksheet.' },
+    // GT350 flat-plane and GT500 Predator replacements: L&M product pages (Ken, 2026-10-30: the
+    // product page where it and L&M's worksheet differ -- the GT500 worksheet puts the intake at 120).
+    'lm-gt3f-1': Object.assign({ label: 'L&M LM-GT3F-1 (flat-plane)', engine: 'voodoo-gt350' },
+      fromCard(234, 235, 105, 136), { height: '.050', valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'lmengines.com: 234/235 @ .050", .551", park 105 / 136 (separation 120.5). Symmetric lobes assumed.' }),
+    'lm-20gt5-nsr': Object.assign({ label: 'L&M LM-20GT5-NSR', engine: 'predator-gt500' },
+      fromCard(241, 245, 118, 140), { height: '.050', valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'lmengines.com: 241/245 @ .050", .551", park 118 / 140 (its worksheet: intake 120). Symmetric ' +
+                  'lobes assumed.' }),
+
+    // --- stock 5.2 and Boss 302 -------------------------------------------------------------------
+    // L&M's GT350 worksheet, stock rows: park 108 / 125, spans at .050" and .004". The GT500 sheet's
+    // stock rows are the same numbers, so the GT500 (and the Raptor R and GTD, which share its cams)
+    // use them, provisional; the GT500's intake valve lift is the .564" reported from a calibration.
+    'gt350-stock': { label: 'Stock GT350 (5.2 Voodoo)', engine: 'voodoo-gt350', stock: true,
+      // .050: intake 113.00 + 113.00; exhaust 112.64 + 114.88.
+      ivo: 113.00 - 108, ivc: 113.00 + 108 - 180, evo: 112.64 + 125 - 180, evc: 114.88 - 125,
+      parkIcl: 108, parkEcl: 125, height: '.050',
+      // .004: intake 135.00 + 149.00; exhaust 134.56 + 151.70.
+      seatEvents: { ivo: 135.00 - 108, ivc: 149.00 + 108 - 180, evo: 134.56 + 125 - 180, evc: 151.70 - 125 },
+      valveIntake: 0.551, valveExhaust: 0.551,
+      provenance: 'L&M GT350 flat-plane VCT worksheet, stock rows: park 108 / 125, 226.00 / 227.52 @ .050", ' +
+                  '284.00 / 286.26 @ .004"; Ford 14 mm lift.' },
+    'gt500-stock': { label: 'Stock GT500 / Raptor R / GTD (5.2 Predator) — provisional', engine: 'predator-gt500', stock: true,
+      ivo: 113.00 - 108, ivc: 113.00 + 108 - 180, evo: 112.64 + 125 - 180, evc: 114.88 - 125,
+      parkIcl: 108, parkEcl: 125, height: '.050',
+      seatEvents: { ivo: 135.00 - 108, ivc: 149.00 + 108 - 180, evo: 134.56 + 125 - 180, evc: 151.70 - 125 },
+      valveIntake: 0.564, valveExhaust: 0.551,
+      provenance: 'L&M GT500 VCT worksheet, stock rows (identical to its GT350 rows, so provisional); intake valve ' +
+                  'lift .564" from a calibration report, exhaust 14 mm assumed.' },
+    // Gen 1's events (GT intake kept, exhaust duration unchanged) with the 13 mm exhaust.
+    'boss302-stock': { label: 'Stock Boss 302 (2012-13) — provisional', engine: 'coyote-boss302', stock: true,
+      ivo: -33.5, ivc: 64.5, evo: 50.5, evc: -19.5, height: '.050',
+      seatIntake: 263, seatExhaust: 263, lobeIntake: 0.235, valveExhaust: 0.512,
+      provenance: 'Gen 1 stock events (GT intake retained; exhaust duration unchanged) with Ford’s 13 mm exhaust ' +
+                  'lift. No verified Boss park; Ford’s early spec sheet says 11 mm exhaust.' },
     // Intake-only: L&M gives the intake's two half-events about its centreline (an asymmetric lobe,
     // so these are exact rather than assumed), and the exhaust stays stock.
     'lm-c11-io': { label: 'L&M LM-C11-IO (Intake Only, stock exhaust)', engine: 'coyote-gen1',
-      ivo: -(129 - 107), ivc: 129 + 120 - 180, evo: 48.5, evc: -17.5, height: '.050',
+      ivo: -(129 - 107), ivc: 129 + 120 - 180, evo: 50.5, evc: -19.5, height: '.050', parkIcl: 129,
       valveIntake: 0.472, lobeExhaust: 0.216,
       provenance: 'lmengines.com: intake "asymmetrical 107 deg Open & 120 deg Close" @ .050" about a ' +
                   '129° parked centreline; the exhaust is the stock Gen 1 cam.' },
@@ -573,6 +712,9 @@
     var hasSeat = function (v) { return typeof v === 'number' && isFinite(v); };
     var rampI = hasSeat(cam.seatIntake) ? (cam.seatIntake - ev.intakeDuration) / 2 : SEAT_RAMP_ASSUMED;
     var rampE = hasSeat(cam.seatExhaust) ? (cam.seatExhaust - ev.exhaustDuration) / 2 : SEAT_RAMP_ASSUMED;
+    // A maker that publishes the low-lift (.004") events too -- L&M's stock worksheets -- gives the
+    // ramps exactly, each side on its own, so an asymmetric lobe is drawn asymmetric.
+    var se = cam.seatEvents ? events(cam.seatEvents, intakePos, exhaustPos) : null;
     var liftI = hasSeat(cam.valveIntake) ? cam.valveIntake : valveLift(cam.lobeIntake, ratio);
     var liftE = hasSeat(cam.valveExhaust) ? cam.valveExhaust : valveLift(cam.lobeExhaust, ratio);
     // Intake: opens ev.ivo BTDC (so at −ivo in this frame) and closes ev.ivc ABDC (at 180 + ivc).
@@ -583,13 +725,15 @@
     return {
       events: ev,
       symmetricLobeAssumed: true,
-      seatAssumed: !hasSeat(cam.seatIntake) || !hasSeat(cam.seatExhaust),
+      seatAssumed: !se && (!hasSeat(cam.seatIntake) || !hasSeat(cam.seatExhaust)),
       intake: {
-        seatOpen: iOpen - rampI, open: iOpen, peak: ev.icl, close: iClose, seatClose: iClose + rampI,
+        seatOpen: se ? -se.ivo : iOpen - rampI, open: iOpen, peak: ev.icl, close: iClose,
+        seatClose: se ? 180 + se.ivc : iClose + rampI,
         peakLift: liftI,
       },
       exhaust: {
-        seatOpen: eOpen - rampE, open: eOpen, peak: -ev.ecl, close: eClose, seatClose: eClose + rampE,
+        seatOpen: se ? -(se.evo + 180) : eOpen - rampE, open: eOpen, peak: -ev.ecl, close: eClose,
+        seatClose: se ? se.evc : eClose + rampE,
         peakLift: liftE,
       },
     };
@@ -598,9 +742,17 @@
   // ---- helpers for the UI and the log reader -------------------------------------------------------
 
   /** Cams that belong to an engine, stock first, then by name. */
+  // An engine with `sharesCams` also lists that engine's cams (the Boss 302 takes Gen 1's aftermarket
+  // grinds; the Raptor R and GTD take the GT500's), less its stock cam when it has one of its own.
   function camsFor(engineId) {
+    var e = ENGINES[engineId] || {};
+    var shared = e.sharesCams || null;
+    var ownStock = !!(e.stockCam && CAMS[e.stockCam] && CAMS[e.stockCam].engine === engineId);
     return Object.keys(CAMS)
-      .filter(function (k) { return !engineId || CAMS[k].engine === engineId; })
+      .filter(function (k) {
+        if (!engineId || CAMS[k].engine === engineId) return true;
+        return !!shared && CAMS[k].engine === shared && !(ownStock && CAMS[k].stock);
+      })
       .sort(function (a, b) {
         var A = CAMS[a], B = CAMS[b];
         if (!!A.stock !== !!B.stock) return A.stock ? -1 : 1;
@@ -618,9 +770,10 @@
   //
   // Only a VIN whose CHECK DIGIT is right is believed: HP Tuners writes a placeholder VIN on some logs
   // (it starts "HPT"), and a year letter read out of that would be a confident wrong answer. Only a
-  // Mustang (VIN line P8, 1ZV or 1FA) with a Coyote engine letter is placed -- F is the 5.0 GT, 0 the
-  // Bullitt / Mach 1 / Dark Horse 5.0 -- because the truck generations split on different years and the
-  // GT350 / GT500 / EcoBoost are not Coyotes. Anything else returns null and the last pick stands.
+  // Mustang (VIN line P8, 1ZV or 1FA) is placed: engine letter F (5.0 GT) or 0 (Bullitt / Mach 1 /
+  // Dark Horse 5.0) by year to a Coyote generation, Z to the 2015-20 GT350 and J to the 2020-22 GT500
+  // (both added 2026-10-30). The EcoBoost, the trucks and anything else return null, and the last pick
+  // stands.
   var VIN_TR = { A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7, H: 8, J: 1, K: 2, L: 3, M: 4, N: 5, P: 7,
     R: 9, S: 2, T: 3, U: 4, V: 5, W: 6, X: 7, Y: 8, Z: 9 };
   var VIN_W = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
@@ -651,10 +804,12 @@
       var v = m[1];
       if (!vinValid(v)) continue;
       if (!/^(1ZV|1FA)/.test(v) || v.substr(4, 2) !== 'P8') return null;   // a real VIN, not a Mustang
-      if (v.charAt(7) !== 'F' && v.charAt(7) !== '0') return null;           // a Mustang, not a Coyote
       var yi = VIN_YEARS.indexOf(v.charAt(9));
       var year = yi < 0 ? null : 2010 + yi;
-      var engine = year ? mustangGen(year) : null;
+      var letter = v.charAt(7), engine = null;
+      if (letter === 'F' || letter === '0') engine = year ? mustangGen(year) : null;
+      else if (letter === 'Z') engine = (year >= 2015 && year <= 2020) ? 'voodoo-gt350' : null;
+      else if (letter === 'J') engine = (year >= 2020 && year <= 2022) ? 'predator-gt500' : null;
       return engine ? { engine: engine, year: year, vin: v } : null;
     }
     return null;
@@ -744,6 +899,9 @@
     clampPosition: clampPosition,
     fordAt: fordAt,
     ENGINES: ENGINES,
+    MODELS: MODELS,
+    modelOf: modelOf,
+    enginesFor: enginesFor,
     CAMS: CAMS,
     FORD_WOT: FORD_WOT,
     FOLLOWER_RATIO: FOLLOWER_RATIO,
@@ -830,7 +988,8 @@
     '  letter-spacing:.4px;text-transform:uppercase;color:var(--text-dim, #9a9aa2);}',
     '.dlv-cam-top select,.dlv-cam-num{background:var(--bg-soft, #0d0d11);color:var(--text, #e8e8ea);',
     '  border:1px solid var(--card-border, #26262c);border-radius:5px;padding:5px 7px;font:inherit;font-size:12px;}',
-    '.dlv-cam-eng select{min-width:250px;}',
+    '.dlv-cam-eng select{min-width:150px;}',
+    '.dlv-cam-model select{min-width:170px;}',
     '.dlv-cam-ratio .dlv-cam-num{width:84px;}',
     '.dlv-cam-engnote{flex:1 1 220px;font-size:11px;color:var(--text-faint, #5c5c66);line-height:1.35;',
     '  text-transform:none;letter-spacing:0;}',
@@ -917,7 +1076,7 @@
     '@media (max-width:640px){',
     '  .dlv-cam-ovl{padding:10px 8px;}',
     '  .dlv-cam-body{padding:10px;}',
-    '  .dlv-cam-eng select{min-width:0;width:100%;}',
+    '  .dlv-cam-eng select,.dlv-cam-model select{min-width:0;width:100%;}',
     '}',
     '/* Inline on its own page: the same box, without the pop-up\'s backdrop and positioning. */',
     '.dlv-cam.dlv-cam-inline{width:100%;box-shadow:none;}'
@@ -1177,9 +1336,13 @@
   function bodyHtml() {
     var K = cam();
     var s = state;
-    var engOpts = Object.keys(K.ENGINES).map(function (k) {
+    var model = K.modelOf(s.engine);
+    var modelOpts = K.MODELS.map(function (m) {
+      return '<option value="' + esc(m.id) + '"' + (m.id === model ? ' selected' : '') + '>' + esc(m.label) + '</option>';
+    }).join('');
+    var engOpts = K.enginesFor(model).map(function (k) {
       return '<option value="' + esc(k) + '"' + (k === s.engine ? ' selected' : '') + '>' +
-        esc(K.ENGINES[k].label) + '</option>';
+        esc(K.ENGINES[k].gen || K.ENGINES[k].label) + '</option>';
     }).join('');
     var camA = camById(s.a), camB = s.b ? camById(s.b) : null;
     var profA = camA ? K.liftProfile(camA, s.ipA, s.epA, s.ratio) : null;
@@ -1207,7 +1370,8 @@
     });
 
     return '<div class="dlv-cam-top">' +
-        '<label class="dlv-cam-eng"><span>Engine</span><select class="dlv-cam-engsel">' + engOpts + '</select></label>' +
+        '<label class="dlv-cam-model"><span>Model</span><select class="dlv-cam-modelsel">' + modelOpts + '</select></label>' +
+        '<label class="dlv-cam-eng"><span>Generation</span><select class="dlv-cam-engsel">' + engOpts + '</select></label>' +
         '<label class="dlv-cam-ratio"><span>Follower ratio</span>' +
           '<input type="number" class="dlv-cam-num" id="dlvCamRatio" min="1.5" max="2.5" step="0.001" value="' + s.ratio + '">' +
         '</label>' +
@@ -1307,10 +1471,18 @@
       }
       render();
     });
+    var model = ovl.querySelector('.dlv-cam-modelsel');
+    if (model) model.addEventListener('change', function () {
+      // A new model opens on its newest generation.
+      var gens = cam().enginesFor(model.value);
+      if (gens.length) pickEngine(gens[gens.length - 1]);
+    });
     var eng = ovl.querySelector('.dlv-cam-engsel');
-    if (eng) eng.addEventListener('change', function () {
+    if (eng) eng.addEventListener('change', function () { pickEngine(eng.value); });
+    function pickEngine(engineId) {
       var K = cam();
-      state.engine = eng.value;
+      if (!K.ENGINES[engineId]) return;
+      state.engine = engineId;
       state.engineWhy = '';   // a hand pick overrides what the log said
       try { if (global.localStorage) global.localStorage.setItem(ENGINE_KEY, state.engine); } catch (e) {}
       // Switching engine changes which cams exist and how far the phasers go, so the selection and
@@ -1321,7 +1493,7 @@
       state.ipA = state.epA = state.ipB = state.epB = 0;
       state.ratio = K.followerRatioFor(state.engine);   // a different head, a different follower
       render();
-    });
+    }
     var ratio = ovl.querySelector('#dlvCamRatio');
     if (ratio) ratio.addEventListener('change', function () {
       var v = parseFloat(ratio.value);

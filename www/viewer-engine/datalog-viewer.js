@@ -2496,9 +2496,19 @@ function camEngineForLog(){
   if(!K || !K.vinEngine) return null;
   var v = getCurrentVehicleMeta() || {};
   var y = parseInt(v.year, 10);
-  if(isFinite(y) && /mustang/i.test(String(v.model || v.name || '')) && !/gt ?350|gt ?500|shelby|eco/i.test(String(v.model || v.name || ''))){
-    var g = y >= 2024 ? 'coyote-gen4' : y >= 2018 ? 'coyote-gen3' : y >= 2015 ? 'coyote-gen2' : y >= 2011 ? 'coyote-gen1' : null;
-    if(g) return { engine: g, why: y + ' Mustang, from this vehicle’s record.' };
+  var name = String(v.model || v.name || '') + ' ' + String(v.trim || '');
+  if(isFinite(y)){
+    // The special models first (2026-10-30), each only in the years it was built; then the Mustang GT
+    // generations by year. An EcoBoost is not offered at all.
+    var g = null;
+    if(/gt ?350/i.test(name)) g = (y >= 2015 && y <= 2020) ? 'voodoo-gt350' : null;
+    else if(/gt ?500/i.test(name)) g = (y >= 2020 && y <= 2022) ? 'predator-gt500' : null;
+    else if(/raptor ?r\b/i.test(name)) g = y >= 2023 ? 'predator-raptor-r' : null;
+    else if(/\bgtd\b/i.test(name)) g = y >= 2025 ? 'predator-gtd' : null;
+    else if(/boss ?302/i.test(name)) g = (y >= 2012 && y <= 2013) ? 'coyote-boss302' : null;
+    else if(/mustang/i.test(name) && !/eco/i.test(name))
+      g = y >= 2024 ? 'coyote-gen4' : y >= 2018 ? 'coyote-gen3' : y >= 2015 ? 'coyote-gen2' : y >= 2011 ? 'coyote-gen1' : null;
+    if(g && K.ENGINES[g]) return { engine: g, why: y + ' ' + name.trim() + ', from this vehicle’s record.' };
   }
   var f = K.vinEngine(VIEWER_FILE_NAME);
   return f ? { engine: f.engine, why: f.year + ' Mustang, from the VIN in this log’s file name.' } : null;
