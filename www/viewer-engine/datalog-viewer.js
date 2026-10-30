@@ -618,6 +618,8 @@ function closeViewer(){
 }
 function closeViewerNow(){
   var overlay = document.getElementById('viewerOverlay');
+  // A docked cam panel belongs to this log: close it with the viewer rather than leave it on the page.
+  if(VIEWER_CAM_RO && window.DatalogCamUI) window.DatalogCamUI.close();
   exitViewerFullscreen();
   overlay.classList.remove('open');
   var chatBubble = document.getElementById('pbdChatPreview');
@@ -2513,6 +2515,55 @@ function pushCamLive(idx, dataX){
     time: (dataX != null) ? dataX : VIEWER_DATA.time[idx],
   });
 }
+// The docked panel takes its OWN column: the viewer narrows to the space left of it, so no part of the
+// log sits underneath the panel. It used to float over the right-hand side of the graphs, which hid the
+// end of every trace and the legends anchored there (Ken, 2026-10-30: "it's over top of the log on the
+// right and makes navigating the log feel odd"). On a phone-width window the panel is the full width,
+// so there is no room to share: it covers the graphs below the viewer's tabs, as before.
+var VIEWER_CAM_RO = null;
+var CAM_SIDE_MIN_WIDTH = 760;   // matches the panel's own full-width breakpoint in datalog-cam.js
+// Dock below the header and the mode tabs, so the viewer's own controls stay reachable.
+function camDockTop(){
+  var tabs = document.querySelector('#viewerOverlay .dlv-mode-tabs') || document.querySelector('#viewerOverlay .dlv-header');
+  return tabs ? Math.round(tabs.getBoundingClientRect().bottom) : 0;
+}
+function camLayoutChanged(){
+  // The graphs, the channel list's virtual window and the scrubber all re-fit on a window resize.
+  try { window.dispatchEvent(new Event('resize')); } catch(_){}
+  resizeViewerCharts();
+}
+function camFitRoom(){
+  var overlay = document.getElementById('viewerOverlay');
+  var ovl = document.querySelector('.dlv-cam-ovl.dlv-cam-docked');
+  var panel = ovl && ovl.querySelector('.dlv-cam');
+  if(!overlay || !panel) return;
+  var side = window.innerWidth > CAM_SIDE_MIN_WIDTH;
+  var right = side ? Math.round(panel.getBoundingClientRect().width) + 'px' : '';
+  // Side by side, the panel runs the full height: the viewer's header is no longer above it, and a gap
+  // there would show the host page through it.
+  ovl.style.top = side ? '0px' : camDockTop() + 'px';
+  if(overlay.style.right === right) return;
+  overlay.style.right = right;
+  camLayoutChanged();
+}
+function camMakeRoom(){
+  var panel = document.querySelector('.dlv-cam-ovl.dlv-cam-docked .dlv-cam');
+  if(!panel) return;
+  if(VIEWER_CAM_RO){ VIEWER_CAM_RO.disconnect(); VIEWER_CAM_RO = null; }
+  // The panel's width follows the window (46vw up to 560px), so the viewer's edge has to follow it too.
+  if(typeof ResizeObserver === 'function'){
+    VIEWER_CAM_RO = new ResizeObserver(function(){ camFitRoom(); });
+    VIEWER_CAM_RO.observe(panel);
+  }
+  camFitRoom();
+}
+function camGiveBackRoom(){
+  if(VIEWER_CAM_RO){ VIEWER_CAM_RO.disconnect(); VIEWER_CAM_RO = null; }
+  var overlay = document.getElementById('viewerOverlay');
+  if(!overlay || !overlay.style.right) return;
+  overlay.style.right = '';
+  if(VIEWER_DATA) camLayoutChanged();
+}
 // The panel is a calculator, so it opens with or without a log. With one open, and channels that say
 // where the cams are, it docks beside the graphs and follows the cursor through the log.
 function openCamTiming(){
@@ -2525,9 +2576,6 @@ function openCamTiming(){
   ensureCamModule().then(function(){
     var live = camLiveChannels();
     VIEWER_CAM_LIVE = null;
-    // Dock below the header and the mode tabs, so the viewer's own controls stay reachable.
-    var tabs = document.querySelector('#viewerOverlay .dlv-mode-tabs') || document.querySelector('#viewerOverlay .dlv-header');
-    var top = tabs ? Math.round(tabs.getBoundingClientRect().bottom) : 0;
     // ALWAYS docked from inside a log, whether or not the log says where the cams are. It used to fall
     // back to the full-screen pop-up when there were no cam channels to follow, which covered the log
     // you had open and stopped you scrolling it (Ken, 2026-10-29: "when in a log and you click analyze,
@@ -2536,12 +2584,13 @@ function openCamTiming(){
     var fromLog = camEngineForLog();
     window.DatalogCamUI.open({
       docked: true,
-      top: top,
+      top: camDockTop(),
       engine: fromLog ? fromLog.engine : undefined,
       engineWhy: fromLog ? fromLog.why : undefined,
       live: live || undefined,
-      onClose: function(){ VIEWER_CAM_LIVE = null; },
+      onClose: function(){ VIEWER_CAM_LIVE = null; camGiveBackRoom(); },
     });
+    camMakeRoom();
     if(live){
       VIEWER_CAM_LIVE = live;
       // Show where the cams are right now rather than waiting for the first mouse move.

@@ -902,7 +902,7 @@
     '.dlv-cam-ovl.dlv-cam-docked{z-index:950;background:none;pointer-events:none;justify-content:flex-end;',
     '  align-items:stretch;padding:0;overflow:visible;}',
     '.dlv-cam-docked .dlv-cam{pointer-events:auto;width:min(560px,46vw);height:100%;overflow:auto;',
-    '  border-radius:0;border-width:0 0 0 1px;box-shadow:-14px 0 40px rgba(0,0,0,.5);}',
+    '  border-radius:0;border-width:0 0 0 1px;box-shadow:none;}',
     '@media (max-width:760px){ .dlv-cam-docked .dlv-cam{width:100vw;} }',
     '.dlv-cam-live{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;',
     '  padding:8px 10px;border-radius:7px;background:rgba(209,19,46,.08);',
