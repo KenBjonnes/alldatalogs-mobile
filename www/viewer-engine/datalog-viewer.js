@@ -5996,6 +5996,10 @@ function dashAssignMenu(e, g){
   }
   var chans = (VIEWER_DATA && VIEWER_DATA.channels) ? VIEWER_DATA.channels : [];
   var isLight = g.type === 'light', isTable = g.type === 'table';
+  function dashThrField(g, key, cls, colour, side){
+    var v = g.thresholds && g.thresholds[key] != null ? g.thresholds[key] : '';
+    return '<label><b class="' + cls + '">' + colour + '</b> ' + side + ' <input type="number" step="any" class="dlv-dash-thr-in" data-thr="' + key + '" placeholder="off" value="' + v + '"></label>';
+  }
   // Warnings (Yellow/Red at) on every gauge: dials & bars draw the band + recolour, a light IS its
   // threshold state, and a plain Number gauge -- which has no band -- recolours its digits and tints
   // its tile when tripped (see updateGaugeElement). So every type gets the warnings editor (Ken,
@@ -6031,13 +6035,17 @@ function dashAssignMenu(e, g){
         '<label>Font &times; <input type="number" min="0.5" max="3" step="0.1" class="dlv-dash-thr-in" data-set="fontScale" value="' + (g.fontScale != null ? g.fontScale : 1) + '"></label>' +
       '</div>' +
       // Warnings (yellow band + redline) on every gauge that renders zones -- a plain dial or bar can
-      // carry a redline too, not just the tach/light that seed one by default.
+      // carry a redline too, not just the tach/light that seed one by default. High (at or above) and
+      // low (at or below), either or both; a blank field is off (Ken, 2026-10-31).
       (canWarn ?
         '<div class="dlv-menu-sep"></div>' +
         '<div class="dlv-dash-thr">' +
-          '<div class="dlv-dash-thr-h">' + (isLight ? 'Light triggers' : 'Warnings') + '</div>' +
-          '<label><b class="thr-y">Yellow</b> at <input type="number" step="any" class="dlv-dash-thr-in" data-thr="warn" value="' + (g.thresholds && g.thresholds.warn != null ? g.thresholds.warn : '') + '"></label>' +
-          '<label><b class="thr-r">Red</b> at <input type="number" step="any" class="dlv-dash-thr-in" data-thr="red" value="' + (g.thresholds && g.thresholds.red != null ? g.thresholds.red : '') + '"></label>' +
+          '<div class="dlv-dash-thr-h">' + (isLight ? 'Light triggers' : 'Warnings') + ' &mdash; high</div>' +
+          dashThrField(g, 'warn', 'thr-y', 'Yellow', 'at or above') +
+          dashThrField(g, 'red', 'thr-r', 'Red', 'at or above') +
+          '<div class="dlv-dash-thr-h">' + (isLight ? 'Light triggers' : 'Warnings') + ' &mdash; low</div>' +
+          dashThrField(g, 'lowWarn', 'thr-y', 'Yellow', 'at or below') +
+          dashThrField(g, 'lowRed', 'thr-r', 'Red', 'at or below') +
         '</div>' : '') +
       // Combo only: the INSET (speed) dial -- its own channel, label and range. The left channel list
       // still assigns the PRIMARY (RPM) dial; this picks the second one.
@@ -7444,6 +7452,8 @@ function enableGaugeDrags(el, def){
   // now, so an unfindable grab target is just friction -- you can only see them while editing.
   if(def.thresholds && refs.kind === 'dial' && refs.svg){
     var handles = {};
+    // Only the thresholds that are set get a handle; each one moves between its neighbours.
+    var hkeys = GAUGE_THR_KEYS.filter(function(k){ return def.thresholds[k] != null && isFinite(def.thresholds[k]); });
     function placeHandle(key){
       var span = def.max - def.min;
       var pct = clampGauge(span ? (def.thresholds[key] - def.min) / span : 0, 0, 1);
@@ -7451,11 +7461,11 @@ function enableGaugeDrags(el, def){
       handles[key].setAttribute('cx', p[0]);
       handles[key].setAttribute('cy', p[1]);
     }
-    ['warn', 'red'].forEach(function(key){
+    hkeys.forEach(function(key){
       var hit = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       hit.setAttribute('r', 7.5);
       hit.setAttribute('fill', '#12121a');
-      hit.setAttribute('stroke', key === 'warn' ? '#f5a623' : '#d1132e');
+      hit.setAttribute('stroke', /warn/i.test(key) ? '#f5a623' : '#d1132e');
       hit.setAttribute('stroke-width', 3);
       hit.setAttribute('class', 'dlv-zone-handle');
       hit.setAttribute('style', 'cursor:ew-resize;pointer-events:all;');
@@ -7477,10 +7487,12 @@ function enableGaugeDrags(el, def){
           var ang = clampGauge(Math.atan2(lx - refs.cx, -(ly - refs.cy)) * 180 / Math.PI, -135, 135);
           var v = snap(def.min + (def.max - def.min) * ((ang + 135) / 270));
           var pad = (def.max - def.min) * 0.02;
-          if(key === 'warn') def.thresholds.warn = clampGauge(v, def.min, def.thresholds.red - pad);
-          else def.thresholds.red = clampGauge(v, def.thresholds.warn + pad, def.max);
+          var i = hkeys.indexOf(key);
+          var lo = i > 0 ? def.thresholds[hkeys[i - 1]] + pad : def.min;
+          var hi = i < hkeys.length - 1 ? def.thresholds[hkeys[i + 1]] - pad : def.max;
+          def.thresholds[key] = clampGauge(v, lo, hi);
           if(typeof redrawGaugeZones === 'function') redrawGaugeZones(el, def);
-          placeHandle('warn'); placeHandle('red');
+          hkeys.forEach(placeHandle);
           updateAtCursor(CROSSHAIR_TIME);   // recolours needle/readout, no DOM rebuild
         }
         function up(ev){
@@ -7494,10 +7506,19 @@ function enableGaugeDrags(el, def){
     });
   }
 }
+// Low red, low yellow, yellow, red: the order the thresholds sit in along the scale.
+var GAUGE_THR_KEYS = ['lowRed', 'lowWarn', 'warn', 'red'];
+// Keeps every SET threshold inside the range and in order; an unset (null) one stays unset -- it
+// used to be clamped to the range minimum, which switched it on.
 function clampGaugeThresholds(def){
   if(!def.thresholds) return;
-  def.thresholds.warn = clampGauge(def.thresholds.warn, def.min, def.max);
-  def.thresholds.red = clampGauge(def.thresholds.red, def.thresholds.warn, def.max);
+  var floor = def.min;
+  GAUGE_THR_KEYS.forEach(function(k){
+    var v = def.thresholds[k];
+    if(v == null || !isFinite(v)) return;
+    def.thresholds[k] = clampGauge(v, floor, def.max);
+    floor = def.thresholds[k];
+  });
 }
 
 function openGaugeMenu(e, def){
@@ -7560,7 +7581,9 @@ function openGaugeMenu(e, def){
         '<div class="fld"><label>Snap step</label><input type="number" step="any" id="gm-snap"></div>' +
         '<div class="fld"><label>Font size</label><input type="number" step="0.05" min="0.5" max="2.5" id="gm-fs"></div>' +
         (def.thresholds ? '<div class="fld"><label>Warn zone</label><input type="number" step="any" id="gm-tw"></div>' +
-                          '<div class="fld"><label>Redline</label><input type="number" step="any" id="gm-tr"></div>' : '') +
+                          '<div class="fld"><label>Redline</label><input type="number" step="any" id="gm-tr"></div>' +
+                          '<div class="fld"><label>Low warn</label><input type="number" step="any" id="gm-tlw" placeholder="off"></div>' +
+                          '<div class="fld"><label>Low red</label><input type="number" step="any" id="gm-tlr" placeholder="off"></div>' : '') +
         '<div class="acts"><button class="act save" data-s="scale">Apply</button></div>' +
       '</div>' +
       // Drag handles are now an opt-in extra rather than the gate in front of the settings.
@@ -7612,7 +7635,10 @@ function openGaugeMenu(e, def){
   set('#gm-bp', def.type === 'vertical-bar' ? (def.ticks || 4) : (def.majors || 10));
   set('#gm-snap', (typeof gaugeSnapStep === 'function') ? gaugeSnapStep(def) : '');
   set('#gm-fs', def.fontScale || 1);
-  if(def.thresholds){ set('#gm-tw', def.thresholds.warn); set('#gm-tr', def.thresholds.red); }
+  if(def.thresholds){
+    set('#gm-tw', def.thresholds.warn); set('#gm-tr', def.thresholds.red);
+    set('#gm-tlw', def.thresholds.lowWarn); set('#gm-tlr', def.thresholds.lowRed);
+  }
 
   m.querySelectorAll('.dlv-gtabs button').forEach(function(b){
     b.addEventListener('click', function(){
@@ -7648,6 +7674,9 @@ function openGaugeMenu(e, def){
           var tw = num('#gm-tw'), tr = num('#gm-tr');
           if(tw != null) def.thresholds.warn = tw;
           if(tr != null) def.thresholds.red = tr;
+          // The low pair is optional, so a blank field switches it off.
+          def.thresholds.lowWarn = num('#gm-tlw');
+          def.thresholds.lowRed = num('#gm-tlr');
           clampGaugeThresholds(def);
         }
       } else { return; }

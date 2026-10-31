@@ -96,16 +96,30 @@ function gaugeSnapValue(def, v){
 
 // ---- Zones (gauge colour coding) --------------------------------------------------------------
 // Either an explicit def.zones=[{from,to,color}] or, for a gauge with a draggable redline,
-// def.thresholds={warn,red} which is expanded here so the bands can be edited live.
+// def.thresholds={warn,red} which is expanded here so the bands can be edited live. A threshold
+// warns HIGH (warn/red: at or above) and LOW (lowWarn/lowRed: at or below) -- any of the four may be
+// left out, so a gauge can warn on one side or both (Ken, 2026-10-31: "we need to be able to set the
+// color warnings for a too low situation ... support both"). Red bands come first so a value sitting
+// exactly on a red threshold reads red, as the light does.
 function gaugeZones(def){
   if(def.thresholds){
-    var t = def.thresholds;
-    return [
-      { from: t.warn, to: t.red, color: '#f5a623', kind: 'warn' },
-      { from: t.red, to: def.max, color: '#d1132e', kind: 'red' },
-    ];
+    var t = def.thresholds, out = [];
+    var has = function(k){ return t[k] != null && isFinite(t[k]); };
+    if(has('red')) out.push({ from: t.red, to: def.max, color: '#d1132e', kind: 'red' });
+    if(has('lowRed')) out.push({ from: def.min, to: t.lowRed, color: '#d1132e', kind: 'red' });
+    if(has('warn')) out.push({ from: t.warn, to: has('red') ? t.red : def.max, color: '#f5a623', kind: 'warn' });
+    if(has('lowWarn')) out.push({ from: has('lowRed') ? t.lowRed : def.min, to: t.lowWarn, color: '#f5a623', kind: 'warn' });
+    return out.filter(function(z){ return z.to > z.from; });
   }
   return def.zones || [];
+}
+// 'red' / 'warn' / null for a value against def.thresholds, high side and low side.
+function gaugeThresholdState(def, v){
+  var t = def.thresholds;
+  if(!t || v == null || !isFinite(v)) return null;
+  if((t.red != null && v >= t.red) || (t.lowRed != null && v <= t.lowRed)) return 'red';
+  if((t.warn != null && v >= t.warn) || (t.lowWarn != null && v <= t.lowWarn)) return 'warn';
+  return null;
 }
 // Where a bar's fill grows FROM. Default keeps the old behaviour (zero if the range crosses it,
 // otherwise the bottom), but a gauge can name its own resting value -- lambda rests at 1.0, so at
@@ -142,15 +156,13 @@ function gaugeActiveColor(def, v){
   return def.color;
 }
 
-// Warning-light colour by value: green normally, amber past the warn threshold, red past red.
-// Uses the same def.thresholds {warn, red} as a dial's redline, so one config drives both. Missing
-// value or no thresholds -> unlit grey.
+// Warning-light colour by value: green normally, amber past a warn threshold, red past a red one,
+// on either side (gaugeThresholdState). Uses the same def.thresholds as a dial's redline, so one
+// config drives both. Missing value -> unlit grey.
 function lightColor(def, v){
   if(v == null || !isFinite(v)) return null;
-  var t = def.thresholds || {};
-  if(t.red != null && v >= t.red) return '#d1132e';
-  if(t.warn != null && v >= t.warn) return '#f5a623';
-  return '#22c55e';
+  var st = gaugeThresholdState(def, v);
+  return st === 'red' ? '#d1132e' : st === 'warn' ? '#f5a623' : '#22c55e';
 }
 
 // ---- User warnings ----------------------------------------------------------------------------
@@ -774,10 +786,9 @@ function updateGaugeElement(wrap, def, rawValue, rawValue2){
   var st = gaugeWarnState(def, rawValue);
   // A number/digital gauge draws no band or needle, so a threshold trip would only recolour the
   // digits -- easy to miss. Tint the whole tile too, from its warn/red thresholds (Ken, 2026-07-24).
-  if(!st && def.type === 'digital' && def.thresholds && rawValue != null && isFinite(rawValue)){
-    var td = def.thresholds;
-    if(td.red != null && rawValue >= td.red) st = 'crit';
-    else if(td.warn != null && rawValue >= td.warn) st = 'warn';
+  if(!st && def.type === 'digital'){
+    var ts = gaugeThresholdState(def, rawValue);
+    if(ts) st = ts === 'red' ? 'crit' : 'warn';
   }
   wrap.classList.toggle('pbd-gauge-warned', st === 'warn');
   wrap.classList.toggle('pbd-gauge-warned-crit', st === 'crit');
